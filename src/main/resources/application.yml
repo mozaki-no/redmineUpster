@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: redmineUpster
+  datasource:
+    url: "${DB_URL:jdbc:postgresql://localhost:5432/redmine_upster}"
+    username: "${DB_USER:postgres}"
+    password: "${DB_PASSWORD:postgres}"
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+
+redmine:
+  base-url: "${REDMINE_BASE_URL:http://localhost:3000}"
+  api-key: "${REDMINE_API_KEY:}"
+  project-id: "${REDMINE_PROJECT_ID:}"

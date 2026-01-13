@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: redmine_upster_postgres
+    environment:
+      POSTGRES_DB: redmine_upster
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - redmine_upster_pgdata:/var/lib/postgresql/data
+
+volumes:
+  redmine_upster_pgdata:
