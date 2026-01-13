@@ -5,7 +5,7 @@ Redmine のチケットを CSV/Excel から同期する Spring Boot サービス
 
 ## 起動手順
 1. 依存サービスを起動します。
-   - `docker-compose up`
+   - `docker compose up -d`
 2. アプリを起動します。
    - `./mvnw spring-boot:run`
 
@@ -14,6 +14,11 @@ Redmine のチケットを CSV/Excel から同期する Spring Boot サービス
 - `REDMINE_BASE_URL`: Redmine ベース URL（例: `http://localhost:3000`）
 - `REDMINE_API_KEY`: Redmine API キー
 - `REDMINE_PROJECT_ID`: 同期先プロジェクト ID
+
+## 本番/テストのDB切り替え
+- 本番: `DB_URL` / `DB_USER` / `DB_PASSWORD` で既存のPostgreSQL（Redmine同居）に接続。
+- テスト: `application-test.yml` を使い、`jdbc:postgresql://localhost:5432/redmine_upster` に接続。
+  - テストは `@ActiveProfiles("test")` で `test` プロファイル固定。
 
 ## 主要API
 - `GET /api/configs` / `PUT /api/configs`: 設定キーの取得と更新

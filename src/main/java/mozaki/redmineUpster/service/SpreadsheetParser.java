@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.opencsv.CSVReader;
+import com.opencsv.exceptions.CsvValidationException;
 
 @Service
 public class SpreadsheetParser {
@@ -34,27 +35,31 @@ public class SpreadsheetParser {
 		try (BufferedReader reader = new BufferedReader(
 				new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8));
 				CSVReader csv = new CSVReader(reader)) {
-			String[] headerRow = csv.readNext();
-			if (headerRow == null) {
-				return new ParsedSheet(List.of(), List.of());
-			}
-			List<String> headers = new ArrayList<>();
-			for (String header : headerRow) {
-				headers.add(normalize(header));
-			}
-			List<Map<String, String>> rows = new ArrayList<>();
-			String[] row;
-			while ((row = csv.readNext()) != null) {
-				Map<String, String> values = new LinkedHashMap<>();
-				for (int i = 0; i < headers.size(); i++) {
-					String value = i < row.length ? normalize(row[i]) : "";
-					values.put(headers.get(i), value);
+			try {
+				String[] headerRow = csv.readNext();
+				if (headerRow == null) {
+					return new ParsedSheet(List.of(), List.of());
 				}
-				if (!isEmptyRow(values)) {
-					rows.add(values);
+				List<String> headers = new ArrayList<>();
+				for (String header : headerRow) {
+					headers.add(normalize(header));
 				}
+				List<Map<String, String>> rows = new ArrayList<>();
+				String[] row;
+				while ((row = csv.readNext()) != null) {
+					Map<String, String> values = new LinkedHashMap<>();
+					for (int i = 0; i < headers.size(); i++) {
+						String value = i < row.length ? normalize(row[i]) : "";
+						values.put(headers.get(i), value);
+					}
+					if (!isEmptyRow(values)) {
+						rows.add(values);
+					}
+				}
+				return new ParsedSheet(headers, rows);
+			} catch (CsvValidationException e) {
+				throw new IOException("Failed to parse CSV", e);
 			}
-			return new ParsedSheet(headers, rows);
 		}
 	}
 

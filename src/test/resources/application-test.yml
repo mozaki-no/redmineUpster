@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/redmine_upster
+    username: postgres
+    password: postgres
