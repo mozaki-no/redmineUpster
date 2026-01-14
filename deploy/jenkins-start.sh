@@ -7,6 +7,8 @@ LOG_FILE="${LOG_FILE:-/var/lib/jenkins/redmine-upster/app.log}"
 PID_FILE="${PID_FILE:-/var/lib/jenkins/redmine-upster/app.pid}"
 RUN_IN_FOREGROUND="${RUN_IN_FOREGROUND:-false}"
 LOG_TO_STDOUT="${LOG_TO_STDOUT:-false}"
+START_DOCKER="${START_DOCKER:-false}"
+DOCKER_CMD="${DOCKER_CMD:-docker compose up -d}"
 
 if [[ ! -x "${JAVA17}" ]]; then
   echo "JAVA17 not found or not executable: ${JAVA17}" >&2
@@ -22,6 +24,14 @@ if [[ -f "${PID_FILE}" ]]; then
   if [[ -n "${EXISTING_PID}" ]] && kill -0 "${EXISTING_PID}" >/dev/null 2>&1; then
     echo "Already running (pid=${EXISTING_PID})." >&2
     exit 0
+  fi
+fi
+
+if [[ "${START_DOCKER}" == "true" ]]; then
+  if command -v docker >/dev/null 2>&1; then
+    eval "${DOCKER_CMD}"
+  else
+    echo "docker command not found; skipping docker startup." >&2
   fi
 fi
 
