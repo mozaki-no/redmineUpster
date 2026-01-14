@@ -5,8 +5,8 @@ APP_HOST="${APP_HOST:-localhost}"
 APP_PORT="${APP_PORT:-3004}"
 APP_URL="${APP_URL:-http://${APP_HOST}:${APP_PORT}/admin.html}"
 PID_FILE="${PID_FILE:-/var/lib/jenkins/redmine-upster/app.pid}"
-WAIT_SECONDS="${WAIT_SECONDS:-20}"
-SLEEP_INTERVAL="${SLEEP_INTERVAL:-2}"
+WAIT_SECONDS="${WAIT_SECONDS:-60}"
+SLEEP_INTERVAL="${SLEEP_INTERVAL:-3}"
 
 echo "Checking process..."
 if [[ -f "${PID_FILE}" ]]; then
