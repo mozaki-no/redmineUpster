@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="ja">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Redmine Upster 管理</title>
+		<style>
+			@import url("https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;600;700&family=Space+Grotesk:wght@400;600&display=swap");
+
+			:root {
+				--ink: #1d1b16;
+				--paper: #f7f2e9;
+				--sun: #ffb347;
+				--sky: #96b8ff;
+				--teal: #1c8c8c;
+				--rose: #f36b6b;
+				--shadow: rgba(26, 22, 18, 0.15);
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				font-family: "Zen Kaku Gothic New", "Space Grotesk", sans-serif;
+				color: var(--ink);
+				background: radial-gradient(circle at 10% 10%, #ffe9c5 0%, transparent 45%),
+					radial-gradient(circle at 85% 20%, #d5e3ff 0%, transparent 40%),
+					radial-gradient(circle at 30% 90%, #f5c9c9 0%, transparent 50%),
+					var(--paper);
+				min-height: 100vh;
+			}
+
+			.shell {
+				max-width: 1100px;
+				margin: 0 auto;
+				padding: 48px 20px 72px;
+			}
+
+			header {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				justify-content: space-between;
+				gap: 16px;
+				margin-bottom: 32px;
+			}
+
+			h1 {
+				font-size: clamp(28px, 4vw, 40px);
+				margin: 0;
+				letter-spacing: 0.02em;
+			}
+
+			.badge {
+				background: var(--ink);
+				color: #fff;
+				padding: 6px 14px;
+				border-radius: 999px;
+				font-size: 13px;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+			}
+
+			.grid {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+				gap: 20px;
+			}
+
+			.card {
+				background: rgba(255, 255, 255, 0.75);
+				backdrop-filter: blur(8px);
+				border-radius: 18px;
+				padding: 20px;
+				box-shadow: 0 12px 30px var(--shadow);
+				border: 1px solid rgba(0, 0, 0, 0.05);
+				animation: fadeUp 0.8s ease both;
+			}
+
+			.card:nth-child(2) {
+				animation-delay: 0.12s;
+			}
+
+			.card:nth-child(3) {
+				animation-delay: 0.24s;
+			}
+
+			@keyframes fadeUp {
+				from {
+					opacity: 0;
+					transform: translateY(12px);
+				}
+				to {
+					opacity: 1;
+					transform: translateY(0);
+				}
+			}
+
+			h2 {
+				font-size: 18px;
+				margin: 0 0 12px;
+			}
+
+			.label {
+				font-size: 12px;
+				text-transform: uppercase;
+				letter-spacing: 0.08em;
+				color: rgba(0, 0, 0, 0.55);
+			}
+
+			.info-line {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin: 8px 0;
+				gap: 8px;
+				font-size: 14px;
+			}
+
+			.pill {
+				padding: 4px 10px;
+				border-radius: 999px;
+				background: var(--sky);
+				font-size: 12px;
+			}
+
+			.pill.warn {
+				background: var(--rose);
+				color: #fff;
+			}
+
+			.controls {
+				display: grid;
+				gap: 12px;
+			}
+
+			input[type="file"] {
+				width: 100%;
+				padding: 12px;
+				border-radius: 12px;
+				border: 1px dashed rgba(0, 0, 0, 0.2);
+				background: rgba(255, 255, 255, 0.6);
+			}
+
+			button {
+				border: none;
+				background: var(--ink);
+				color: #fff;
+				padding: 12px 16px;
+				border-radius: 12px;
+				font-size: 14px;
+				cursor: pointer;
+				transition: transform 0.2s ease, box-shadow 0.2s ease;
+			}
+
+			button:hover {
+				transform: translateY(-2px);
+				box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+			}
+
+			button.secondary {
+				background: var(--teal);
+			}
+
+			.status {
+				padding: 10px 12px;
+				border-radius: 10px;
+				background: rgba(0, 0, 0, 0.05);
+				font-size: 13px;
+			}
+
+			.status.ok {
+				background: rgba(28, 140, 140, 0.18);
+			}
+
+			.status.error {
+				background: rgba(243, 107, 107, 0.2);
+			}
+
+			.list {
+				display: grid;
+				gap: 10px;
+				max-height: 220px;
+				overflow: auto;
+				padding-right: 6px;
+			}
+
+			.list-item {
+				border-radius: 12px;
+				padding: 10px 12px;
+				background: rgba(255, 255, 255, 0.7);
+				border: 1px solid rgba(0, 0, 0, 0.05);
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+				font-size: 13px;
+			}
+
+			.list-item button {
+				align-self: flex-start;
+				padding: 6px 12px;
+				font-size: 12px;
+			}
+
+			.inline {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				flex-wrap: wrap;
+			}
+
+			.muted {
+				color: rgba(0, 0, 0, 0.5);
+				font-size: 12px;
+			}
+		</style>
+	</head>
+	<body>
+		<main class="shell">
+			<header>
+				<div>
+					<p class="badge">Admin Console</p>
+					<h1>Redmine Upster 管理</h1>
+				</div>
+				<div class="muted">CSV/Excel から同期を実行</div>
+			</header>
+
+			<section class="grid">
+				<article class="card">
+					<h2>対象 Redmine</h2>
+					<div class="info-line">
+						<span class="label">Base URL</span>
+						<span id="redmineBase" class="pill">読み込み中</span>
+					</div>
+					<div class="info-line">
+						<span class="label">Project ID</span>
+						<span id="redmineProject" class="pill">読み込み中</span>
+					</div>
+					<div class="info-line">
+						<span class="label">API KEY</span>
+						<span id="redmineKey" class="pill">確認中</span>
+					</div>
+					<p class="muted">APIキーは表示しません。設定状態のみ確認できます。</p>
+				</article>
+
+				<article class="card">
+					<h2>CSV/Excel 選択</h2>
+					<div class="controls">
+						<input id="fileInput" type="file" accept=".csv,.xlsx,.xls" />
+						<div class="inline">
+							<button id="createDiff">差分を作成</button>
+							<label class="inline">
+								<input id="dryRun" type="checkbox" />
+								<span class="muted">Dry Run</span>
+							</label>
+							<button id="runSync" class="secondary">同期を実行</button>
+						</div>
+						<div id="status" class="status">待機中</div>
+						<div class="muted">選択した差分ID: <span id="selectedDiff">未選択</span></div>
+					</div>
+				</article>
+
+				<article class="card">
+					<h2>履歴とログ</h2>
+					<div class="inline">
+						<button id="refresh">一覧を更新</button>
+						<span class="muted">最新の差分と実行結果を表示します。</span>
+					</div>
+					<h3 class="label">差分一覧</h3>
+					<div id="diffList" class="list"></div>
+					<h3 class="label">実行履歴</h3>
+					<div id="runList" class="list"></div>
+					<h3 class="label">実行ログ</h3>
+					<div id="logList" class="list"></div>
+				</article>
+			</section>
+		</main>
+
+		<script>
+			const statusEl = document.getElementById("status");
+			const fileInput = document.getElementById("fileInput");
+			const diffList = document.getElementById("diffList");
+			const runList = document.getElementById("runList");
+			const logList = document.getElementById("logList");
+			const selectedDiff = document.getElementById("selectedDiff");
+			let currentDiffId = null;
+
+			const setStatus = (message, type = "") => {
+				statusEl.textContent = message;
+				statusEl.className = `status ${type}`;
+			};
+
+			const fetchJson = async (url, options = {}) => {
+				const res = await fetch(url, options);
+				if (!res.ok) {
+					const text = await res.text();
+					throw new Error(text || `HTTP ${res.status}`);
+				}
+				return res.json();
+			};
+
+			const loadRedmine = async () => {
+				try {
+					const info = await fetchJson("/api/admin/redmine");
+					document.getElementById("redmineBase").textContent = info.baseUrl || "未設定";
+					document.getElementById("redmineProject").textContent = info.projectId || "未設定";
+					document.getElementById("redmineKey").textContent = info.apiKeyConfigured ? "設定済み" : "未設定";
+					document.getElementById("redmineKey").classList.toggle("warn", !info.apiKeyConfigured);
+				} catch (err) {
+					setStatus(`Redmine情報の取得に失敗: ${err.message}`, "error");
+				}
+			};
+
+			const renderDiffs = (diffs) => {
+				diffList.innerHTML = "";
+				if (!diffs.length) {
+					diffList.innerHTML = '<div class="muted">差分がありません。</div>';
+					return;
+				}
+				diffs.slice().reverse().forEach((diff) => {
+					const item = document.createElement("div");
+					item.className = "list-item";
+					item.innerHTML = `
+						<strong>#${diff.id}</strong>
+						<div>${diff.filename || "no-name"}</div>
+						<div class="muted">items: ${diff.itemCount} / ${new Date(diff.createdAt).toLocaleString()}</div>
+					`;
+					const btn = document.createElement("button");
+					btn.textContent = "この差分を選択";
+					btn.addEventListener("click", () => selectDiff(diff.id));
+					item.appendChild(btn);
+					diffList.appendChild(item);
+				});
+			};
+
+			const renderRuns = (runs) => {
+				runList.innerHTML = "";
+				if (!runs.length) {
+					runList.innerHTML = '<div class="muted">実行履歴がありません。</div>';
+					return;
+				}
+				runs.slice().reverse().forEach((run) => {
+					const item = document.createElement("div");
+					item.className = "list-item";
+					item.innerHTML = `
+						<strong>Run #${run.id}</strong>
+						<div>diff: ${run.diffId} / dryRun: ${run.dryRun}</div>
+						<div class="muted">status: ${run.status} / ${new Date(run.startedAt).toLocaleString()}</div>
+					`;
+					const btn = document.createElement("button");
+					btn.textContent = "ログ取得";
+					btn.addEventListener("click", () => loadLogs(run.id));
+					item.appendChild(btn);
+					runList.appendChild(item);
+				});
+			};
+
+			const loadLogs = async (runId) => {
+				try {
+					logList.innerHTML = '<div class="muted">読み込み中...</div>';
+					const logs = await fetchJson(`/api/logs?runId=${runId}`);
+					logList.innerHTML = "";
+					if (!logs.length) {
+						logList.innerHTML = '<div class="muted">ログがありません。</div>';
+						return;
+					}
+					logs.forEach((log) => {
+						const item = document.createElement("div");
+						item.className = "list-item";
+						item.innerHTML = `
+							<strong>${log.level}</strong>
+							<div>${log.message}</div>
+							<div class="muted">${new Date(log.createdAt).toLocaleString()}</div>
+						`;
+						logList.appendChild(item);
+					});
+				} catch (err) {
+					setStatus(`ログ取得に失敗: ${err.message}`, "error");
+				}
+			};
+
+			const selectDiff = (diffId) => {
+				currentDiffId = diffId;
+				selectedDiff.textContent = diffId;
+				setStatus(`差分 #${diffId} を選択しました。`, "ok");
+			};
+
+			const loadLists = async () => {
+				try {
+					const [diffs, runs] = await Promise.all([fetchJson("/api/diffs"), fetchJson("/api/runs")]);
+					renderDiffs(diffs);
+					renderRuns(runs);
+				} catch (err) {
+					setStatus(`一覧取得に失敗: ${err.message}`, "error");
+				}
+			};
+
+			document.getElementById("refresh").addEventListener("click", loadLists);
+
+			document.getElementById("createDiff").addEventListener("click", async () => {
+				if (!fileInput.files.length) {
+					setStatus("CSV/Excel を選択してください。", "error");
+					return;
+				}
+				setStatus("差分を作成しています...");
+				const formData = new FormData();
+				formData.append("file", fileInput.files[0]);
+				try {
+					const diff = await fetchJson("/api/diffs", { method: "POST", body: formData });
+					selectDiff(diff.id);
+					await loadLists();
+				} catch (err) {
+					setStatus(`差分作成に失敗: ${err.message}`, "error");
+				}
+			});
+
+			document.getElementById("runSync").addEventListener("click", async () => {
+				if (!currentDiffId) {
+					setStatus("差分を選択してください。", "error");
+					return;
+				}
+				setStatus("同期を実行しています...");
+				const body = {
+					diffId: currentDiffId,
+					dryRun: document.getElementById("dryRun").checked,
+				};
+				try {
+					const run = await fetchJson("/api/runs", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(body),
+					});
+					setStatus(`同期を開始しました。Run #${run.id}`, "ok");
+					await loadLists();
+					await loadLogs(run.id);
+				} catch (err) {
+					setStatus(`同期実行に失敗: ${err.message}`, "error");
+				}
+			});
+
+			loadRedmine();
+			loadLists();
+		</script>
+	</body>
+</html>

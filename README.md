@@ -10,6 +10,9 @@ Redmine のチケットを CSV/Excel から同期する Spring Boot サービス
    - `./mvnw spring-boot:run`
    - デフォルトポートは `3004`
 
+## 管理画面
+- `http://localhost:3004/admin.html` で管理画面にアクセスできます。
+
 ## 環境変数
 - `DB_URL` / `DB_USER` / `DB_PASSWORD`: Postgres 接続先
 - `REDMINE_BASE_URL`: Redmine ベース URL（例: `http://localhost:3000`）
