@@ -30,5 +30,8 @@
 - DB 設定は `src/main/resources/application.yml` にあり、`DB_URL`、`DB_USER`、`DB_PASSWORD` で上書き可能です。
 - Redmine 連携は `REDMINE_BASE_URL`、`REDMINE_API_KEY`、`REDMINE_PROJECT_ID` を使用します。
 
+## Operations Notes
+- Jenkins 配布・起動手順の記録は `docs/ops/jenkins-deploy-notes.md` を参照します。
+
 ## Agent Response Guidelines
 - 返答は日本語で、簡潔に回答してください。
