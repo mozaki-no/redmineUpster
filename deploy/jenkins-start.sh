@@ -42,12 +42,16 @@ if [[ "${RUN_IN_FOREGROUND}" == "true" ]]; then
   exec "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS}
 fi
 
+ORIGINAL_DIR="$(pwd)"
+cd "${APP_DIR}"
 if [[ "${LOG_TO_STDOUT}" == "true" ]]; then
-  (cd "${APP_DIR}" && nohup "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >/dev/stdout 2>&1 &)
+  nohup "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >/dev/stdout 2>&1 &
 else
-  (cd "${APP_DIR}" && nohup "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >"${LOG_FILE}" 2>&1 &)
+  nohup "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >"${LOG_FILE}" 2>&1 &
 fi
-echo $! > "${PID_FILE}"
+STARTED_PID=$!
+cd "${ORIGINAL_DIR}"
+echo "${STARTED_PID}" > "${PID_FILE}"
 STARTED_PID="$(cat "${PID_FILE}")"
 echo "Started pid=${STARTED_PID}"
 sleep 2
