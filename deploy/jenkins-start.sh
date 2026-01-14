@@ -5,6 +5,8 @@ JAVA17="${JAVA17:-/usr/lib/jvm/java-17-openjdk-amd64/bin/java}"
 APP_JAR="${APP_JAR:-/var/lib/jenkins/redmine-upster/app.jar}"
 APP_DIR="${APP_DIR:-/var/lib/jenkins/redmine-upster}"
 APP_ARGS="${APP_ARGS:---spring.config.additional-location=file:${APP_DIR}/}"
+APP_PORT="${APP_PORT:-3004}"
+AUTO_KILL_PORT="${AUTO_KILL_PORT:-false}"
 LOG_FILE="${LOG_FILE:-/var/lib/jenkins/redmine-upster/app.log}"
 PID_FILE="${PID_FILE:-/var/lib/jenkins/redmine-upster/app.pid}"
 RUN_IN_FOREGROUND="${RUN_IN_FOREGROUND:-false}"
@@ -26,6 +28,19 @@ if [[ -f "${PID_FILE}" ]]; then
   if [[ -n "${EXISTING_PID}" ]] && kill -0 "${EXISTING_PID}" >/dev/null 2>&1; then
     echo "Already running (pid=${EXISTING_PID})." >&2
     exit 0
+  fi
+fi
+
+if [[ "${AUTO_KILL_PORT}" == "true" ]]; then
+  if command -v ss >/dev/null 2>&1; then
+    PORT_PID="$(ss -lntp 2>/dev/null | rg -o ":${APP_PORT}.*pid=([0-9]+)" -r '$1' | head -n 1 || true)"
+    if [[ -n "${PORT_PID}" ]]; then
+      echo "Port ${APP_PORT} is in use by pid=${PORT_PID}, stopping it."
+      kill "${PORT_PID}" || true
+      sleep 2
+    fi
+  else
+    echo "ss command not available; skipping port kill." >&2
   fi
 fi
 
