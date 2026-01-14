@@ -82,11 +82,7 @@ fi
 
 ORIGINAL_DIR="$(pwd)"
 cd "${APP_DIR}"
-if [[ "${LOG_TO_STDOUT}" == "true" ]]; then
-  nohup "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >/dev/stdout 2>&1 &
-else
-  nohup "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >"${LOG_FILE}" 2>&1 &
-fi
+nohup setsid "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >"${LOG_FILE}" 2>&1 &
 STARTED_PID=$!
 cd "${ORIGINAL_DIR}"
 echo "${STARTED_PID}" > "${PID_FILE}"
@@ -98,4 +94,9 @@ if kill -0 "${STARTED_PID}" >/dev/null 2>&1; then
 else
   echo "Process is not running (pid=${STARTED_PID})." >&2
   exit 1
+fi
+if [[ "${LOG_TO_STDOUT}" == "true" ]]; then
+  echo "---- recent logs (${LOG_FILE}) ----"
+  tail -n 120 "${LOG_FILE}" || true
+  echo "---- end logs ----"
 fi
