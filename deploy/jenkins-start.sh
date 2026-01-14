@@ -32,15 +32,28 @@ if [[ -f "${PID_FILE}" ]]; then
 fi
 
 if [[ "${AUTO_KILL_PORT}" == "true" ]]; then
-  if command -v ss >/dev/null 2>&1; then
-    PORT_PID="$(ss -lntp 2>/dev/null | rg -o ":${APP_PORT}.*pid=([0-9]+)" -r '$1' | head -n 1 || true)"
-    if [[ -n "${PORT_PID}" ]]; then
-      echo "Port ${APP_PORT} is in use by pid=${PORT_PID}, stopping it."
-      kill "${PORT_PID}" || true
+  if [[ -f "${PID_FILE}" ]]; then
+    PID_FROM_FILE="$(cat "${PID_FILE}" || true)"
+    if [[ -n "${PID_FROM_FILE}" ]] && kill -0 "${PID_FROM_FILE}" >/dev/null 2>&1; then
+      echo "Stopping existing pid from file: ${PID_FROM_FILE}"
+      kill "${PID_FROM_FILE}" || true
       sleep 2
     fi
+  fi
+
+  PORT_PID=""
+  if command -v ss >/dev/null 2>&1; then
+    PORT_PID="$(ss -lntp "sport = :${APP_PORT}" 2>/dev/null | rg -o "pid=([0-9]+)" -r '$1' | head -n 1 || true)"
+  elif command -v lsof >/dev/null 2>&1; then
+    PORT_PID="$(lsof -ti ":${APP_PORT}" | head -n 1 || true)"
   else
-    echo "ss command not available; skipping port kill." >&2
+    echo "ss/lsof not available; skipping port kill." >&2
+  fi
+
+  if [[ -n "${PORT_PID}" ]]; then
+    echo "Port ${APP_PORT} is in use by pid=${PORT_PID}, stopping it."
+    kill "${PORT_PID}" || true
+    sleep 2
   fi
 fi
 
