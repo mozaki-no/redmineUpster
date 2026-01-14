@@ -8,6 +8,7 @@ Redmine のチケットを CSV/Excel から同期する Spring Boot サービス
    - `docker compose up -d`
 2. アプリを起動します。
    - `./mvnw spring-boot:run`
+   - デフォルトポートは `3004`
 
 ## 環境変数
 - `DB_URL` / `DB_USER` / `DB_PASSWORD`: Postgres 接続先

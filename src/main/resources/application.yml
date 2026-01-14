@@ -1,6 +1,8 @@
 spring:
   application:
     name: redmineUpster
+server:
+  port: 3004
   datasource:
     url: "${DB_URL:jdbc:postgresql://localhost:5433/redmine_upster}"
     username: "${DB_USER:postgres}"
