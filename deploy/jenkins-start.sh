@@ -23,6 +23,16 @@ if [[ ! -f "${APP_JAR}" ]]; then
   exit 1
 fi
 
+if [[ -n "${DB_URL:-}" && -z "${SPRING_DATASOURCE_URL:-}" ]]; then
+  export SPRING_DATASOURCE_URL="${DB_URL}"
+fi
+if [[ -n "${DB_USER:-}" && -z "${SPRING_DATASOURCE_USERNAME:-}" ]]; then
+  export SPRING_DATASOURCE_USERNAME="${DB_USER}"
+fi
+if [[ -n "${DB_PASSWORD:-}" && -z "${SPRING_DATASOURCE_PASSWORD:-}" ]]; then
+  export SPRING_DATASOURCE_PASSWORD="${DB_PASSWORD}"
+fi
+
 if [[ -f "${PID_FILE}" ]]; then
   EXISTING_PID="$(cat "${PID_FILE}" || true)"
   if [[ -n "${EXISTING_PID}" ]] && kill -0 "${EXISTING_PID}" >/dev/null 2>&1; then
