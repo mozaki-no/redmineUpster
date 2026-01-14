@@ -4,7 +4,7 @@ set -euo pipefail
 # Jenkins job sets APP_JAR to the built artifact path.
 APP_JAR="${APP_JAR:-target/redmineUpster-0.0.1-SNAPSHOT.jar}"
 APP_CONFIG="${APP_CONFIG:-src/main/resources/application.yml}"
-BUILD_CMD="${BUILD_CMD:-./mvnw -q package -DskipTests}"
+BUILD_CMD="${BUILD_CMD:-./mvnw package -DskipTests}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/redmine-upster}"
 SERVICE_NAME="${SERVICE_NAME:-redmine-upster}"
 SUDO_CMD="${SUDO_CMD:-}"
@@ -37,7 +37,7 @@ if [[ ! -f "${APP_JAR}" ]]; then
   echo "APP_JAR not found: ${APP_JAR}. Running build..." >&2
   if [[ ! -x "./mvnw" ]]; then
     if command -v mvn >/dev/null 2>&1; then
-      BUILD_CMD="mvn -q package -DskipTests"
+      BUILD_CMD="mvn package -DskipTests"
     else
       echo "mvnw not found and mvn is not available. Set APP_JAR or BUILD_CMD." >&2
       exit 1
