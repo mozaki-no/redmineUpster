@@ -16,9 +16,21 @@ Redmine のチケットを CSV/Excel から同期する Spring Boot サービス
 - `REDMINE_PROJECT_ID`: 同期先プロジェクト ID
 
 ## 本番/テストのDB切り替え
-- 本番: `DB_URL` / `DB_USER` / `DB_PASSWORD` で既存のPostgreSQL（Redmine同居）に接続。
+- 本番/ローカル: Docker の `postgres:16` を使う（`docker compose up -d`）。
+  - `DB_URL` / `DB_USER` / `DB_PASSWORD` で接続先は上書き可能。
 - テスト: `application-test.yml` を使い、`jdbc:postgresql://localhost:5432/redmine_upster` に接続。
   - テストは `@ActiveProfiles("test")` で `test` プロファイル固定。
+
+## 本番運用例（DB を Docker で管理）
+- DB 起動: `docker compose up -d`
+- systemd 連携: `deploy/redmine-upster.service` を利用し、`/etc/redmine-upster.env` に接続情報を置く。
+
+`/etc/redmine-upster.env` 例:
+```
+DB_URL=jdbc:postgresql://localhost:5432/redmine_upster
+DB_USER=postgres
+DB_PASSWORD=postgres
+```
 
 ## 主要API
 - `GET /api/configs` / `PUT /api/configs`: 設定キーの取得と更新
