@@ -5,6 +5,8 @@ JAVA17="${JAVA17:-/usr/lib/jvm/java-17-openjdk-amd64/bin/java}"
 APP_JAR="${APP_JAR:-/var/lib/jenkins/redmine-upster/app.jar}"
 LOG_FILE="${LOG_FILE:-/var/lib/jenkins/redmine-upster/app.log}"
 PID_FILE="${PID_FILE:-/var/lib/jenkins/redmine-upster/app.pid}"
+RUN_IN_FOREGROUND="${RUN_IN_FOREGROUND:-false}"
+LOG_TO_STDOUT="${LOG_TO_STDOUT:-false}"
 
 if [[ ! -x "${JAVA17}" ]]; then
   echo "JAVA17 not found or not executable: ${JAVA17}" >&2
@@ -23,6 +25,14 @@ if [[ -f "${PID_FILE}" ]]; then
   fi
 fi
 
-nohup "${JAVA17}" -jar "${APP_JAR}" >"${LOG_FILE}" 2>&1 &
+if [[ "${RUN_IN_FOREGROUND}" == "true" ]]; then
+  exec "${JAVA17}" -jar "${APP_JAR}"
+fi
+
+if [[ "${LOG_TO_STDOUT}" == "true" ]]; then
+  nohup "${JAVA17}" -jar "${APP_JAR}" >/dev/stdout 2>&1 &
+else
+  nohup "${JAVA17}" -jar "${APP_JAR}" >"${LOG_FILE}" 2>&1 &
+fi
 echo $! > "${PID_FILE}"
 echo "Started pid=$(cat "${PID_FILE}")"
