@@ -13,6 +13,7 @@ RUN_IN_FOREGROUND="${RUN_IN_FOREGROUND:-false}"
 LOG_TO_STDOUT="${LOG_TO_STDOUT:-false}"
 START_DOCKER="${START_DOCKER:-false}"
 DOCKER_CMD="${DOCKER_CMD:-docker compose up -d}"
+DETACH_FROM_JENKINS="${DETACH_FROM_JENKINS:-true}"
 
 if [[ ! -x "${JAVA17}" ]]; then
   echo "JAVA17 not found or not executable: ${JAVA17}" >&2
@@ -82,6 +83,10 @@ fi
 
 ORIGINAL_DIR="$(pwd)"
 cd "${APP_DIR}"
+if [[ "${DETACH_FROM_JENKINS}" == "true" ]]; then
+  export BUILD_ID=dontKillMe
+  export JENKINS_NODE_COOKIE=dontKillMe
+fi
 nohup setsid "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >"${LOG_FILE}" 2>&1 &
 STARTED_PID=$!
 cd "${ORIGINAL_DIR}"
