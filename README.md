@@ -18,7 +18,7 @@ Redmine のチケットを CSV/Excel から同期する Spring Boot サービス
 ## 本番/テストのDB切り替え
 - 本番/ローカル: Docker の `postgres:16` を使う（`docker compose up -d`）。
   - `DB_URL` / `DB_USER` / `DB_PASSWORD` で接続先は上書き可能。
-- テスト: `application-test.yml` を使い、`jdbc:postgresql://localhost:5432/redmine_upster` に接続。
+- テスト: `application-test.yml` を使い、H2（in-memory）で実行。
   - テストは `@ActiveProfiles("test")` で `test` プロファイル固定。
 
 ## 本番運用例（DB を Docker で管理）
@@ -27,7 +27,7 @@ Redmine のチケットを CSV/Excel から同期する Spring Boot サービス
 
 `/etc/redmine-upster.env` 例:
 ```
-DB_URL=jdbc:postgresql://localhost:5432/redmine_upster
+DB_URL=jdbc:postgresql://localhost:5433/redmine_upster
 DB_USER=postgres
 DB_PASSWORD=postgres
 ```
