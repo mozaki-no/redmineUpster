@@ -3,6 +3,8 @@ set -euo pipefail
 
 JAVA17="${JAVA17:-/usr/lib/jvm/java-17-openjdk-amd64/bin/java}"
 APP_JAR="${APP_JAR:-/var/lib/jenkins/redmine-upster/app.jar}"
+APP_DIR="${APP_DIR:-/var/lib/jenkins/redmine-upster}"
+APP_ARGS="${APP_ARGS:---spring.config.additional-location=file:${APP_DIR}/}"
 LOG_FILE="${LOG_FILE:-/var/lib/jenkins/redmine-upster/app.log}"
 PID_FILE="${PID_FILE:-/var/lib/jenkins/redmine-upster/app.pid}"
 RUN_IN_FOREGROUND="${RUN_IN_FOREGROUND:-false}"
@@ -36,13 +38,14 @@ if [[ "${START_DOCKER}" == "true" ]]; then
 fi
 
 if [[ "${RUN_IN_FOREGROUND}" == "true" ]]; then
-  exec "${JAVA17}" -jar "${APP_JAR}"
+  cd "${APP_DIR}"
+  exec "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS}
 fi
 
 if [[ "${LOG_TO_STDOUT}" == "true" ]]; then
-  nohup "${JAVA17}" -jar "${APP_JAR}" >/dev/stdout 2>&1 &
+  (cd "${APP_DIR}" && nohup "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >/dev/stdout 2>&1 &)
 else
-  nohup "${JAVA17}" -jar "${APP_JAR}" >"${LOG_FILE}" 2>&1 &
+  (cd "${APP_DIR}" && nohup "${JAVA17}" -jar "${APP_JAR}" ${APP_ARGS} >"${LOG_FILE}" 2>&1 &)
 fi
 echo $! > "${PID_FILE}"
 STARTED_PID="$(cat "${PID_FILE}")"
