@@ -8,6 +8,7 @@ BUILD_CMD="${BUILD_CMD:-./mvnw package -DskipTests}"
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/redmine-upster}"
 SERVICE_NAME="${SERVICE_NAME:-redmine-upster}"
 SUDO_CMD="${SUDO_CMD:-}"
+FORCE_BUILD="${FORCE_BUILD:-true}"
 SKIP_SYSTEMCTL="${SKIP_SYSTEMCTL:-false}"
 
 run_cmd() {
@@ -33,8 +34,10 @@ if [[ -z "${SUDO_CMD}" ]]; then
   fi
 fi
 
-if [[ ! -f "${APP_JAR}" ]]; then
-  echo "APP_JAR not found: ${APP_JAR}. Running build..." >&2
+if [[ "${FORCE_BUILD}" == "true" ]]; then
+  echo "FORCE_BUILD=true: building artifact..." >&2
+fi
+if [[ "${FORCE_BUILD}" == "true" || ! -f "${APP_JAR}" ]]; then
   if [[ ! -x "./mvnw" ]]; then
     if command -v mvn >/dev/null 2>&1; then
       BUILD_CMD="mvn package -DskipTests"
@@ -51,6 +54,10 @@ if [[ ! -f "${APP_JAR}" ]]; then
     echo "No jar found under target/ after build." >&2
     exit 1
   fi
+fi
+if [[ ! -f "${APP_JAR}" ]]; then
+  echo "APP_JAR not found: ${APP_JAR}" >&2
+  exit 1
 fi
 if [[ ! -f "${APP_CONFIG}" ]]; then
   echo "APP_CONFIG not found: ${APP_CONFIG}" >&2
