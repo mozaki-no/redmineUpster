@@ -4,7 +4,7 @@ set -euo pipefail
 JAVA17="${JAVA17:-/usr/lib/jvm/java-17-openjdk-amd64/bin/java}"
 APP_JAR="${APP_JAR:-/var/lib/jenkins/redmine-upster/app.jar}"
 APP_DIR="${APP_DIR:-/var/lib/jenkins/redmine-upster}"
-APP_ARGS="${APP_ARGS:---spring.config.additional-location=file:${APP_DIR}/}"
+APP_ARGS="${APP_ARGS:---spring.config.location=classpath:/application.yml,file:${APP_DIR}/application.yml}"
 APP_PORT="${APP_PORT:-3004}"
 AUTO_KILL_PORT="${AUTO_KILL_PORT:-false}"
 LOG_FILE="${LOG_FILE:-/var/lib/jenkins/redmine-upster/app.log}"
