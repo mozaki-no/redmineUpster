@@ -8,6 +8,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
 import mozaki.redmineUpster.config.RedmineProperties;
@@ -19,7 +20,7 @@ public class RedmineClient {
 
 	public RedmineClient(RestTemplateBuilder builder, RedmineProperties properties) {
 		this.properties = properties;
-		this.restTemplate = builder.build();
+		this.restTemplate = builder.requestFactory(SimpleClientHttpRequestFactory::new).build();
 	}
 
 	public Long createIssue(Map<String, Object> issue) {
@@ -47,6 +48,7 @@ public class RedmineClient {
 	private HttpEntity<Map<String, Object>> buildEntity(Map<String, Object> body) {
 		HttpHeaders headers = new HttpHeaders();
 		headers.setContentType(MediaType.APPLICATION_JSON);
+		headers.set("Connection", "close");
 		if (properties.getApiKey() != null && !properties.getApiKey().isBlank()) {
 			headers.set("X-Redmine-API-Key", properties.getApiKey());
 		}
