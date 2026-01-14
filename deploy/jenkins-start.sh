@@ -45,4 +45,12 @@ else
   nohup "${JAVA17}" -jar "${APP_JAR}" >"${LOG_FILE}" 2>&1 &
 fi
 echo $! > "${PID_FILE}"
-echo "Started pid=$(cat "${PID_FILE}")"
+STARTED_PID="$(cat "${PID_FILE}")"
+echo "Started pid=${STARTED_PID}"
+sleep 2
+if kill -0 "${STARTED_PID}" >/dev/null 2>&1; then
+  echo "Process is running (pid=${STARTED_PID})."
+else
+  echo "Process is not running (pid=${STARTED_PID})." >&2
+  exit 1
+fi
