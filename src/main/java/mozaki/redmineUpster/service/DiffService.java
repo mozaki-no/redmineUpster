@@ -16,6 +16,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import mozaki.redmineUpster.domain.DiffEntity;
 import mozaki.redmineUpster.domain.DiffItemEntity;
 import mozaki.redmineUpster.domain.IssueLinkEntity;
+import mozaki.redmineUpster.domain.RedmineProjectEntity;
 import mozaki.redmineUpster.repository.DiffItemRepository;
 import mozaki.redmineUpster.repository.DiffRepository;
 import mozaki.redmineUpster.repository.IssueLinkRepository;
@@ -38,7 +39,15 @@ public class DiffService {
 
 	@Transactional
 	public DiffEntity createDiff(String filename, List<Map<String, String>> rows, Map<String, String> configMap) {
-		DiffEntity diff = diffRepository.save(new DiffEntity(filename));
+		return createDiff(filename, rows, configMap, null);
+	}
+
+	@Transactional
+	public DiffEntity createDiff(String filename, List<Map<String, String>> rows, Map<String, String> configMap,
+			RedmineProjectEntity redmineProject) {
+		DiffEntity diff = new DiffEntity(filename);
+		diff.setRedmineProject(redmineProject);
+		diff = diffRepository.save(diff);
 		List<RowData> parsed = new ArrayList<>();
 		for (Map<String, String> row : rows) {
 			String externalKey = value(row, ColumnDefinitions.COL_ID);
@@ -64,7 +73,7 @@ public class DiffService {
 		Map<String, String> customFieldMap = parseCustomFieldMap(configMap);
 		for (RowData rowData : parsed) {
 			String parentKey = pathToExternalKey.get(rowData.parentPath);
-			String action = resolveAction(rowData.externalKey);
+			String action = resolveAction(rowData.externalKey, redmineProject);
 			String status = resolveStatus(rowData, configMap);
 			DiffItemEntity item = new DiffItemEntity(diff, rowData.externalKey, rowData.subject, parentKey,
 					rowData.levelPath, action, status);
@@ -74,8 +83,13 @@ public class DiffService {
 		return diff;
 	}
 
-	private String resolveAction(String externalKey) {
-		Optional<IssueLinkEntity> existing = issueLinkRepository.findByExternalKey(externalKey);
+	private String resolveAction(String externalKey, RedmineProjectEntity redmineProject) {
+		Optional<IssueLinkEntity> existing;
+		if (redmineProject != null) {
+			existing = issueLinkRepository.findByExternalKeyAndRedmineProject(externalKey, redmineProject);
+		} else {
+			existing = issueLinkRepository.findByExternalKey(externalKey);
+		}
 		return existing.isPresent() ? "UPDATE" : "CREATE";
 	}
 

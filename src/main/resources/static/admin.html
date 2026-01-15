@@ -5,16 +5,17 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 		<title>Redmine Upster 管理</title>
 		<style>
-			@import url("https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;600;700&family=Space+Grotesk:wght@400;600&display=swap");
+			@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700&family=Space+Grotesk:wght@400;600&display=swap");
 
 			:root {
-				--ink: #1d1b16;
-				--paper: #f7f2e9;
+				--ink: #1b1e22;
+				--paper: #f8f5f1;
 				--sun: #ffb347;
-				--sky: #96b8ff;
-				--teal: #1c8c8c;
-				--rose: #f36b6b;
-				--shadow: rgba(26, 22, 18, 0.15);
+				--sky: #78a6ff;
+				--teal: #0f8f7f;
+				--rose: #ef5b6b;
+				--shadow: rgba(30, 35, 45, 0.12);
+				--border: rgba(17, 24, 39, 0.12);
 			}
 
 			* {
@@ -23,17 +24,18 @@
 
 			body {
 				margin: 0;
-				font-family: "Zen Kaku Gothic New", "Space Grotesk", sans-serif;
+				font-family: "Noto Sans JP", "Space Grotesk", sans-serif;
 				color: var(--ink);
-				background: radial-gradient(circle at 10% 10%, #ffe9c5 0%, transparent 45%),
-					radial-gradient(circle at 85% 20%, #d5e3ff 0%, transparent 40%),
-					radial-gradient(circle at 30% 90%, #f5c9c9 0%, transparent 50%),
+				background: radial-gradient(circle at 12% 8%, #ffe6bf 0%, transparent 40%),
+					radial-gradient(circle at 90% 15%, #d9e5ff 0%, transparent 38%),
+					radial-gradient(circle at 20% 90%, #f7c6cc 0%, transparent 45%),
 					var(--paper);
 				min-height: 100vh;
+				line-height: 1.6;
 			}
 
 			.shell {
-				max-width: 1100px;
+				max-width: 1200px;
 				margin: 0 auto;
 				padding: 48px 20px 72px;
 			}
@@ -48,34 +50,33 @@
 			}
 
 			h1 {
-				font-size: clamp(28px, 4vw, 40px);
+				font-size: clamp(30px, 4vw, 42px);
 				margin: 0;
-				letter-spacing: 0.02em;
+				letter-spacing: 0.03em;
 			}
 
 			.badge {
-				background: var(--ink);
+				background: #101827;
 				color: #fff;
 				padding: 6px 14px;
 				border-radius: 999px;
-				font-size: 13px;
-				letter-spacing: 0.08em;
+				font-size: 12px;
+				letter-spacing: 0.14em;
 				text-transform: uppercase;
 			}
 
 			.grid {
 				display: grid;
-				grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+				grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 				gap: 20px;
 			}
 
 			.card {
-				background: rgba(255, 255, 255, 0.75);
-				backdrop-filter: blur(8px);
+				background: #ffffff;
 				border-radius: 18px;
-				padding: 20px;
-				box-shadow: 0 12px 30px var(--shadow);
-				border: 1px solid rgba(0, 0, 0, 0.05);
+				padding: 22px;
+				box-shadow: 0 14px 32px var(--shadow);
+				border: 1px solid var(--border);
 				animation: fadeUp 0.8s ease both;
 			}
 
@@ -85,6 +86,10 @@
 
 			.card:nth-child(3) {
 				animation-delay: 0.24s;
+			}
+
+			.card:nth-child(4) {
+				animation-delay: 0.36s;
 			}
 
 			@keyframes fadeUp {
@@ -99,7 +104,7 @@
 			}
 
 			h2 {
-				font-size: 18px;
+				font-size: 20px;
 				margin: 0 0 12px;
 			}
 
@@ -122,12 +127,17 @@
 			.pill {
 				padding: 4px 10px;
 				border-radius: 999px;
-				background: var(--sky);
+				background: #e4ecff;
 				font-size: 12px;
 			}
 
 			.pill.warn {
 				background: var(--rose);
+				color: #fff;
+			}
+
+			.pill.ok {
+				background: var(--teal);
 				color: #fff;
 			}
 
@@ -140,13 +150,32 @@
 				width: 100%;
 				padding: 12px;
 				border-radius: 12px;
-				border: 1px dashed rgba(0, 0, 0, 0.2);
-				background: rgba(255, 255, 255, 0.6);
+				border: 1px dashed rgba(0, 0, 0, 0.25);
+				background: #f9fafb;
+			}
+
+			input[type="text"] {
+				width: 100%;
+				padding: 10px 12px;
+				border-radius: 10px;
+				border: 1px solid var(--border);
+				background: #f9fafb;
+				font-size: 14px;
+			}
+
+			select {
+				width: 100%;
+				padding: 10px 12px;
+				border-radius: 10px;
+				border: 1px solid var(--border);
+				background: #f9fafb;
+				font-size: 14px;
+				cursor: pointer;
 			}
 
 			button {
 				border: none;
-				background: var(--ink);
+				background: #111827;
 				color: #fff;
 				padding: 12px 16px;
 				border-radius: 12px;
@@ -164,10 +193,19 @@
 				background: var(--teal);
 			}
 
+			button.small {
+				padding: 6px 12px;
+				font-size: 12px;
+			}
+
+			button.danger {
+				background: var(--rose);
+			}
+
 			.status {
 				padding: 10px 12px;
 				border-radius: 10px;
-				background: rgba(0, 0, 0, 0.05);
+				background: #f3f4f6;
 				font-size: 13px;
 			}
 
@@ -182,7 +220,7 @@
 			.list {
 				display: grid;
 				gap: 10px;
-				max-height: 220px;
+				max-height: 260px;
 				overflow: auto;
 				padding-right: 6px;
 			}
@@ -190,8 +228,8 @@
 			.list-item {
 				border-radius: 12px;
 				padding: 10px 12px;
-				background: rgba(255, 255, 255, 0.7);
-				border: 1px solid rgba(0, 0, 0, 0.05);
+				background: #ffffff;
+				border: 1px solid var(--border);
 				display: flex;
 				flex-direction: column;
 				gap: 6px;
@@ -215,6 +253,49 @@
 				color: rgba(0, 0, 0, 0.5);
 				font-size: 12px;
 			}
+
+			.helper {
+				background: #f8fafc;
+				border: 1px dashed var(--border);
+				padding: 10px 12px;
+				border-radius: 12px;
+				font-size: 12px;
+				color: rgba(0, 0, 0, 0.6);
+			}
+
+			.code {
+				font-family: "Space Grotesk", sans-serif;
+				font-size: 12px;
+				background: #eef2ff;
+				padding: 2px 6px;
+				border-radius: 8px;
+			}
+
+			.form-group {
+				display: grid;
+				gap: 6px;
+			}
+
+			.form-row {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 10px;
+			}
+
+			.project-item {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+			}
+
+			.project-info {
+				flex: 1;
+			}
+
+			.project-actions {
+				display: flex;
+				gap: 6px;
+			}
 		</style>
 	</head>
 	<body>
@@ -229,25 +310,39 @@
 
 			<section class="grid">
 				<article class="card">
-					<h2>対象 Redmine</h2>
-					<div class="info-line">
-						<span class="label">Base URL</span>
-						<span id="redmineBase" class="pill">読み込み中</span>
+					<h2>Redmine プロジェクト管理</h2>
+					<div class="controls">
+						<h3 class="label">登録済みプロジェクト</h3>
+						<div id="projectList" class="list"></div>
+						<h3 class="label">新規プロジェクト追加</h3>
+						<div class="form-group">
+							<input type="text" id="projName" placeholder="表示名 (例: 本番環境)">
+							<input type="text" id="projBaseUrl" placeholder="Base URL (例: https://redmine.example.com)">
+							<div class="form-row">
+								<input type="text" id="projApiKey" placeholder="API Key">
+								<input type="text" id="projProjectId" placeholder="Project ID">
+							</div>
+							<label class="inline">
+								<input type="checkbox" id="projIsDefault">
+								<span class="muted">デフォルトに設定</span>
+							</label>
+							<button id="addProject">プロジェクトを追加</button>
+						</div>
 					</div>
-					<div class="info-line">
-						<span class="label">Project ID</span>
-						<span id="redmineProject" class="pill">読み込み中</span>
-					</div>
-					<div class="info-line">
-						<span class="label">API KEY</span>
-						<span id="redmineKey" class="pill">確認中</span>
-					</div>
-					<p class="muted">APIキーは表示しません。設定状態のみ確認できます。</p>
 				</article>
 
 				<article class="card">
 					<h2>CSV/Excel 選択</h2>
 					<div class="controls">
+						<div class="helper">
+							1) プロジェクト選択 → 2) ファイル選択 → 3) 差分作成 → 4) 同期実行
+						</div>
+						<div class="form-group">
+							<span class="label">対象プロジェクト</span>
+							<select id="projectSelect">
+								<option value="">プロジェクトを選択...</option>
+							</select>
+						</div>
 						<input id="fileInput" type="file" accept=".csv,.xlsx,.xls" />
 						<div class="inline">
 							<button id="createDiff">差分を作成</button>
@@ -258,7 +353,38 @@
 							<button id="runSync" class="secondary">同期を実行</button>
 						</div>
 						<div id="status" class="status">待機中</div>
-						<div class="muted">選択した差分ID: <span id="selectedDiff">未選択</span></div>
+						<div class="muted">選択した差分ID: <span id="selectedDiff" class="code">未選択</span></div>
+					</div>
+				</article>
+
+				<article class="card">
+					<h2>スケジュール管理</h2>
+					<div class="controls">
+						<h3 class="label">登録済みスケジュール</h3>
+						<div id="scheduleList" class="list"></div>
+						<h3 class="label">新規スケジュール追加</h3>
+						<div class="form-group">
+							<input type="text" id="schedName" placeholder="スケジュール名 (例: 毎日夜間同期)">
+							<input type="text" id="schedCron" placeholder="Cron式 (例: 0 0 3 * * ?)">
+							<select id="schedProject">
+								<option value="">プロジェクトを選択...</option>
+							</select>
+							<input type="text" id="schedWbsPath" placeholder="WBSファイルパス (任意)">
+							<div class="inline">
+								<label class="inline">
+									<input type="checkbox" id="schedDryRun">
+									<span class="muted">Dry Run</span>
+								</label>
+								<label class="inline">
+									<input type="checkbox" id="schedEnabled" checked>
+									<span class="muted">有効</span>
+								</label>
+							</div>
+							<button id="addSchedule">スケジュールを追加</button>
+						</div>
+						<div class="helper">
+							Cron式例: <code class="code">0 0 3 * * ?</code> (毎日3時) / <code class="code">0 0 */6 * * ?</code> (6時間毎)
+						</div>
 					</div>
 				</article>
 
@@ -284,8 +410,14 @@
 			const diffList = document.getElementById("diffList");
 			const runList = document.getElementById("runList");
 			const logList = document.getElementById("logList");
+			const projectList = document.getElementById("projectList");
+			const projectSelect = document.getElementById("projectSelect");
+			const scheduleList = document.getElementById("scheduleList");
+			const schedProject = document.getElementById("schedProject");
 			const selectedDiff = document.getElementById("selectedDiff");
 			let currentDiffId = null;
+			let currentProjectId = null;
+			let projects = [];
 
 			const setStatus = (message, type = "") => {
 				statusEl.textContent = message;
@@ -298,18 +430,205 @@
 					const text = await res.text();
 					throw new Error(text || `HTTP ${res.status}`);
 				}
+				if (res.status === 204) return null;
 				return res.json();
 			};
 
-			const loadRedmine = async () => {
+			const loadProjects = async () => {
 				try {
-					const info = await fetchJson("/api/admin/redmine");
-					document.getElementById("redmineBase").textContent = info.baseUrl || "未設定";
-					document.getElementById("redmineProject").textContent = info.projectId || "未設定";
-					document.getElementById("redmineKey").textContent = info.apiKeyConfigured ? "設定済み" : "未設定";
-					document.getElementById("redmineKey").classList.toggle("warn", !info.apiKeyConfigured);
+					projects = await fetchJson("/api/redmine-projects");
+					renderProjects(projects);
+					updateProjectSelect(projects);
 				} catch (err) {
-					setStatus(`Redmine情報の取得に失敗: ${err.message}`, "error");
+					setStatus(`プロジェクト取得に失敗: ${err.message}`, "error");
+				}
+			};
+
+			const renderProjects = (projects) => {
+				projectList.innerHTML = "";
+				if (!projects.length) {
+					projectList.innerHTML = '<div class="muted">プロジェクトがありません。</div>';
+					return;
+				}
+				projects.forEach((proj) => {
+					const item = document.createElement("div");
+					item.className = "list-item project-item";
+					item.innerHTML = `
+						<div class="project-info">
+							<strong>${proj.name}</strong>
+							${proj.isDefault ? '<span class="pill ok">デフォルト</span>' : ''}
+							<div class="muted">${proj.baseUrl} / ${proj.projectId}</div>
+							<div class="muted">API Key: ${proj.apiKeyConfigured ? '設定済み' : '未設定'}</div>
+						</div>
+						<div class="project-actions">
+							<button class="small danger" onclick="deleteProject(${proj.id})">削除</button>
+						</div>
+					`;
+					projectList.appendChild(item);
+				});
+			};
+
+			const updateProjectSelect = (projects) => {
+				projectSelect.innerHTML = '<option value="">プロジェクトを選択...</option>';
+				schedProject.innerHTML = '<option value="">プロジェクトを選択...</option>';
+				projects.forEach((proj) => {
+					const option = document.createElement("option");
+					option.value = proj.id;
+					option.textContent = `${proj.name} (${proj.projectId})${proj.isDefault ? ' [デフォルト]' : ''}`;
+					if (proj.isDefault && !currentProjectId) {
+						option.selected = true;
+						currentProjectId = proj.id;
+					}
+					projectSelect.appendChild(option);
+
+					const schedOption = document.createElement("option");
+					schedOption.value = proj.id;
+					schedOption.textContent = `${proj.name} (${proj.projectId})`;
+					schedProject.appendChild(schedOption);
+				});
+			};
+
+			projectSelect.addEventListener("change", () => {
+				currentProjectId = projectSelect.value ? parseInt(projectSelect.value) : null;
+			});
+
+			document.getElementById("addProject").addEventListener("click", async () => {
+				const name = document.getElementById("projName").value.trim();
+				const baseUrl = document.getElementById("projBaseUrl").value.trim();
+				const apiKey = document.getElementById("projApiKey").value.trim();
+				const projectId = document.getElementById("projProjectId").value.trim();
+				const isDefault = document.getElementById("projIsDefault").checked;
+
+				if (!name || !baseUrl || !apiKey || !projectId) {
+					setStatus("全ての項目を入力してください。", "error");
+					return;
+				}
+
+				try {
+					await fetchJson("/api/redmine-projects", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ name, baseUrl, apiKey, projectId, isDefault }),
+					});
+					setStatus("プロジェクトを追加しました。", "ok");
+					document.getElementById("projName").value = "";
+					document.getElementById("projBaseUrl").value = "";
+					document.getElementById("projApiKey").value = "";
+					document.getElementById("projProjectId").value = "";
+					document.getElementById("projIsDefault").checked = false;
+					await loadProjects();
+				} catch (err) {
+					setStatus(`プロジェクト追加に失敗: ${err.message}`, "error");
+				}
+			});
+
+			window.deleteProject = async (id) => {
+				if (!confirm("このプロジェクトを削除しますか？")) return;
+				try {
+					await fetchJson(`/api/redmine-projects/${id}`, { method: "DELETE" });
+					setStatus("プロジェクトを削除しました。", "ok");
+					await loadProjects();
+				} catch (err) {
+					setStatus(`プロジェクト削除に失敗: ${err.message}`, "error");
+				}
+			};
+
+			const loadSchedules = async () => {
+				try {
+					const schedules = await fetchJson("/api/schedules");
+					renderSchedules(schedules);
+				} catch (err) {
+					setStatus(`スケジュール取得に失敗: ${err.message}`, "error");
+				}
+			};
+
+			const renderSchedules = (schedules) => {
+				scheduleList.innerHTML = "";
+				if (!schedules.length) {
+					scheduleList.innerHTML = '<div class="muted">スケジュールがありません。</div>';
+					return;
+				}
+				schedules.forEach((sched) => {
+					const item = document.createElement("div");
+					item.className = "list-item project-item";
+					const nextRun = sched.nextRunAt ? new Date(sched.nextRunAt).toLocaleString() : '未設定';
+					const lastRun = sched.lastRunAt ? new Date(sched.lastRunAt).toLocaleString() : '未実行';
+					item.innerHTML = `
+						<div class="project-info">
+							<strong>${sched.name}</strong>
+							${sched.enabled ? '<span class="pill ok">有効</span>' : '<span class="pill warn">無効</span>'}
+							${sched.dryRun ? '<span class="pill">DryRun</span>' : ''}
+							<div class="muted">Cron: <code class="code">${sched.cronExpression}</code></div>
+							<div class="muted">プロジェクト: ${sched.redmineProjectName}</div>
+							<div class="muted">次回実行: ${nextRun}</div>
+							<div class="muted">最終実行: ${lastRun}</div>
+						</div>
+						<div class="project-actions">
+							<button class="small ${sched.enabled ? '' : 'secondary'}" onclick="toggleSchedule(${sched.id})">${sched.enabled ? '無効化' : '有効化'}</button>
+							<button class="small danger" onclick="deleteSchedule(${sched.id})">削除</button>
+						</div>
+					`;
+					scheduleList.appendChild(item);
+				});
+			};
+
+			document.getElementById("addSchedule").addEventListener("click", async () => {
+				const name = document.getElementById("schedName").value.trim();
+				const cronExpression = document.getElementById("schedCron").value.trim();
+				const redmineProjectId = document.getElementById("schedProject").value;
+				const wbsFilePath = document.getElementById("schedWbsPath").value.trim();
+				const dryRun = document.getElementById("schedDryRun").checked;
+				const enabled = document.getElementById("schedEnabled").checked;
+
+				if (!name || !cronExpression || !redmineProjectId) {
+					setStatus("スケジュール名、Cron式、プロジェクトは必須です。", "error");
+					return;
+				}
+
+				try {
+					await fetchJson("/api/schedules", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							name,
+							cronExpression,
+							redmineProjectId: parseInt(redmineProjectId),
+							wbsFilePath: wbsFilePath || null,
+							dryRun,
+							enabled
+						}),
+					});
+					setStatus("スケジュールを追加しました。", "ok");
+					document.getElementById("schedName").value = "";
+					document.getElementById("schedCron").value = "";
+					document.getElementById("schedProject").value = "";
+					document.getElementById("schedWbsPath").value = "";
+					document.getElementById("schedDryRun").checked = false;
+					document.getElementById("schedEnabled").checked = true;
+					await loadSchedules();
+				} catch (err) {
+					setStatus(`スケジュール追加に失敗: ${err.message}`, "error");
+				}
+			});
+
+			window.toggleSchedule = async (id) => {
+				try {
+					await fetchJson(`/api/schedules/${id}/toggle`, { method: "POST" });
+					setStatus("スケジュールを更新しました。", "ok");
+					await loadSchedules();
+				} catch (err) {
+					setStatus(`スケジュール更新に失敗: ${err.message}`, "error");
+				}
+			};
+
+			window.deleteSchedule = async (id) => {
+				if (!confirm("このスケジュールを削除しますか？")) return;
+				try {
+					await fetchJson(`/api/schedules/${id}`, { method: "DELETE" });
+					setStatus("スケジュールを削除しました。", "ok");
+					await loadSchedules();
+				} catch (err) {
+					setStatus(`スケジュール削除に失敗: ${err.message}`, "error");
 				}
 			};
 
@@ -325,11 +644,14 @@
 					item.innerHTML = `
 						<strong>#${diff.id}</strong>
 						<div>${diff.filename || "no-name"}</div>
-						<div class="muted">items: ${diff.itemCount} / ${new Date(diff.createdAt).toLocaleString()}</div>
+						<div class="muted">
+							items: ${diff.itemCount} / ${new Date(diff.createdAt).toLocaleString()}
+							${diff.redmineProjectName ? `<br>プロジェクト: ${diff.redmineProjectName}` : ''}
+						</div>
 					`;
 					const btn = document.createElement("button");
 					btn.textContent = "この差分を選択";
-					btn.addEventListener("click", () => selectDiff(diff.id));
+					btn.addEventListener("click", () => selectDiff(diff.id, diff.redmineProjectId));
 					item.appendChild(btn);
 					diffList.appendChild(item);
 				});
@@ -381,9 +703,13 @@
 				}
 			};
 
-			const selectDiff = (diffId) => {
+			const selectDiff = (diffId, projectId) => {
 				currentDiffId = diffId;
 				selectedDiff.textContent = diffId;
+				if (projectId) {
+					currentProjectId = projectId;
+					projectSelect.value = projectId;
+				}
 				setStatus(`差分 #${diffId} を選択しました。`, "ok");
 			};
 
@@ -397,7 +723,11 @@
 				}
 			};
 
-			document.getElementById("refresh").addEventListener("click", loadLists);
+			document.getElementById("refresh").addEventListener("click", () => {
+				loadProjects();
+				loadSchedules();
+				loadLists();
+			});
 
 			document.getElementById("createDiff").addEventListener("click", async () => {
 				if (!fileInput.files.length) {
@@ -407,14 +737,61 @@
 				setStatus("差分を作成しています...");
 				const formData = new FormData();
 				formData.append("file", fileInput.files[0]);
+				if (currentProjectId) {
+					formData.append("redmineProjectId", currentProjectId);
+				}
 				try {
 					const diff = await fetchJson("/api/diffs", { method: "POST", body: formData });
-					selectDiff(diff.id);
+					selectDiff(diff.id, diff.redmineProjectId);
 					await loadLists();
 				} catch (err) {
 					setStatus(`差分作成に失敗: ${err.message}`, "error");
 				}
 			});
+
+			let currentEventSource = null;
+
+			const subscribeToLogs = (runId) => {
+				if (currentEventSource) {
+					currentEventSource.close();
+				}
+				logList.innerHTML = '<div class="muted">リアルタイムログを受信中...</div>';
+				currentEventSource = new EventSource(`/api/sse/runs/${runId}/logs`);
+
+				currentEventSource.addEventListener("log", (event) => {
+					const log = JSON.parse(event.data);
+					if (logList.querySelector('.muted')) {
+						logList.innerHTML = '';
+					}
+					const item = document.createElement("div");
+					item.className = "list-item";
+					item.innerHTML = `
+						<strong>${log.level}</strong>
+						<div>${log.message}</div>
+						<div class="muted">${new Date(log.createdAt).toLocaleString()}</div>
+					`;
+					logList.appendChild(item);
+					logList.scrollTop = logList.scrollHeight;
+				});
+
+				currentEventSource.addEventListener("progress", (event) => {
+					const progress = JSON.parse(event.data);
+					setStatus(`進捗: ${progress.processed}/${progress.total} (${progress.percentage}%) - ${progress.currentItem}`, "ok");
+				});
+
+				currentEventSource.addEventListener("complete", (event) => {
+					const data = JSON.parse(event.data);
+					setStatus(`同期完了: ${data.status}`, data.status === "SUCCESS" ? "ok" : "error");
+					currentEventSource.close();
+					currentEventSource = null;
+					loadLists();
+				});
+
+				currentEventSource.onerror = () => {
+					currentEventSource.close();
+					currentEventSource = null;
+				};
+			};
 
 			document.getElementById("runSync").addEventListener("click", async () => {
 				if (!currentDiffId) {
@@ -425,6 +802,7 @@
 				const body = {
 					diffId: currentDiffId,
 					dryRun: document.getElementById("dryRun").checked,
+					redmineProjectId: currentProjectId,
 				};
 				try {
 					const run = await fetchJson("/api/runs", {
@@ -433,14 +811,15 @@
 						body: JSON.stringify(body),
 					});
 					setStatus(`同期を開始しました。Run #${run.id}`, "ok");
+					subscribeToLogs(run.id);
 					await loadLists();
-					await loadLogs(run.id);
 				} catch (err) {
 					setStatus(`同期実行に失敗: ${err.message}`, "error");
 				}
 			});
 
-			loadRedmine();
+			loadProjects();
+			loadSchedules();
 			loadLists();
 		</script>
 	</body>

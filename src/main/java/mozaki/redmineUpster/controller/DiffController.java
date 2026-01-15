@@ -14,10 +14,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 import mozaki.redmineUpster.domain.DiffEntity;
 import mozaki.redmineUpster.domain.DiffItemEntity;
+import mozaki.redmineUpster.domain.RedmineProjectEntity;
 import mozaki.redmineUpster.dto.DiffItemResponse;
 import mozaki.redmineUpster.dto.DiffResponse;
 import mozaki.redmineUpster.repository.DiffItemRepository;
 import mozaki.redmineUpster.repository.DiffRepository;
+import mozaki.redmineUpster.repository.RedmineProjectRepository;
 import mozaki.redmineUpster.service.ConfigService;
 import mozaki.redmineUpster.service.DiffService;
 import mozaki.redmineUpster.service.SpreadsheetParser;
@@ -28,14 +30,17 @@ import mozaki.redmineUpster.util.ColumnDefinitions;
 public class DiffController {
 	private final DiffRepository diffRepository;
 	private final DiffItemRepository diffItemRepository;
+	private final RedmineProjectRepository redmineProjectRepository;
 	private final SpreadsheetParser spreadsheetParser;
 	private final DiffService diffService;
 	private final ConfigService configService;
 
 	public DiffController(DiffRepository diffRepository, DiffItemRepository diffItemRepository,
-			SpreadsheetParser spreadsheetParser, DiffService diffService, ConfigService configService) {
+			RedmineProjectRepository redmineProjectRepository, SpreadsheetParser spreadsheetParser,
+			DiffService diffService, ConfigService configService) {
 		this.diffRepository = diffRepository;
 		this.diffItemRepository = diffItemRepository;
+		this.redmineProjectRepository = redmineProjectRepository;
 		this.spreadsheetParser = spreadsheetParser;
 		this.diffService = diffService;
 		this.configService = configService;
@@ -44,18 +49,36 @@ public class DiffController {
 	@GetMapping
 	public List<DiffResponse> list() {
 		return diffRepository.findAll().stream()
-				.map(diff -> new DiffResponse(diff.getId(), diff.getFilename(), diff.getCreatedAt(),
-						(int) diffItemRepository.countByDiffId(diff.getId())))
+				.map(diff -> {
+					RedmineProjectEntity project = diff.getRedmineProject();
+					return new DiffResponse(
+							diff.getId(),
+							diff.getFilename(),
+							diff.getCreatedAt(),
+							(int) diffItemRepository.countByDiffId(diff.getId()),
+							project != null ? project.getId() : null,
+							project != null ? project.getName() : null);
+				})
 				.toList();
 	}
 
 	@PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-	public DiffResponse create(@RequestParam("file") MultipartFile file) throws IOException {
+	public DiffResponse create(@RequestParam("file") MultipartFile file,
+			@RequestParam(value = "redmineProjectId", required = false) Long redmineProjectId) throws IOException {
 		SpreadsheetParser.ParsedSheet sheet = spreadsheetParser.parse(file);
 		validateRequiredHeaders(sheet.headers());
-		DiffEntity diff = diffService.createDiff(file.getOriginalFilename(), sheet.rows(), configService.getConfigMap());
+		RedmineProjectEntity project = redmineProjectId != null
+				? redmineProjectRepository.findById(redmineProjectId).orElse(null)
+				: null;
+		DiffEntity diff = diffService.createDiff(file.getOriginalFilename(), sheet.rows(), configService.getConfigMap(), project);
 		int count = (int) diffItemRepository.countByDiffId(diff.getId());
-		return new DiffResponse(diff.getId(), diff.getFilename(), diff.getCreatedAt(), count);
+		return new DiffResponse(
+				diff.getId(),
+				diff.getFilename(),
+				diff.getCreatedAt(),
+				count,
+				project != null ? project.getId() : null,
+				project != null ? project.getName() : null);
 	}
 
 	@GetMapping("/{diffId}/items")

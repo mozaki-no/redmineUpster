@@ -13,16 +13,19 @@ import mozaki.redmineUpster.domain.RunEntity;
 import mozaki.redmineUpster.dto.RunRequest;
 import mozaki.redmineUpster.dto.RunResponse;
 import mozaki.redmineUpster.repository.RunRepository;
+import mozaki.redmineUpster.service.AsyncRunService;
 import mozaki.redmineUpster.service.RunService;
 
 @RestController
 @RequestMapping(path = "/api/runs", produces = MediaType.APPLICATION_JSON_VALUE)
 public class RunController {
 	private final RunService runService;
+	private final AsyncRunService asyncRunService;
 	private final RunRepository runRepository;
 
-	public RunController(RunService runService, RunRepository runRepository) {
+	public RunController(RunService runService, AsyncRunService asyncRunService, RunRepository runRepository) {
 		this.runService = runService;
+		this.asyncRunService = asyncRunService;
 		this.runRepository = runRepository;
 	}
 
@@ -35,7 +38,15 @@ public class RunController {
 
 	@PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
 	public RunResponse run(@RequestBody RunRequest request) {
-		RunEntity run = runService.runDiff(request.getDiffId(), request.isDryRun());
+		// デフォルトで非同期実行（リアルタイムログ対応）
+		RunEntity run = asyncRunService.startRun(request.getDiffId(), request.isDryRun(), request.getRedmineProjectId());
+		return toResponse(run);
+	}
+
+	@PostMapping(value = "/sync", consumes = MediaType.APPLICATION_JSON_VALUE)
+	public RunResponse runSync(@RequestBody RunRequest request) {
+		// 同期実行（後方互換性のため）
+		RunEntity run = runService.runDiff(request.getDiffId(), request.isDryRun(), request.getRedmineProjectId());
 		return toResponse(run);
 	}
 

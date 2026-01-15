@@ -7,7 +7,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +31,7 @@ import mozaki.redmineUpster.repository.RunRepository;
 import mozaki.redmineUpster.util.DateParser;
 
 @Service
-public class RunService {
+public class AsyncRunService {
 	private final RunRepository runRepository;
 	private final RunLogRepository runLogRepository;
 	private final DiffRepository diffRepository;
@@ -38,12 +40,14 @@ public class RunService {
 	private final RedmineProjectRepository redmineProjectRepository;
 	private final ConfigService configService;
 	private final RedmineClientFactory redmineClientFactory;
+	private final SseEmitterService sseEmitterService;
 	private final ObjectMapper objectMapper;
 
-	public RunService(RunRepository runRepository, RunLogRepository runLogRepository, DiffRepository diffRepository,
-			DiffItemRepository diffItemRepository, IssueLinkRepository issueLinkRepository,
-			RedmineProjectRepository redmineProjectRepository, ConfigService configService,
-			RedmineClientFactory redmineClientFactory, ObjectMapper objectMapper) {
+	public AsyncRunService(RunRepository runRepository, RunLogRepository runLogRepository,
+			DiffRepository diffRepository, DiffItemRepository diffItemRepository,
+			IssueLinkRepository issueLinkRepository, RedmineProjectRepository redmineProjectRepository,
+			ConfigService configService, RedmineClientFactory redmineClientFactory,
+			SseEmitterService sseEmitterService, ObjectMapper objectMapper) {
 		this.runRepository = runRepository;
 		this.runLogRepository = runLogRepository;
 		this.diffRepository = diffRepository;
@@ -52,26 +56,43 @@ public class RunService {
 		this.redmineProjectRepository = redmineProjectRepository;
 		this.configService = configService;
 		this.redmineClientFactory = redmineClientFactory;
+		this.sseEmitterService = sseEmitterService;
 		this.objectMapper = objectMapper;
 	}
 
 	@Transactional
-	public RunEntity runDiff(Long diffId, boolean dryRun) {
-		return runDiff(diffId, dryRun, null);
-	}
-
-	@Transactional
-	public RunEntity runDiff(Long diffId, boolean dryRun, Long redmineProjectId) {
+	public RunEntity startRun(Long diffId, boolean dryRun, Long redmineProjectId) {
 		DiffEntity diff = diffRepository.findById(diffId)
 				.orElseThrow(() -> new IllegalArgumentException("diff not found: " + diffId));
+		RunEntity run = runRepository.save(new RunEntity(diff, dryRun, "RUNNING"));
+		executeAsync(run.getId(), diffId, dryRun, redmineProjectId);
+		return run;
+	}
 
-		// プロジェクトの解決: 引数 > Diff > デフォルト
+	@Async("taskExecutor")
+	public CompletableFuture<Void> executeAsync(Long runId, Long diffId, boolean dryRun, Long redmineProjectId) {
+		try {
+			executeRun(runId, diffId, dryRun, redmineProjectId);
+		} catch (Exception e) {
+			updateRunStatus(runId, "FAILED");
+			sseEmitterService.sendLog(runId, "ERROR", "Unexpected error: " + e.getMessage());
+			sseEmitterService.sendComplete(runId, "FAILED");
+		}
+		return CompletableFuture.completedFuture(null);
+	}
+
+	private void executeRun(Long runId, Long diffId, boolean dryRun, Long redmineProjectId) {
+		DiffEntity diff = diffRepository.findById(diffId).orElse(null);
+		if (diff == null) {
+			updateRunStatus(runId, "FAILED");
+			return;
+		}
+
 		RedmineProjectEntity project = resolveProject(redmineProjectId, diff);
 		RedmineClient client = project != null
 				? redmineClientFactory.createClient(project)
 				: redmineClientFactory.createDefaultClient();
 
-		RunEntity run = runRepository.save(new RunEntity(diff, dryRun, "RUNNING"));
 		Map<String, String> configMap = configService.getConfigMap();
 		Map<String, String> customFieldMap = parseCustomFieldMap(configMap);
 		Map<String, Long> createdIssueIds = new HashMap<>();
@@ -80,43 +101,78 @@ public class RunService {
 		List<DiffItemEntity> items = new ArrayList<>(diffItemRepository.findByDiffIdOrderById(diffId));
 		items.sort(Comparator.comparingInt(this::depth));
 
+		int total = items.size();
+		int processed = 0;
+
+		sseEmitterService.sendProgress(runId, total, processed, "開始中...");
+
 		for (DiffItemEntity item : items) {
 			try {
 				if (dryRun) {
-					log(run, "INFO", "DRY_RUN " + item.getAction() + " " + item.getExternalKey() + " " + item.getSubject());
-					continue;
-				}
-				Map<String, Object> issuePayload = buildIssuePayload(item, client, configMap, customFieldMap, createdIssueIds, project);
-				if ("CREATE".equalsIgnoreCase(item.getAction())) {
-					Long issueId = client.createIssue(issuePayload);
-					if (issueId == null) {
-						hasErrors = true;
-						log(run, "ERROR", "create failed: " + item.getExternalKey());
-						continue;
-					}
-					IssueLinkEntity link = new IssueLinkEntity(item.getExternalKey(), issueId, project);
-					issueLinkRepository.save(link);
-					createdIssueIds.put(item.getExternalKey(), issueId);
-					log(run, "INFO", "created issue " + issueId + " for " + item.getExternalKey());
+					String msg = "DRY_RUN " + item.getAction() + " " + item.getExternalKey() + " " + item.getSubject();
+					log(runId, "INFO", msg);
+					sseEmitterService.sendLog(runId, "INFO", msg);
 				} else {
-					Optional<IssueLinkEntity> link = findIssueLink(item.getExternalKey(), project);
-					if (link.isEmpty()) {
-						hasErrors = true;
-						log(run, "ERROR", "missing issue link for " + item.getExternalKey());
-						continue;
+					Map<String, Object> issuePayload = buildIssuePayload(item, client, configMap, customFieldMap,
+							createdIssueIds, project, runId);
+					if ("CREATE".equalsIgnoreCase(item.getAction())) {
+						Long issueId = client.createIssue(issuePayload);
+						if (issueId == null) {
+							hasErrors = true;
+							String msg = "create failed: " + item.getExternalKey();
+							log(runId, "ERROR", msg);
+							sseEmitterService.sendLog(runId, "ERROR", msg);
+						} else {
+							IssueLinkEntity link = new IssueLinkEntity(item.getExternalKey(), issueId, project);
+							issueLinkRepository.save(link);
+							createdIssueIds.put(item.getExternalKey(), issueId);
+							String msg = "created issue " + issueId + " for " + item.getExternalKey();
+							log(runId, "INFO", msg);
+							sseEmitterService.sendLog(runId, "INFO", msg);
+						}
+					} else {
+						Optional<IssueLinkEntity> link = findIssueLink(item.getExternalKey(), project);
+						if (link.isEmpty()) {
+							hasErrors = true;
+							String msg = "missing issue link for " + item.getExternalKey();
+							log(runId, "ERROR", msg);
+							sseEmitterService.sendLog(runId, "ERROR", msg);
+						} else {
+							client.updateIssue(link.get().getIssueId(), issuePayload);
+							String msg = "updated issue " + link.get().getIssueId() + " for " + item.getExternalKey();
+							log(runId, "INFO", msg);
+							sseEmitterService.sendLog(runId, "INFO", msg);
+						}
 					}
-					client.updateIssue(link.get().getIssueId(), issuePayload);
-					log(run, "INFO", "updated issue " + link.get().getIssueId() + " for " + item.getExternalKey());
 				}
 			} catch (RuntimeException ex) {
 				hasErrors = true;
-				log(run, "ERROR", "sync failed for " + item.getExternalKey() + ": " + ex.getMessage());
+				String msg = "sync failed for " + item.getExternalKey() + ": " + ex.getMessage();
+				log(runId, "ERROR", msg);
+				sseEmitterService.sendLog(runId, "ERROR", msg);
 			}
+
+			processed++;
+			sseEmitterService.sendProgress(runId, total, processed, item.getSubject());
 		}
 
-		run.setStatus(dryRun ? "DRY_RUN" : (hasErrors ? "FAILED" : "SUCCESS"));
-		run.setFinishedAt(Instant.now());
-		return runRepository.save(run);
+		String finalStatus = dryRun ? "DRY_RUN" : (hasErrors ? "FAILED" : "SUCCESS");
+		updateRunStatus(runId, finalStatus);
+		sseEmitterService.sendComplete(runId, finalStatus);
+	}
+
+	private void updateRunStatus(Long runId, String status) {
+		runRepository.findById(runId).ifPresent(run -> {
+			run.setStatus(status);
+			run.setFinishedAt(Instant.now());
+			runRepository.save(run);
+		});
+	}
+
+	private void log(Long runId, String level, String message) {
+		runRepository.findById(runId).ifPresent(run -> {
+			runLogRepository.save(new RunLogEntity(run, level, message));
+		});
 	}
 
 	private RedmineProjectEntity resolveProject(Long redmineProjectId, DiffEntity diff) {
@@ -136,8 +192,9 @@ public class RunService {
 		return issueLinkRepository.findByExternalKey(externalKey);
 	}
 
-	private Map<String, Object> buildIssuePayload(DiffItemEntity item, RedmineClient client, Map<String, String> configMap,
-			Map<String, String> customFieldMap, Map<String, Long> createdIssueIds, RedmineProjectEntity project) {
+	private Map<String, Object> buildIssuePayload(DiffItemEntity item, RedmineClient client,
+			Map<String, String> configMap, Map<String, String> customFieldMap,
+			Map<String, Long> createdIssueIds, RedmineProjectEntity project, Long runId) {
 		Map<String, Object> issue = new HashMap<>();
 		String projectId = client.getProjectId();
 		if (projectId == null || projectId.isBlank()) {
@@ -195,7 +252,8 @@ public class RunService {
 		return issue;
 	}
 
-	private Long resolveParentIssueId(String parentKey, Map<String, Long> createdIssueIds, RedmineProjectEntity project) {
+	private Long resolveParentIssueId(String parentKey, Map<String, Long> createdIssueIds,
+			RedmineProjectEntity project) {
 		if (parentKey == null || parentKey.isBlank()) {
 			return null;
 		}
@@ -268,15 +326,11 @@ public class RunService {
 			return Map.of();
 		}
 		try {
-			return objectMapper.readValue(raw, objectMapper.getTypeFactory().constructMapType(Map.class, String.class,
-					String.class));
+			return objectMapper.readValue(raw,
+					objectMapper.getTypeFactory().constructMapType(Map.class, String.class, String.class));
 		} catch (JsonProcessingException ex) {
 			return Map.of();
 		}
-	}
-
-	private void log(RunEntity run, String level, String message) {
-		runLogRepository.save(new RunLogEntity(run, level, message));
 	}
 
 	private boolean isEnabled(String value) {

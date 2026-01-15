@@ -35,6 +35,10 @@ public class RunEntity {
 	@Column(name = "finished_at")
 	private Instant finishedAt;
 
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "schedule_id")
+	private ScheduleEntity schedule;
+
 	public RunEntity() {
 	}
 
@@ -78,5 +82,13 @@ public class RunEntity {
 
 	public void setFinishedAt(Instant finishedAt) {
 		this.finishedAt = finishedAt;
+	}
+
+	public ScheduleEntity getSchedule() {
+		return schedule;
+	}
+
+	public void setSchedule(ScheduleEntity schedule) {
+		this.schedule = schedule;
 	}
 }
