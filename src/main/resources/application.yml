@@ -1,10 +1,8 @@
 spring:
   application:
     name: redmineUpster
-server:
-  port: 3004
   datasource:
-    url: "${DB_URL:jdbc:postgresql://localhost:5433/redmine_upster}"
+    url: "${DB_URL:jdbc:postgresql://localhost:5432/redmine_upster}"
     username: "${DB_USER:postgres}"
     password: "${DB_PASSWORD:postgres}"
   jpa:
@@ -18,6 +16,8 @@ server:
     time-zone: Asia/Tokyo
   flyway:
     enabled: true
+server:
+  port: 3004
 
 redmine:
   base-url: "${REDMINE_BASE_URL:http://localhost:3000}"
