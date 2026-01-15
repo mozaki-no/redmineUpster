@@ -8,4 +8,6 @@ import mozaki.redmineUpster.domain.RunLogEntity;
 
 public interface RunLogRepository extends JpaRepository<RunLogEntity, Long> {
 	List<RunLogEntity> findByRunIdOrderById(Long runId);
+
+	void deleteByRunId(Long runId);
 }

@@ -648,13 +648,30 @@
 							items: ${diff.itemCount} / ${new Date(diff.createdAt).toLocaleString()}
 							${diff.redmineProjectName ? `<br>プロジェクト: ${diff.redmineProjectName}` : ''}
 						</div>
+						<div class="inline">
+							<button onclick="selectDiff(${diff.id}, ${diff.redmineProjectId || 'null'})">選択</button>
+							<button class="small danger" onclick="deleteDiff(${diff.id})">削除</button>
+						</div>
 					`;
-					const btn = document.createElement("button");
-					btn.textContent = "この差分を選択";
-					btn.addEventListener("click", () => selectDiff(diff.id, diff.redmineProjectId));
-					item.appendChild(btn);
 					diffList.appendChild(item);
 				});
+			};
+
+			window.selectDiff = selectDiff;
+
+			window.deleteDiff = async (id) => {
+				if (!confirm("この差分と関連する実行履歴を全て削除しますか？")) return;
+				try {
+					await fetchJson(`/api/diffs/${id}`, { method: "DELETE" });
+					setStatus("差分を削除しました。", "ok");
+					if (currentDiffId === id) {
+						currentDiffId = null;
+						selectedDiff.textContent = "未選択";
+					}
+					await loadLists();
+				} catch (err) {
+					setStatus(`差分削除に失敗: ${err.message}`, "error");
+				}
 			};
 
 			const renderRuns = (runs) => {
@@ -670,13 +687,26 @@
 						<strong>Run #${run.id}</strong>
 						<div>diff: ${run.diffId} / dryRun: ${run.dryRun}</div>
 						<div class="muted">status: ${run.status} / ${new Date(run.startedAt).toLocaleString()}</div>
+						<div class="inline">
+							<button onclick="loadLogs(${run.id})">ログ取得</button>
+							<button class="small danger" onclick="deleteRun(${run.id})">削除</button>
+						</div>
 					`;
-					const btn = document.createElement("button");
-					btn.textContent = "ログ取得";
-					btn.addEventListener("click", () => loadLogs(run.id));
-					item.appendChild(btn);
 					runList.appendChild(item);
 				});
+			};
+
+			window.loadLogs = loadLogs;
+
+			window.deleteRun = async (id) => {
+				if (!confirm("この実行履歴を削除しますか？")) return;
+				try {
+					await fetchJson(`/api/runs/${id}`, { method: "DELETE" });
+					setStatus("実行履歴を削除しました。", "ok");
+					await loadLists();
+				} catch (err) {
+					setStatus(`実行履歴削除に失敗: ${err.message}`, "error");
+				}
 			};
 
 			const loadLogs = async (runId) => {

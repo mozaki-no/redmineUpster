@@ -10,4 +10,6 @@ public interface DiffItemRepository extends JpaRepository<DiffItemEntity, Long> 
 	List<DiffItemEntity> findByDiffIdOrderById(Long diffId);
 
 	long countByDiffId(Long diffId);
+
+	void deleteByDiffId(Long diffId);
 }

@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.util.List;
 
 import org.springframework.http.MediaType;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,6 +22,8 @@ import mozaki.redmineUpster.dto.DiffResponse;
 import mozaki.redmineUpster.repository.DiffItemRepository;
 import mozaki.redmineUpster.repository.DiffRepository;
 import mozaki.redmineUpster.repository.RedmineProjectRepository;
+import mozaki.redmineUpster.repository.RunLogRepository;
+import mozaki.redmineUpster.repository.RunRepository;
 import mozaki.redmineUpster.service.ConfigService;
 import mozaki.redmineUpster.service.DiffService;
 import mozaki.redmineUpster.service.SpreadsheetParser;
@@ -31,16 +35,21 @@ public class DiffController {
 	private final DiffRepository diffRepository;
 	private final DiffItemRepository diffItemRepository;
 	private final RedmineProjectRepository redmineProjectRepository;
+	private final RunRepository runRepository;
+	private final RunLogRepository runLogRepository;
 	private final SpreadsheetParser spreadsheetParser;
 	private final DiffService diffService;
 	private final ConfigService configService;
 
 	public DiffController(DiffRepository diffRepository, DiffItemRepository diffItemRepository,
-			RedmineProjectRepository redmineProjectRepository, SpreadsheetParser spreadsheetParser,
+			RedmineProjectRepository redmineProjectRepository, RunRepository runRepository,
+			RunLogRepository runLogRepository, SpreadsheetParser spreadsheetParser,
 			DiffService diffService, ConfigService configService) {
 		this.diffRepository = diffRepository;
 		this.diffItemRepository = diffItemRepository;
 		this.redmineProjectRepository = redmineProjectRepository;
+		this.runRepository = runRepository;
+		this.runLogRepository = runLogRepository;
 		this.spreadsheetParser = spreadsheetParser;
 		this.diffService = diffService;
 		this.configService = configService;
@@ -88,6 +97,21 @@ public class DiffController {
 				.map(item -> new DiffItemResponse(item.getId(), item.getExternalKey(), item.getSubject(),
 						item.getParentKey(), item.getLevelPath(), item.getAction(), item.getStatus()))
 				.toList();
+	}
+
+	@DeleteMapping("/{diffId}")
+	@Transactional
+	public void delete(@PathVariable("diffId") Long diffId) {
+		// 関連するRunのログを削除
+		for (var run : runRepository.findByDiffId(diffId)) {
+			runLogRepository.deleteByRunId(run.getId());
+		}
+		// 関連するRunを削除
+		runRepository.deleteAll(runRepository.findByDiffId(diffId));
+		// DiffItemを削除
+		diffItemRepository.deleteByDiffId(diffId);
+		// Diffを削除
+		diffRepository.deleteById(diffId);
 	}
 
 	private void validateRequiredHeaders(List<String> headers) {
