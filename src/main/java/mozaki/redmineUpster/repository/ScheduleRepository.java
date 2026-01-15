@@ -8,4 +8,6 @@ import mozaki.redmineUpster.domain.ScheduleEntity;
 
 public interface ScheduleRepository extends JpaRepository<ScheduleEntity, Long> {
 	List<ScheduleEntity> findByEnabledTrue();
+
+	void deleteByRedmineProjectId(Long redmineProjectId);
 }

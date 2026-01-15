@@ -7,19 +7,42 @@ import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import mozaki.redmineUpster.domain.DiffEntity;
 import mozaki.redmineUpster.domain.RedmineProjectEntity;
+import mozaki.redmineUpster.domain.RunEntity;
 import mozaki.redmineUpster.dto.RedmineProjectRequest;
+import mozaki.redmineUpster.repository.DiffItemRepository;
+import mozaki.redmineUpster.repository.DiffRepository;
+import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.repository.RedmineProjectRepository;
+import mozaki.redmineUpster.repository.RunLogRepository;
+import mozaki.redmineUpster.repository.RunRepository;
+import mozaki.redmineUpster.repository.ScheduleRepository;
 
 @Service
 public class RedmineProjectService {
 	private final RedmineProjectRepository redmineProjectRepository;
 	private final RedmineClientFactory redmineClientFactory;
+	private final DiffRepository diffRepository;
+	private final DiffItemRepository diffItemRepository;
+	private final RunRepository runRepository;
+	private final RunLogRepository runLogRepository;
+	private final ScheduleRepository scheduleRepository;
+	private final IssueLinkRepository issueLinkRepository;
 
 	public RedmineProjectService(RedmineProjectRepository redmineProjectRepository,
-			RedmineClientFactory redmineClientFactory) {
+			RedmineClientFactory redmineClientFactory, DiffRepository diffRepository,
+			DiffItemRepository diffItemRepository, RunRepository runRepository,
+			RunLogRepository runLogRepository, ScheduleRepository scheduleRepository,
+			IssueLinkRepository issueLinkRepository) {
 		this.redmineProjectRepository = redmineProjectRepository;
 		this.redmineClientFactory = redmineClientFactory;
+		this.diffRepository = diffRepository;
+		this.diffItemRepository = diffItemRepository;
+		this.runRepository = runRepository;
+		this.runLogRepository = runLogRepository;
+		this.scheduleRepository = scheduleRepository;
+		this.issueLinkRepository = issueLinkRepository;
 	}
 
 	public List<RedmineProjectEntity> findAll() {
@@ -70,6 +93,27 @@ public class RedmineProjectService {
 
 	@Transactional
 	public void delete(Long id) {
+		// スケジュールを削除
+		scheduleRepository.deleteByRedmineProjectId(id);
+
+		// 関連するDiffとその子データを削除
+		for (DiffEntity diff : diffRepository.findByRedmineProjectId(id)) {
+			// Runのログを削除
+			for (RunEntity run : runRepository.findByDiffId(diff.getId())) {
+				runLogRepository.deleteByRunId(run.getId());
+			}
+			// Runを削除
+			runRepository.deleteAll(runRepository.findByDiffId(diff.getId()));
+			// DiffItemを削除
+			diffItemRepository.deleteByDiffId(diff.getId());
+		}
+		// Diffを削除
+		diffRepository.deleteAll(diffRepository.findByRedmineProjectId(id));
+
+		// IssueLinkを削除
+		issueLinkRepository.deleteByRedmineProjectId(id);
+
+		// プロジェクトを削除
 		redmineProjectRepository.deleteById(id);
 	}
 

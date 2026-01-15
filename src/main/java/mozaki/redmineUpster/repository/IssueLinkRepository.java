@@ -11,4 +11,6 @@ public interface IssueLinkRepository extends JpaRepository<IssueLinkEntity, Long
 	Optional<IssueLinkEntity> findByExternalKey(String externalKey);
 
 	Optional<IssueLinkEntity> findByExternalKeyAndRedmineProject(String externalKey, RedmineProjectEntity redmineProject);
+
+	void deleteByRedmineProjectId(Long redmineProjectId);
 }
