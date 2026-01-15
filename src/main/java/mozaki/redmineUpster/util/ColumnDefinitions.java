@@ -42,6 +42,7 @@ public final class ColumnDefinitions {
 			COL_TASK);
 
 	public static final List<String> CUSTOM_FIELD_COLUMNS = List.of(
+			COL_ID,
 			COL_TEAM,
 			COL_PROCESS,
 			COL_ORG,
