@@ -1,0 +1,24 @@
+[2026-01-16 08:15:28] [INFO] === Redmine Sync Started ===
+[2026-01-16 08:15:28] [INFO] File: samples/wbs_basic.csv
+[2026-01-16 08:15:28] [INFO] Dry Run: true
+[2026-01-16 08:15:28] [INFO] Log File: ./sync-20260116-081528.log
+[2026-01-16 08:15:28] [INFO] Loading config from: sync-config.yml
+[2026-01-16 08:15:28] [INFO] Project: 本番環境
+[2026-01-16 08:15:28] [INFO] Parsing file: samples/wbs_basic.csv
+[2026-01-16 08:15:28] [INFO] Parsed 5 rows
+[2026-01-16 08:15:28] [INFO] Calculating diff...
+[2026-01-16 08:15:31] [INFO] Diff items: 5
+[2026-01-16 08:15:31] [INFO]   CREATE: 5
+[2026-01-16 08:15:31] [INFO]   UPDATE: 0
+[2026-01-16 08:15:31] [INFO] Redmine URL: https://redmine.example.com
+[2026-01-16 08:15:31] [INFO] Redmine Project: project-a
+[2026-01-16 08:15:31] [INFO] Executing sync...
+[2026-01-16 08:15:31] [INFO] DRY_RUN CREATE BASIC-001 基本設計書作成
+[2026-01-16 08:15:31] [INFO] DRY_RUN CREATE BASIC-002 詳細設計書作成
+[2026-01-16 08:15:31] [INFO] DRY_RUN CREATE BASIC-003 フロントエンド実装
+[2026-01-16 08:15:31] [INFO] DRY_RUN CREATE BASIC-004 テストケース作成
+[2026-01-16 08:15:31] [INFO] DRY_RUN CREATE BASIC-005 テスト実行
+[2026-01-16 08:15:31] [INFO] === Sync Complete ===
+[2026-01-16 08:15:31] [INFO] Total: 5
+[2026-01-16 08:15:31] [INFO] Success: 5
+[2026-01-16 08:15:31] [INFO] Errors: 0
