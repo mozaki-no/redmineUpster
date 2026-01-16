@@ -59,11 +59,21 @@ public class SyncConfigService {
 	 * 初期化処理。
 	 * <p>
 	 * アプリケーション起動時に設定ファイルを読み込みます。
+	 * 設定ファイルが見つからない場合は警告ログを出力し、空の設定で初期化します。
 	 * </p>
 	 */
 	@PostConstruct
 	public void init() {
-		loadConfig(properties.getConfigPath());
+		String configPath = properties.getConfigPath();
+		if (configPath == null || configPath.isBlank()) {
+			return;
+		}
+		try {
+			loadConfig(configPath);
+		} catch (IllegalArgumentException e) {
+			// 設定ファイルが見つからない場合は警告のみ（CLI実行時に指定される想定）
+			System.err.println("WARN: " + e.getMessage() + " (will be loaded at runtime)");
+		}
 	}
 
 	/**
