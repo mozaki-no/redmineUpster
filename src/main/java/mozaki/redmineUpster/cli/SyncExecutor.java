@@ -1,5 +1,12 @@
 package mozaki.redmineUpster.cli;
 
+import static mozaki.redmineUpster.cli.SyncConstants.ACTION_CREATE;
+import static mozaki.redmineUpster.cli.SyncConstants.HIERARCHY_DELIMITER;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_CLOSED;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_IN_PROGRESS;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_MODE_BY_DATES;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_MODE_FIXED;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_NEW;
 import static mozaki.redmineUpster.util.StringUtils.isNumeric;
 import static mozaki.redmineUpster.util.StringUtils.valueOrDefault;
 
@@ -32,21 +39,6 @@ import mozaki.redmineUpster.util.DateParser;
 @Component
 @RequiredArgsConstructor
 public class SyncExecutor {
-
-    /** アクション: 新規作成 */
-    private static final String ACTION_CREATE = "CREATE";
-    /** ステータス: 新規 */
-    private static final String STATUS_NEW = "New";
-    /** ステータス: 進行中 */
-    private static final String STATUS_IN_PROGRESS = "In Progress";
-    /** ステータス: 完了 */
-    private static final String STATUS_CLOSED = "Closed";
-    /** ステータスモード: 日付ベース */
-    private static final String STATUS_MODE_BY_DATES = "BY_DATES";
-    /** ステータスモード: 固定値 */
-    private static final String STATUS_MODE_FIXED = "FIXED";
-    /** 階層パス区切り文字 */
-    private static final String HIERARCHY_DELIMITER = ">";
 
     private final IssueLinkRepository issueLinkRepository;
 

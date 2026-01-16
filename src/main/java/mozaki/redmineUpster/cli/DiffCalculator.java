@@ -1,5 +1,13 @@
 package mozaki.redmineUpster.cli;
 
+import static mozaki.redmineUpster.cli.SyncConstants.ACTION_CREATE;
+import static mozaki.redmineUpster.cli.SyncConstants.ACTION_UPDATE;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_CLOSED;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_IN_PROGRESS;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_MODE_BY_DATES;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_MODE_FIXED;
+import static mozaki.redmineUpster.cli.SyncConstants.STATUS_NEW;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -27,21 +35,6 @@ import mozaki.redmineUpster.util.StringUtils;
 @Component
 @RequiredArgsConstructor
 public class DiffCalculator {
-
-    /** アクション: 新規作成 */
-    private static final String ACTION_CREATE = "CREATE";
-    /** アクション: 更新 */
-    private static final String ACTION_UPDATE = "UPDATE";
-    /** ステータス: 新規 */
-    private static final String STATUS_NEW = "New";
-    /** ステータス: 進行中 */
-    private static final String STATUS_IN_PROGRESS = "In Progress";
-    /** ステータス: 完了 */
-    private static final String STATUS_CLOSED = "Closed";
-    /** ステータスモード: 日付ベース */
-    private static final String STATUS_MODE_BY_DATES = "BY_DATES";
-    /** ステータスモード: 固定値 */
-    private static final String STATUS_MODE_FIXED = "FIXED";
 
     private final IssueLinkRepository issueLinkRepository;
 
