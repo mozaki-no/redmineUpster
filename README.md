@@ -1,56 +1,97 @@
 # redmineUpster
 
-Redmine のチケットを CSV/Excel から同期する Spring Boot サービスです。`id` を external_key として管理し、
-階層列（大分類 → 中分類 → 小分類 → 成果物 → タスク）から親子関係を推定します。
+RedmineのチケットをCSV/Excelから同期するCLIツールです。`id`をexternal_keyとして管理し、階層列（大分類 → 中分類 → 小分類 → 成果物 → タスク）から親子関係を推定します。
 
-## 起動手順
-1. 依存サービスを起動します。
-   - `docker compose up -d`
-2. アプリを起動します。
-   - `./mvnw spring-boot:run`
-   - デフォルトポートは `3004`
+## ビルド
 
-## 管理画面
-- `http://localhost:3004/admin.html` で管理画面にアクセスできます。
+```bash
+./mvnw clean package
+```
+
+成果物: `target/redmineUpster-0.0.1-SNAPSHOT.jar`
+
+## CLI実行
+
+```bash
+java -jar redmineUpster.jar --sync [オプション]
+```
+
+### 引数
+
+| 引数 | 必須 | 説明 |
+|------|------|------|
+| `--sync` | はい | CLI同期モードで実行 |
+| `--config=<path>` | いいえ | 設定ファイルパス（デフォルト: `sync-config.yml`） |
+| `--project=<name>` | いいえ | 使用するプロジェクト名（デフォルト: `default=true`のプロジェクト） |
+| `--file=<path>` | はい | 同期するCSV/Excelファイルのパス |
+| `--dry-run` | いいえ | ドライランモード（実際のRedmine更新なし） |
+| `--log-dir=<path>` | いいえ | ログ出力ディレクトリ（デフォルト: カレントディレクトリ） |
+
+### 実行例
+
+```bash
+# 最小構成
+java -jar redmineUpster.jar --sync --file=tasks.csv
+
+# 全オプション指定
+java -jar redmineUpster.jar \
+  --sync \
+  --config=/etc/redmine-sync/sync-config.yml \
+  --project="本番環境" \
+  --file=/data/tasks.csv \
+  --log-dir=/var/log/redmine-sync/
+
+# ドライラン（本番実行前の確認）
+java -jar redmineUpster.jar --sync --file=tasks.csv --dry-run
+```
+
+## 設定ファイル（sync-config.yml）
+
+複数のプロジェクト環境を1ファイルで管理できます。
+
+```yaml
+projects:
+  - name: "本番環境"
+    default: true
+    redmine:
+      baseUrl: "https://redmine.example.com"
+      apiKey: "${REDMINE_API_KEY}"
+      projectId: "project-id"
+    sync:
+      tracker:
+        enabled: true
+        value: "タスク"
+      status:
+        enabled: true
+        mode: "BY_DATES"  # または "FIXED"
+        fixed: "New"
+      customFieldMap:
+        チーム: "12"
+        工程: "13"
+```
+
+環境変数は `${VAR_NAME}` 形式で参照可能です。
 
 ## 環境変数
-- `DB_URL` / `DB_USER` / `DB_PASSWORD`: Postgres 接続先
-- `REDMINE_BASE_URL`: Redmine ベース URL（例: `http://localhost:3000`）
-- `REDMINE_API_KEY`: Redmine API キー
-- `REDMINE_PROJECT_ID`: 同期先プロジェクト ID
 
-## 本番/テストのDB切り替え
-- 本番/ローカル: Docker の `postgres:16` を使う（`docker compose up -d`）。
-  - `DB_URL` / `DB_USER` / `DB_PASSWORD` で接続先は上書き可能。
-- テスト: `application-test.yml` を使い、H2（in-memory）で実行。
-  - テストは `@ActiveProfiles("test")` で `test` プロファイル固定。
+| 変数 | 説明 |
+|------|------|
+| `DB_URL` | PostgreSQL接続URL（デフォルト: `jdbc:postgresql://localhost:5432/redmine_upster`） |
+| `DB_USER` | DBユーザー名（デフォルト: `postgres`） |
+| `DB_PASSWORD` | DBパスワード（デフォルト: `postgres`） |
 
-## 本番運用例（DB を Docker で管理）
-- DB 起動: `docker compose up -d`
-- systemd 連携: `deploy/redmine-upster.service` を利用し、`/etc/redmine-upster.env` に接続情報を置く。
-
-`/etc/redmine-upster.env` 例:
+Docker Composeでローカル起動する場合はポート`5433`を使用:
+```bash
+docker compose up -d
+export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
 ```
-DB_URL=jdbc:postgresql://localhost:5433/redmine_upster
-DB_USER=postgres
-DB_PASSWORD=postgres
-```
-
-## 主要API
-- `GET /api/configs` / `PUT /api/configs`: 設定キーの取得と更新
-- `POST /api/probe-headers`: CSV/Excel のヘッダ確認（`file` を multipart で送信）
-- `GET /api/diffs` / `POST /api/diffs`: 差分の一覧/作成（`file` を multipart で送信）
-- `GET /api/diffs/{id}/items`: 差分詳細
-- `GET /api/runs` / `POST /api/runs`: 同期実行
-- `GET /api/logs?runId=...`: 実行ログ
-
-## 設定キー例
-- `customFieldMap`: `{"チーム":"12","工程":"13","社/組織":"14","着手実績":"15","完了実績":"16","成果物":"17"}`
-- `tracker.auto.enabled`: `true` / `false`
-- `tracker.auto.value`: トラッカー ID か名称
-- `status.auto.enabled`: `true` / `false`
-- `status.auto.mode`: `FIXED` / `BY_DATES`
-- `status.auto.fixed`: `New` など固定ステータス名
 
 ## ヘッダ仕様
-`id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績`
+
+```
+id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績
+```
+
+## 詳細
+
+Jenkins連携、設定ファイルの詳細、トラブルシューティングについては [DEPLOY.md](./DEPLOY.md) を参照してください。
