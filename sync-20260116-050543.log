@@ -1,0 +1,22 @@
+[2026-01-16 05:05:43] [INFO] === Redmine Sync Started ===
+[2026-01-16 05:05:43] [INFO] File: test-input.csv
+[2026-01-16 05:05:43] [INFO] Dry Run: true
+[2026-01-16 05:05:43] [INFO] Log File: ./sync-20260116-050543.log
+[2026-01-16 05:05:43] [INFO] Loading config from: sync-config.yml
+[2026-01-16 05:05:43] [INFO] Project: 本番環境
+[2026-01-16 05:05:43] [INFO] Parsing file: test-input.csv
+[2026-01-16 05:05:44] [INFO] Parsed 3 rows
+[2026-01-16 05:05:44] [INFO] Calculating diff...
+[2026-01-16 05:05:46] [INFO] Diff items: 3
+[2026-01-16 05:05:46] [INFO]   CREATE: 3
+[2026-01-16 05:05:46] [INFO]   UPDATE: 0
+[2026-01-16 05:05:46] [INFO] Redmine URL: https://redmine.example.com
+[2026-01-16 05:05:46] [INFO] Redmine Project: project-a
+[2026-01-16 05:05:46] [INFO] Executing sync...
+[2026-01-16 05:05:46] [INFO] DRY_RUN CREATE 1 ログイン画面設計書作成
+[2026-01-16 05:05:46] [INFO] DRY_RUN CREATE 2 ダッシュボード設計書作成
+[2026-01-16 05:05:46] [INFO] DRY_RUN CREATE 3 ログイン機能実装
+[2026-01-16 05:05:46] [INFO] === Sync Complete ===
+[2026-01-16 05:05:46] [INFO] Total: 3
+[2026-01-16 05:05:46] [INFO] Success: 3
+[2026-01-16 05:05:46] [INFO] Errors: 0

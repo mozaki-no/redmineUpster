@@ -1,0 +1,37 @@
+projects:
+  - name: "本番環境"
+    default: true
+    redmine:
+      baseUrl: "https://redmine.example.com"
+      apiKey: "${REDMINE_API_KEY}"  # 環境変数展開対応
+      projectId: "project-a"
+    sync:
+      tracker:
+        enabled: true
+        value: "タスク"
+      status:
+        enabled: true
+        mode: "BY_DATES"  # BY_DATES | FIXED
+        fixed: "New"
+      customFieldMap:
+        チーム: "12"
+        工程: "13"
+        社/組織: "14"
+        着手実績: "15"
+        完了実績: "16"
+        成果物: "17"
+
+  - name: "テスト環境"
+    default: false
+    redmine:
+      baseUrl: "https://redmine-test.example.com"
+      apiKey: "${REDMINE_TEST_API_KEY}"
+      projectId: "project-test"
+    sync:
+      tracker:
+        enabled: false
+      status:
+        enabled: true
+        mode: "FIXED"
+        fixed: "New"
+      customFieldMap: {}

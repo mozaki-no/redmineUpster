@@ -1,0 +1,7 @@
+# projectId未設定エラーテスト用
+projects:
+  - name: "test-project"
+    default: true
+    redmine:
+      baseUrl: "http://localhost:3000"
+      apiKey: "test-api-key"

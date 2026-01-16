@@ -9,3 +9,6 @@ spring:
       ddl-auto: create-drop
   flyway:
     enabled: false
+
+sync:
+  config-path: test-sync-config.yml

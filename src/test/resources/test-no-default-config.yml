@@ -1,0 +1,14 @@
+# デフォルトプロジェクトなしテスト用
+projects:
+  - name: "project-a"
+    default: false
+    redmine:
+      baseUrl: "http://localhost:3000"
+      apiKey: "api-key-a"
+      projectId: "project-a"
+  - name: "project-b"
+    default: false
+    redmine:
+      baseUrl: "http://localhost:3001"
+      apiKey: "api-key-b"
+      projectId: "project-b"

@@ -1,0 +1,4 @@
+# Redmine設定なしエラーテスト用
+projects:
+  - name: "test-project"
+    default: true
