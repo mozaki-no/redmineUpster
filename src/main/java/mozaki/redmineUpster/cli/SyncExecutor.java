@@ -1,5 +1,8 @@
 package mozaki.redmineUpster.cli;
 
+import static mozaki.redmineUpster.util.StringUtils.isNumeric;
+import static mozaki.redmineUpster.util.StringUtils.valueOrDefault;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -29,6 +32,21 @@ import mozaki.redmineUpster.util.DateParser;
 @Component
 @RequiredArgsConstructor
 public class SyncExecutor {
+
+    /** アクション: 新規作成 */
+    private static final String ACTION_CREATE = "CREATE";
+    /** ステータス: 新規 */
+    private static final String STATUS_NEW = "New";
+    /** ステータス: 進行中 */
+    private static final String STATUS_IN_PROGRESS = "In Progress";
+    /** ステータス: 完了 */
+    private static final String STATUS_CLOSED = "Closed";
+    /** ステータスモード: 日付ベース */
+    private static final String STATUS_MODE_BY_DATES = "BY_DATES";
+    /** ステータスモード: 固定値 */
+    private static final String STATUS_MODE_FIXED = "FIXED";
+    /** 階層パス区切り文字 */
+    private static final String HIERARCHY_DELIMITER = ">";
 
     private final IssueLinkRepository issueLinkRepository;
 
@@ -71,7 +89,7 @@ public class SyncExecutor {
 
                 Map<String, Object> issuePayload = buildIssuePayload(item, client, projectConfig, customFieldMap, createdIssueIds);
 
-                if ("CREATE".equalsIgnoreCase(item.action())) {
+                if (ACTION_CREATE.equalsIgnoreCase(item.action())) {
                     Long issueId = client.createIssue(issuePayload);
                     if (issueId == null) {
                         errorCount++;
@@ -268,19 +286,19 @@ public class SyncExecutor {
         if (item.status() != null && !item.status().isBlank()) {
             return item.status();
         }
-        String mode = valueOrDefault(statusConfig.getMode(), "BY_DATES");
-        if ("FIXED".equalsIgnoreCase(mode)) {
-            return valueOrDefault(statusConfig.getFixed(), "New");
+        String mode = valueOrDefault(statusConfig.getMode(), STATUS_MODE_BY_DATES);
+        if (STATUS_MODE_FIXED.equalsIgnoreCase(mode)) {
+            return valueOrDefault(statusConfig.getFixed(), STATUS_NEW);
         }
         String dueActual = (String) payload.get("dueActual");
         if (dueActual != null && !dueActual.isBlank()) {
-            return "Closed";
+            return STATUS_CLOSED;
         }
         String startActual = (String) payload.get("startActual");
         if (startActual != null && !startActual.isBlank()) {
-            return "In Progress";
+            return STATUS_IN_PROGRESS;
         }
-        return "New";
+        return STATUS_NEW;
     }
 
     /**
@@ -297,35 +315,6 @@ public class SyncExecutor {
     }
 
     /**
-     * 値がnullまたは空の場合はデフォルト値を返します。
-     *
-     * @param value 値
-     * @param fallback デフォルト値
-     * @return 値またはデフォルト値
-     */
-    private String valueOrDefault(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
-    }
-
-    /**
-     * 文字列が数値かどうかを判定します。
-     *
-     * @param value 文字列
-     * @return 数値の場合はtrue
-     */
-    private boolean isNumeric(String value) {
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-        for (int i = 0; i < value.length(); i++) {
-            if (!Character.isDigit(value.charAt(i))) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
      * 階層の深さを取得します。
      *
      * @param item 差分アイテム
@@ -336,6 +325,6 @@ public class SyncExecutor {
         if (path == null || path.isBlank()) {
             return 0;
         }
-        return path.split(">").length;
+        return path.split(HIERARCHY_DELIMITER).length;
     }
 }

@@ -91,3 +91,45 @@ create table if not exists issue_link (
   issue_id bigint not null
 );
 ```
+
+---
+
+## 🔄 現在の作業状況（2026-01-16）
+
+### 完了タスク
+| タスク | 状態 |
+|--------|------|
+| セットアップガイド作成（redmine, docker, java17, jenkins） | ✅ 完了 |
+| フォルダ構成の最適化 | ✅ 完了 |
+
+### 進行中タスク
+| タスク | 状態 | 備考 |
+|--------|------|------|
+| コードリファクタリング | 🔄 中断 | カバレッジ前に中断 |
+| テストカバレッジ100%達成 | ⏳ 未着手 | |
+
+### フォルダ構成最適化の結果
+```
+redmineUpster/
+├── .env.example          # 環境変数テンプレート
+├── CLAUDE.md
+├── README.md
+├── docs/
+│   ├── DEPLOY.md         # デプロイ手順書
+│   ├── ops/              # 運用関連
+│   └── setup/            # セットアップガイド
+│       ├── README.md
+│       ├── docker.md
+│       ├── java17.md
+│       ├── jenkins.md
+│       └── redmine-apache-passenger.md
+├── samples/
+│   ├── sync-config.example.yml  # 設定ファイルサンプル
+│   └── wbs_*.csv         # WBSサンプル
+└── src/
+```
+
+### 次のアクション
+1. コードリファクタリング（cli/, service/, config/）
+2. テストカバレッジ100%達成（分岐網羅）
+3. コミット・プッシュ

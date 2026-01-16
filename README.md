@@ -94,4 +94,6 @@ id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織
 
 ## 詳細
 
-Jenkins連携、設定ファイルの詳細、トラブルシューティングについては [DEPLOY.md](./DEPLOY.md) を参照してください。
+Jenkins連携、設定ファイルの詳細、トラブルシューティングについては [docs/DEPLOY.md](./docs/DEPLOY.md) を参照してください。
+
+設定ファイルのサンプルは [samples/sync-config.example.yml](./samples/sync-config.example.yml) を参照してください。

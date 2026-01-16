@@ -35,3 +35,12 @@ build/
 # Sync logs
 sync-*.log
 test-input.csv
+
+# User-specific config (use samples/sync-config.example.yml as template)
+sync-config.yml
+
+# Environment files (機密情報を含むため)
+.env
+.env.local
+.env.test
+!.env.example

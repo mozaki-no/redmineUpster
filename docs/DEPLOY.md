@@ -8,12 +8,13 @@
 
 1. [前提条件](#1-前提条件)
 2. [ビルド手順](#2-ビルド手順)
-3. [設定ファイル（sync-config.yml）](#3-設定ファイルsync-configyml)
-4. [データベース設定](#4-データベース設定)
-5. [CLI引数の説明](#5-cli引数の説明)
-6. [Jenkins Pipeline設定例](#6-jenkins-pipeline設定例)
-7. [ログファイル](#7-ログファイル)
-8. [トラブルシューティング](#8-トラブルシューティング)
+3. [環境変数の設定](#3-環境変数の設定)
+4. [設定ファイル（sync-config.yml）](#4-設定ファイルsync-configyml)
+5. [データベース設定](#5-データベース設定)
+6. [CLI引数の説明](#6-cli引数の説明)
+7. [Jenkins Pipeline設定例](#7-jenkins-pipeline設定例)
+8. [ログファイル](#8-ログファイル)
+9. [トラブルシューティング](#9-トラブルシューティング)
 
 ---
 
@@ -107,13 +108,248 @@ ls -la target/redmineUpster*.jar
 
 ---
 
-## 3. 設定ファイル（sync-config.yml）
+## 3. 環境変数の設定
 
-### 3.1 設定ファイルの概要
+### 3.1 .envファイルの概要
+
+本プロジェクトでは、環境変数を`.env`ファイルで管理できます。これにより、機密情報（APIキー、パスワード等）をコードから分離し、安全に管理できます。
+
+#### 3.1.1 ファイル構成
+
+| ファイル | 用途 | Git管理 |
+|---------|------|---------|
+| `.env.example` | テンプレート。必要な環境変数の一覧を示す | する（コミット対象） |
+| `.env` | 本番/個人用の実際の値を設定 | しない（.gitignoreに含む） |
+| `.env.test` | ローカルテスト用の設定例 | しない（.gitignoreに含む） |
+| `.env.local` | ローカル開発用（オプション） | しない（.gitignoreに含む） |
+
+### 3.2 .envファイルの作成
+
+#### 3.2.1 テンプレートからコピー
+
+```bash
+# .env.exampleをコピーして.envを作成
+cp .env.example .env
+
+# エディタで編集
+vi .env
+```
+
+#### 3.2.2 .env.exampleの内容
+
+```bash
+# Database
+DB_URL=jdbc:postgresql://localhost:5433/redmine_upster
+DB_USER=postgres
+DB_PASSWORD=postgres
+
+# Redmine API (sync-config.ymlで${VAR}形式で参照)
+REDMINE_API_KEY=your_api_key_here
+REDMINE_TEST_API_KEY=your_test_api_key_here
+```
+
+### 3.3 環境変数の読み込み方法
+
+#### 3.3.1 sourceコマンドでの読み込み（Linux/Mac）
+
+```bash
+# .envファイルを現在のシェルに読み込む
+source .env
+
+# または
+. .env
+
+# 確認
+echo $REDMINE_API_KEY
+```
+
+**注意:** `.env`ファイルを`source`で読み込むには、各行が`export`なしでも動作しますが、明示的にexportする場合は以下のようにします。
+
+```bash
+# exportを付けて読み込む方法
+export $(cat .env | grep -v '^#' | xargs)
+
+# または.envファイル自体にexportを記述
+export DB_URL=jdbc:postgresql://localhost:5433/redmine_upster
+export DB_USER=postgres
+# ...
+```
+
+#### 3.3.2 envコマンドでの直接指定
+
+```bash
+# 一時的に環境変数を設定して実行
+env $(cat .env | grep -v '^#' | xargs) java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar --sync --file=input.csv
+```
+
+#### 3.3.3 シェルスクリプトでの利用例
+
+```bash
+#!/bin/bash
+# run-sync.sh
+
+# .envファイルを読み込み
+if [ -f .env ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
+# 実行
+java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
+    --sync \
+    --file="$1" \
+    --project="${PROJECT:-本番環境}"
+```
+
+### 3.4 Jenkinsでの環境変数設定
+
+#### 3.4.1 Credentials Bindingを使用（推奨）
+
+Jenkinsでは機密情報をCredentialsとして管理し、Pipelineで参照します。
+
+```groovy
+pipeline {
+    agent any
+
+    environment {
+        // Secret Text タイプのCredentialを参照
+        REDMINE_API_KEY = credentials('redmine-api-key')
+        REDMINE_TEST_API_KEY = credentials('redmine-test-api-key')
+
+        // Username/Password タイプのCredentialを参照
+        DB_USER = credentials('db-credentials-usr')
+        DB_PASSWORD = credentials('db-credentials-psw')
+
+        // 固定値
+        DB_URL = 'jdbc:postgresql://db-server:5432/redmine_upster'
+    }
+
+    stages {
+        stage('Sync') {
+            steps {
+                sh '''
+                    java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
+                        --sync \
+                        --file=input.csv
+                '''
+            }
+        }
+    }
+}
+```
+
+#### 3.4.2 Jenkinsでのcredential登録方法
+
+1. Jenkinsダッシュボード > 「Jenkinsの管理」 > 「Credentials」
+2. 適切なドメインを選択（グローバルまたはフォルダスコープ）
+3. 「Add Credentials」をクリック
+4. 設定:
+   - **Kind**: Secret text（APIキー等）またはUsername with password（DB認証等）
+   - **Secret**: 実際の値
+   - **ID**: `redmine-api-key`のような識別子（Pipelineで参照する名前）
+   - **Description**: 説明文
+
+#### 3.4.3 .envファイルをJenkinsで使用する場合
+
+開発環境でのテストと同様に`.env`ファイルを使用したい場合:
+
+```groovy
+stage('Load Environment') {
+    steps {
+        // Credentialsから.envファイルを生成
+        withCredentials([
+            string(credentialsId: 'redmine-api-key', variable: 'API_KEY'),
+            string(credentialsId: 'redmine-test-api-key', variable: 'TEST_API_KEY')
+        ]) {
+            sh '''
+                cat > .env << EOF
+DB_URL=jdbc:postgresql://db-server:5432/redmine_upster
+DB_USER=postgres
+DB_PASSWORD=postgres
+REDMINE_API_KEY=${API_KEY}
+REDMINE_TEST_API_KEY=${TEST_API_KEY}
+EOF
+                source .env
+            '''
+        }
+    }
+}
+```
+
+### 3.5 sync-config.ymlとの連携
+
+`sync-config.yml`では`${VAR}`形式で環境変数を参照できます。`.env`ファイルで設定した値が自動的に展開されます。
+
+#### 3.5.1 sync-config.ymlでの環境変数参照
+
+```yaml
+projects:
+  - name: "本番環境"
+    default: true
+    redmine:
+      baseUrl: "https://redmine.example.com"
+      apiKey: "${REDMINE_API_KEY}"        # .envのREDMINE_API_KEYが展開される
+      projectId: "project-production"
+    sync:
+      # ...
+
+  - name: "テスト環境"
+    default: false
+    redmine:
+      baseUrl: "https://redmine-test.example.com"
+      apiKey: "${REDMINE_TEST_API_KEY}"   # .envのREDMINE_TEST_API_KEYが展開される
+      projectId: "project-test"
+    sync:
+      # ...
+```
+
+#### 3.5.2 デフォルト値付きの参照
+
+環境変数が未設定の場合のフォールバック値を指定できます。
+
+```yaml
+redmine:
+  baseUrl: "${REDMINE_URL:https://default-redmine.example.com}"
+  apiKey: "${REDMINE_API_KEY}"  # デフォルト値なし（必須）
+```
+
+### 3.6 ローカル開発での使用例
+
+```bash
+# 1. テンプレートからコピー
+cp .env.example .env
+
+# 2. .envを編集してAPIキーを設定
+vi .env
+
+# 3. 環境変数を読み込み
+source .env
+
+# 4. Docker Composeでデータベース起動
+docker compose up -d
+
+# 5. アプリケーション実行
+java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
+    --sync \
+    --file=deploy/sample_test.csv \
+    --dry-run
+```
+
+### 3.7 セキュリティ上の注意
+
+- `.env`ファイルは**絶対にGitにコミットしない**でください
+- `.gitignore`に`.env`が含まれていることを確認してください
+- 本番環境のAPIキーは、開発環境とは別のキーを使用してください
+- Jenkinsでは必ずCredentials機能を使用し、平文でのパスワード記述を避けてください
+
+---
+
+## 4. 設定ファイル（sync-config.yml）
+
+### 4.1 設定ファイルの概要
 
 `sync-config.yml`は、Redmine同期の設定を定義するYAMLファイルです。複数のプロジェクト環境（本番、テスト等）を一つのファイルで管理できます。
 
-### 3.2 設定ファイルの基本構造
+### 4.2 設定ファイルの基本構造
 
 ```yaml
 projects:
@@ -135,16 +371,16 @@ projects:
         列名: "カスタムフィールドID"
 ```
 
-### 3.3 設定項目の詳細説明
+### 4.3 設定項目の詳細説明
 
-#### 3.3.1 プロジェクト基本設定
+#### 4.3.1 プロジェクト基本設定
 
 | 項目 | 説明 | 必須 |
 |------|------|------|
 | `name` | プロジェクトの表示名。CLI引数 `--project` で指定する際に使用 | はい |
 | `default` | `true`の場合、`--project`を省略した際にこのプロジェクトが使用される | いいえ |
 
-#### 3.3.2 Redmine接続設定（redmine）
+#### 4.3.2 Redmine接続設定（redmine）
 
 | 項目 | 説明 | 必須 |
 |------|------|------|
@@ -152,7 +388,7 @@ projects:
 | `apiKey` | Redmine APIキー。ユーザー設定ページで発行可能 | はい |
 | `projectId` | 同期先のRedmineプロジェクト識別子 | はい |
 
-#### 3.3.3 同期設定（sync）
+#### 4.3.3 同期設定（sync）
 
 **トラッカー設定（tracker）**
 
@@ -180,17 +416,17 @@ customFieldMap:
   社/組織: "14"       # CSVの「社/組織」列 → カスタムフィールドID 14
 ```
 
-### 3.4 環境変数の使い方
+### 4.4 環境変数の使い方
 
 設定ファイル内で環境変数を参照できます。
 
-#### 3.4.1 基本形式
+#### 4.4.1 基本形式
 
 ```yaml
 apiKey: "${REDMINE_API_KEY}"
 ```
 
-#### 3.4.2 デフォルト値付き形式
+#### 4.4.2 デフォルト値付き形式
 
 ```yaml
 baseUrl: "${REDMINE_URL:https://default-redmine.example.com}"
@@ -198,7 +434,7 @@ baseUrl: "${REDMINE_URL:https://default-redmine.example.com}"
 
 環境変数が未設定の場合、コロン以降のデフォルト値が使用されます。
 
-#### 3.4.3 環境変数の設定例
+#### 4.4.3 環境変数の設定例
 
 ```bash
 # Linux/Mac
@@ -209,7 +445,7 @@ export REDMINE_TEST_API_KEY="your-test-api-key"
 set REDMINE_API_KEY=your-api-key-here
 ```
 
-### 3.5 複数プロジェクト設定例
+### 4.5 複数プロジェクト設定例
 
 ```yaml
 projects:
@@ -271,13 +507,13 @@ projects:
 
 ---
 
-## 4. データベース設定
+## 5. データベース設定
 
-### 4.1 PostgreSQL接続設定
+### 5.1 PostgreSQL接続設定
 
 データベース接続は環境変数または`application.yml`で設定します。
 
-#### 4.1.1 環境変数での設定（推奨）
+#### 5.1.1 環境変数での設定（推奨）
 
 ```bash
 export DB_URL="jdbc:postgresql://hostname:5432/redmine_upster"
@@ -285,7 +521,7 @@ export DB_USER="postgres"
 export DB_PASSWORD="your-password"
 ```
 
-#### 4.1.2 デフォルト値
+#### 5.1.2 デフォルト値
 
 環境変数を設定しない場合、以下のデフォルト値が使用されます。
 
@@ -301,11 +537,11 @@ export DB_PASSWORD="your-password"
 export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
 ```
 
-### 4.2 issue_linkテーブルの説明
+### 5.2 issue_linkテーブルの説明
 
 アプリケーション起動時にFlywayが自動的にテーブルを作成します。
 
-#### 4.2.1 テーブル構造
+#### 5.2.1 テーブル構造
 
 ```sql
 CREATE TABLE IF NOT EXISTS issue_link (
@@ -315,7 +551,7 @@ CREATE TABLE IF NOT EXISTS issue_link (
 );
 ```
 
-#### 4.2.2 カラム説明
+#### 5.2.2 カラム説明
 
 | カラム名 | 型 | 説明 |
 |---------|-----|------|
@@ -323,7 +559,7 @@ CREATE TABLE IF NOT EXISTS issue_link (
 | `external_key` | TEXT | CSVファイルの`id`列の値（ユニーク制約） |
 | `issue_id` | BIGINT | 対応するRedmineチケットのID |
 
-#### 4.2.3 用途
+#### 5.2.3 用途
 
 このテーブルは、CSVファイルの行とRedmineチケットの紐付けを管理します。
 
@@ -331,7 +567,7 @@ CREATE TABLE IF NOT EXISTS issue_link (
 - **更新時**: `external_key`でチケットを検索し、既存チケットを更新する
 - これにより、同じCSVを再実行しても重複チケットが作成されない
 
-### 4.3 データベースの手動作成（必要な場合）
+### 5.3 データベースの手動作成（必要な場合）
 
 ```bash
 # PostgreSQLに接続
@@ -346,15 +582,15 @@ CREATE DATABASE redmine_upster;
 
 ---
 
-## 5. CLI引数の説明
+## 6. CLI引数の説明
 
-### 5.1 基本的な使用方法
+### 6.1 基本的な使用方法
 
 ```bash
 java -jar redmineUpster.jar --sync [オプション]
 ```
 
-### 5.2 引数一覧
+### 6.2 引数一覧
 
 | 引数 | 必須 | 説明 |
 |------|------|------|
@@ -365,9 +601,9 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--dry-run` | いいえ | ドライランモード。実際のRedmine更新を行わない |
 | `--log-dir=<path>` | いいえ | ログ出力ディレクトリ。省略時はカレントディレクトリ |
 
-### 5.3 各引数の詳細説明と使用例
+### 6.3 各引数の詳細説明と使用例
 
-#### 5.3.1 --sync
+#### 6.3.1 --sync
 
 CLI同期モードを有効にします。この引数がない場合、アプリケーションはWebサーバーとして起動します。
 
@@ -379,7 +615,7 @@ java -jar redmineUpster.jar --sync --file=input.csv
 java -jar redmineUpster.jar
 ```
 
-#### 5.3.2 --config
+#### 6.3.2 --config
 
 設定ファイルのパスを指定します。絶対パスまたは相対パスが使用できます。
 
@@ -394,7 +630,7 @@ java -jar redmineUpster.jar --sync --config=./config/production.yml --file=input
 java -jar redmineUpster.jar --sync --file=input.csv
 ```
 
-#### 5.3.3 --project
+#### 6.3.3 --project
 
 設定ファイル内の特定のプロジェクトを指定します。
 
@@ -411,7 +647,7 @@ java -jar redmineUpster.jar --sync --file=input.csv
 
 **注意:** プロジェクト名に空白が含まれる場合は引用符で囲んでください。
 
-#### 5.3.4 --file
+#### 6.3.4 --file
 
 同期するCSVまたはExcelファイルのパスを指定します。この引数は**必須**です。
 
@@ -430,7 +666,7 @@ java -jar redmineUpster.jar --sync --file=./input/tasks.csv
 - CSV（.csv）- UTF-8エンコーディング推奨
 - Excel（.xlsx）
 
-#### 5.3.5 --dry-run
+#### 6.3.5 --dry-run
 
 実際のRedmine更新を行わずに、処理内容を確認できます。本番実行前のテストに使用してください。
 
@@ -444,7 +680,7 @@ java -jar redmineUpster.jar --sync --file=input.csv --dry-run
 - 作成/更新されるチケット数
 - エラーになる行の検出
 
-#### 5.3.6 --log-dir
+#### 6.3.6 --log-dir
 
 ログファイルの出力先ディレクトリを指定します。
 
@@ -459,7 +695,7 @@ java -jar redmineUpster.jar --sync --file=input.csv --log-dir=${WORKSPACE}/logs/
 java -jar redmineUpster.jar --sync --file=input.csv
 ```
 
-### 5.4 実行例の組み合わせ
+### 6.4 実行例の組み合わせ
 
 ```bash
 # 最小構成（必須引数のみ）
@@ -485,9 +721,9 @@ java -jar redmineUpster.jar \
 
 ---
 
-## 6. Jenkins Pipeline設定例
+## 7. Jenkins Pipeline設定例
 
-### 6.1 基本的なJenkinsfile
+### 7.1 基本的なJenkinsfile
 
 ```groovy
 pipeline {
@@ -578,11 +814,11 @@ pipeline {
 }
 ```
 
-### 6.2 パラメータ化ビルドの詳細設定
+### 7.2 パラメータ化ビルドの詳細設定
 
 Jenkinsのパラメータ化ビルドを使用すると、実行時に値を指定できます。
 
-#### 6.2.1 Jenkinsジョブ設定画面での設定
+#### 7.2.1 Jenkinsジョブ設定画面での設定
 
 1. ジョブ設定 > 「このプロジェクトはパラメータ化されています」にチェック
 2. 以下のパラメータを追加:
@@ -606,9 +842,9 @@ Jenkinsのパラメータ化ビルドを使用すると、実行時に値を指�
 - 名前: `CSV_FILE`
 - 説明: 同期するCSVファイル
 
-### 6.3 CSVファイルのアップロード方法
+### 7.3 CSVファイルのアップロード方法
 
-#### 6.3.1 File Parameterプラグインを使用する場合
+#### 7.3.1 File Parameterプラグインを使用する場合
 
 Jenkinsfileでの設定:
 ```groovy
@@ -621,7 +857,7 @@ parameters {
 1. 「ビルドのパラメータ化」画面でファイルを選択
 2. 「ビルド実行」をクリック
 
-#### 6.3.2 外部ストレージからダウンロードする場合
+#### 7.3.2 外部ストレージからダウンロードする場合
 
 ```groovy
 stage('Download CSV') {
@@ -635,7 +871,7 @@ stage('Download CSV') {
 }
 ```
 
-#### 6.3.3 SCMから取得する場合
+#### 7.3.3 SCMから取得する場合
 
 ```groovy
 stage('Checkout CSV') {
@@ -656,9 +892,9 @@ stage('Checkout CSV') {
 }
 ```
 
-### 6.4 成功/失敗時の処理
+### 7.4 成功/失敗時の処理
 
-#### 6.4.1 メール通知
+#### 7.4.1 メール通知
 
 ```groovy
 post {
@@ -694,7 +930,7 @@ post {
 }
 ```
 
-#### 6.4.2 Slack通知
+#### 7.4.2 Slack通知
 
 ```groovy
 post {
@@ -715,7 +951,7 @@ post {
 }
 ```
 
-### 6.5 定期実行の設定
+### 7.5 定期実行の設定
 
 ```groovy
 pipeline {
@@ -731,7 +967,7 @@ pipeline {
 }
 ```
 
-### 6.6 本番運用向け完全版Jenkinsfile
+### 7.6 本番運用向け完全版Jenkinsfile
 
 ```groovy
 pipeline {
@@ -870,9 +1106,9 @@ pipeline {
 
 ---
 
-## 7. ログファイル
+## 8. ログファイル
 
-### 7.1 出力場所
+### 8.1 出力場所
 
 ログファイルは`--log-dir`で指定したディレクトリに出力されます。
 省略した場合は、コマンドを実行したカレントディレクトリに出力されます。
@@ -886,7 +1122,7 @@ pipeline {
 ./logs/sync-20260116-103045.log
 ```
 
-### 7.2 ログフォーマット
+### 8.2 ログフォーマット
 
 ```
 [YYYY-MM-DD HH:mm:ss] [LEVEL] メッセージ
@@ -918,7 +1154,7 @@ pipeline {
 [2026-01-16 10:35:12] [WARN]   - Row T-089: Required field missing
 ```
 
-### 7.3 ログレベル
+### 8.3 ログレベル
 
 | レベル | 説明 |
 |--------|------|
@@ -926,7 +1162,7 @@ pipeline {
 | WARN | 警告（処理は継続） |
 | ERROR | エラー（処理失敗） |
 
-### 7.4 ログローテーション
+### 8.4 ログローテーション
 
 アプリケーション自体はログローテーション機能を持ちません。
 長期運用する場合は、logrotateなどの外部ツールを使用してください。
@@ -945,9 +1181,9 @@ pipeline {
 
 ---
 
-## 8. トラブルシューティング
+## 9. トラブルシューティング
 
-### 8.1 ビルドエラー
+### 9.1 ビルドエラー
 
 #### Maven Wrapperの実行権限がない
 
@@ -979,7 +1215,7 @@ export JAVA_HOME=/path/to/java17
 export PATH=$JAVA_HOME/bin:$PATH
 ```
 
-### 8.2 データベース接続エラー
+### 9.2 データベース接続エラー
 
 #### PostgreSQLに接続できない
 
@@ -1013,7 +1249,7 @@ FATAL: password authentication failed for user "postgres"
 - 環境変数`DB_USER`と`DB_PASSWORD`が正しいか確認
 - PostgreSQLの`pg_hba.conf`の認証設定を確認
 
-### 8.3 設定ファイルエラー
+### 9.3 設定ファイルエラー
 
 #### 設定ファイルが見つからない
 
@@ -1049,7 +1285,7 @@ APIキーが空でRedmine接続に失敗
    apiKey: '${REDMINE_API_KEY}'
    ```
 
-### 8.4 CSV解析エラー
+### 9.4 CSV解析エラー
 
 #### 文字化け
 
@@ -1072,7 +1308,7 @@ Required column 'id' not found
 CSVファイルに以下の列が含まれているか確認:
 - `id` - 必須（external_keyとして使用）
 
-### 8.5 Redmine API エラー
+### 9.5 Redmine API エラー
 
 #### 401 Unauthorized
 
@@ -1109,7 +1345,7 @@ Redmine API error: 404 Not Found
 - プロジェクトが存在するか確認
 - URLが正しいか確認（末尾のスラッシュに注意）
 
-### 8.6 Jenkins固有の問題
+### 9.6 Jenkins固有の問題
 
 #### ファイルパラメータが空
 
@@ -1137,14 +1373,14 @@ Credentials Bindingが機能しない
   }
   ```
 
-### 8.7 エラーコード
+### 9.7 エラーコード
 
 | 終了コード | 意味 |
 |-----------|------|
 | 0 | 正常終了 |
 | 1 | エラーあり（一部または全部の処理が失敗） |
 
-### 8.8 デバッグ方法
+### 9.8 デバッグ方法
 
 #### 詳細ログの確認
 

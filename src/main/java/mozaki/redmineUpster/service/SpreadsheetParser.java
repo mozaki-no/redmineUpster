@@ -34,6 +34,11 @@ import com.opencsv.exceptions.CsvValidationException;
 @Service
 public class SpreadsheetParser {
 
+	/** CSVファイル拡張子 */
+	private static final String CSV_EXTENSION = ".csv";
+	/** 浮動小数点比較の許容誤差 */
+	private static final double DOUBLE_TOLERANCE = 0.0000001;
+
 	/**
 	 * MultipartFileからスプレッドシートを解析します。
 	 *

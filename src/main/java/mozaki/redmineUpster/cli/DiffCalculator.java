@@ -9,15 +9,13 @@ import java.util.Optional;
 
 import org.springframework.stereotype.Component;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import lombok.RequiredArgsConstructor;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.domain.IssueLinkEntity;
 import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.util.ColumnDefinitions;
+import mozaki.redmineUpster.util.StringUtils;
 
 /**
  * 差分計算クラス。
@@ -30,8 +28,22 @@ import mozaki.redmineUpster.util.ColumnDefinitions;
 @RequiredArgsConstructor
 public class DiffCalculator {
 
+    /** アクション: 新規作成 */
+    private static final String ACTION_CREATE = "CREATE";
+    /** アクション: 更新 */
+    private static final String ACTION_UPDATE = "UPDATE";
+    /** ステータス: 新規 */
+    private static final String STATUS_NEW = "New";
+    /** ステータス: 進行中 */
+    private static final String STATUS_IN_PROGRESS = "In Progress";
+    /** ステータス: 完了 */
+    private static final String STATUS_CLOSED = "Closed";
+    /** ステータスモード: 日付ベース */
+    private static final String STATUS_MODE_BY_DATES = "BY_DATES";
+    /** ステータスモード: 固定値 */
+    private static final String STATUS_MODE_FIXED = "FIXED";
+
     private final IssueLinkRepository issueLinkRepository;
-    private final ObjectMapper objectMapper;
 
     /**
      * 差分アイテムを計算します。
@@ -75,7 +87,7 @@ public class DiffCalculator {
 
         for (RowData rowData : parsed) {
             String parentKey = pathToExternalKey.get(rowData.parentPath);
-            String action = resolveAction(rowData.externalKey, projectConfig.getName());
+            String action = resolveAction(rowData.externalKey);
             String status = resolveStatus(rowData, projectConfig);
             Map<String, Object> payload = buildPayload(rowData, customFieldMap);
 
@@ -98,12 +110,11 @@ public class DiffCalculator {
      * アクションを解決します（CREATE/UPDATE）。
      *
      * @param externalKey 外部キー
-     * @param projectName プロジェクト名
      * @return CREATE または UPDATE
      */
-    private String resolveAction(String externalKey, String projectName) {
+    private String resolveAction(String externalKey) {
         Optional<IssueLinkEntity> existing = issueLinkRepository.findByExternalKey(externalKey);
-        return existing.isPresent() ? "UPDATE" : "CREATE";
+        return existing.isPresent() ? ACTION_UPDATE : ACTION_CREATE;
     }
 
     /**
@@ -158,18 +169,18 @@ public class DiffCalculator {
             return null;
         }
 
-        String mode = valueOrDefault(statusConfig.getMode(), "BY_DATES");
-        if ("FIXED".equalsIgnoreCase(mode)) {
-            return valueOrDefault(statusConfig.getFixed(), "New");
+        String mode = StringUtils.valueOrDefault(statusConfig.getMode(), STATUS_MODE_BY_DATES);
+        if (STATUS_MODE_FIXED.equalsIgnoreCase(mode)) {
+            return StringUtils.valueOrDefault(statusConfig.getFixed(), STATUS_NEW);
         }
 
         if (!rowData.dueActual.isBlank()) {
-            return "Closed";
+            return STATUS_CLOSED;
         }
         if (!rowData.startActual.isBlank()) {
-            return "In Progress";
+            return STATUS_IN_PROGRESS;
         }
-        return "New";
+        return STATUS_NEW;
     }
 
     /**
@@ -226,17 +237,6 @@ public class DiffCalculator {
     private static String value(Map<String, String> row, String key) {
         String raw = row.get(key);
         return raw == null ? "" : raw.trim();
-    }
-
-    /**
-     * 値がnullまたは空の場合はデフォルト値を返します。
-     *
-     * @param value 値
-     * @param fallback デフォルト値
-     * @return 値またはデフォルト値
-     */
-    private String valueOrDefault(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
     }
 
     /**
