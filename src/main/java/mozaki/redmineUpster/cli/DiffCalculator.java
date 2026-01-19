@@ -18,6 +18,7 @@ import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
+import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.domain.IssueLinkEntity;
@@ -53,13 +54,16 @@ public class DiffCalculator {
             List<Map<String, String>> rows,
             ProjectConfig projectConfig) {
 
+        List<String> hierarchyColumns = getHierarchyColumns(projectConfig);
+        List<String> customFieldColumns = getCustomFieldColumns(projectConfig);
+
         List<RowData> parsed = new ArrayList<>();
         for (Map<String, String> row : rows) {
             String externalKey = value(row, ColumnDefinitions.COL_ID);
             if (externalKey.isBlank()) {
                 continue;
             }
-            List<String> hierarchy = hierarchyValues(row);
+            List<String> hierarchy = hierarchyValues(row, hierarchyColumns);
             String subject = resolveSubject(row, hierarchy);
             String levelPath = String.join(" > ", hierarchy);
             List<String> parentHierarchy = hierarchy.size() > 1 ? hierarchy.subList(0, hierarchy.size() - 1) : List.of();
@@ -82,7 +86,7 @@ public class DiffCalculator {
             String parentKey = pathToExternalKey.get(rowData.parentPath);
             String action = resolveAction(rowData.externalKey);
             String status = resolveStatus(rowData, projectConfig);
-            Map<String, Object> payload = buildPayload(rowData, customFieldMap);
+            Map<String, Object> payload = buildPayload(rowData, customFieldMap, customFieldColumns);
 
             DiffItem item = new DiffItem(
                 rowData.externalKey,
@@ -114,17 +118,52 @@ public class DiffCalculator {
      * 階層列の値を取得します。
      *
      * @param row 行データ
+     * @param hierarchyColumns 階層列のリスト
      * @return 階層値のリスト
      */
-    private List<String> hierarchyValues(Map<String, String> row) {
+    private List<String> hierarchyValues(Map<String, String> row, List<String> hierarchyColumns) {
         List<String> values = new ArrayList<>();
-        for (String column : ColumnDefinitions.HIERARCHY_COLUMNS) {
+        for (String column : hierarchyColumns) {
             String value = value(row, column);
             if (!value.isBlank()) {
                 values.add(value);
             }
         }
         return values;
+    }
+
+    /**
+     * プロジェクト設定から階層列を取得します。
+     * 設定がない場合はデフォルト値を返します。
+     *
+     * @param projectConfig プロジェクト設定
+     * @return 階層列のリスト
+     */
+    private List<String> getHierarchyColumns(ProjectConfig projectConfig) {
+        if (projectConfig.getSync() != null && projectConfig.getSync().getColumns() != null) {
+            ColumnsConfig columns = projectConfig.getSync().getColumns();
+            if (columns.getHierarchy() != null && !columns.getHierarchy().isEmpty()) {
+                return columns.getHierarchy();
+            }
+        }
+        return ColumnDefinitions.HIERARCHY_COLUMNS;
+    }
+
+    /**
+     * プロジェクト設定からカスタムフィールド対象列を取得します。
+     * 設定がない場合はデフォルト値を返します。
+     *
+     * @param projectConfig プロジェクト設定
+     * @return カスタムフィールド対象列のリスト
+     */
+    private List<String> getCustomFieldColumns(ProjectConfig projectConfig) {
+        if (projectConfig.getSync() != null && projectConfig.getSync().getColumns() != null) {
+            ColumnsConfig columns = projectConfig.getSync().getColumns();
+            if (columns.getCustomFieldColumns() != null && !columns.getCustomFieldColumns().isEmpty()) {
+                return columns.getCustomFieldColumns();
+            }
+        }
+        return ColumnDefinitions.CUSTOM_FIELD_COLUMNS;
     }
 
     /**
@@ -194,9 +233,10 @@ public class DiffCalculator {
      *
      * @param rowData 行データ
      * @param customFieldMap カスタムフィールドマップ
+     * @param customFieldColumns カスタムフィールド対象列のリスト
      * @return ペイロード
      */
-    private Map<String, Object> buildPayload(RowData rowData, Map<String, String> customFieldMap) {
+    private Map<String, Object> buildPayload(RowData rowData, Map<String, String> customFieldMap, List<String> customFieldColumns) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("assignee", rowData.assignee);
         payload.put("startDate", rowData.startPlan);
@@ -205,7 +245,7 @@ public class DiffCalculator {
         payload.put("dueActual", rowData.dueActual);
 
         Map<String, String> customFields = new LinkedHashMap<>();
-        for (String column : ColumnDefinitions.CUSTOM_FIELD_COLUMNS) {
+        for (String column : customFieldColumns) {
             String mapping = customFieldMap.get(column);
             if (mapping == null) {
                 continue;

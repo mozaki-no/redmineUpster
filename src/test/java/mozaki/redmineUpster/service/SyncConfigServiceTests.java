@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.context.ActiveProfiles;
 
 import mozaki.redmineUpster.config.SyncConfigProperties;
+import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
@@ -590,6 +591,79 @@ class SyncConfigServiceTests {
 			assertThat(config.isEnabled()).isTrue();
 			assertThat(config.getMode()).isEqualTo("FIXED");
 			assertThat(config.getFixed()).isEqualTo("Closed");
+		}
+
+		@Test
+		@DisplayName("ColumnsConfigのgetter/setterが正しく動作する")
+		void columnsConfig_getterSetter() {
+			ColumnsConfig config = new ColumnsConfig();
+			config.setHierarchy(List.of("A", "B", "C"));
+			config.setRequired(List.of("id", "name"));
+			config.setCustomFieldColumns(List.of("field1", "field2"));
+
+			assertThat(config.getHierarchy()).containsExactly("A", "B", "C");
+			assertThat(config.getRequired()).containsExactly("id", "name");
+			assertThat(config.getCustomFieldColumns()).containsExactly("field1", "field2");
+		}
+
+		@Test
+		@DisplayName("ColumnsConfigはデフォルトで空のリストを持つ")
+		void columnsConfig_defaultEmptyLists() {
+			ColumnsConfig config = new ColumnsConfig();
+
+			assertThat(config.getHierarchy()).isNotNull();
+			assertThat(config.getHierarchy()).isEmpty();
+			assertThat(config.getRequired()).isNotNull();
+			assertThat(config.getRequired()).isEmpty();
+			assertThat(config.getCustomFieldColumns()).isNotNull();
+			assertThat(config.getCustomFieldColumns()).isEmpty();
+		}
+
+		@Test
+		@DisplayName("SyncConfigにColumnsConfigを設定できる")
+		void syncConfig_withColumnsConfig() {
+			SyncConfig syncConfig = new SyncConfig();
+			ColumnsConfig columnsConfig = new ColumnsConfig();
+			columnsConfig.setHierarchy(List.of("大分類", "中分類", "小分類"));
+
+			syncConfig.setColumns(columnsConfig);
+
+			assertThat(syncConfig.getColumns()).isNotNull();
+			assertThat(syncConfig.getColumns().getHierarchy()).containsExactly("大分類", "中分類", "小分類");
+		}
+	}
+
+	@Nested
+	@DisplayName("ColumnsConfig読み込みテスト")
+	class LoadColumnsConfigTests {
+
+		@Test
+		@DisplayName("columns設定が正しく読み込まれる")
+		void loadConfig_withColumnsSettings_success() {
+			service.loadConfig("test-sync-config.yml");
+
+			List<ProjectConfig> projects = service.getAllProjects();
+			ProjectConfig project = projects.get(0);
+
+			assertThat(project.getSync()).isNotNull();
+			assertThat(project.getSync().getColumns()).isNotNull();
+
+			ColumnsConfig columns = project.getSync().getColumns();
+			assertThat(columns.getHierarchy()).containsExactly("大分類", "中分類", "小分類", "成果物", "タスク");
+			assertThat(columns.getRequired()).containsExactly("id", "チーム", "工程");
+			assertThat(columns.getCustomFieldColumns()).containsExactly("id", "チーム", "工程");
+		}
+
+		@Test
+		@DisplayName("columns設定がない場合はnullを返す")
+		void loadConfig_withoutColumnsSettings_returnsNull() {
+			service.loadConfig("test-multiple-projects.yml");
+
+			List<ProjectConfig> projects = service.getAllProjects();
+			ProjectConfig project = projects.get(0);
+
+			// columns設定がない場合はnull
+			assertThat(project.getSync().getColumns()).isNull();
 		}
 	}
 }

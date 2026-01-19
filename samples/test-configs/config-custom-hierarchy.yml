@@ -1,0 +1,37 @@
+projects:
+  - name: "テスト用プロジェクト（カスタム階層）"
+    default: true
+    redmine:
+      baseUrl: "http://localhost:3000"
+      apiKey: "test-api-key-custom-hierarchy"
+      projectId: "test-project"
+    sync:
+      tracker:
+        enabled: true
+        value: "タスク"
+      status:
+        enabled: true
+        mode: "BY_DATES"
+        fixed: "New"
+      customFieldMap:
+        部門: "5"
+        責任者: "6"
+      columns:
+        # 独自の階層列名
+        hierarchy:
+          - "プロジェクト"
+          - "フェーズ"
+          - "作業項目"
+        required:
+          - "id"
+          - "プロジェクト"
+          - "フェーズ"
+          - "作業項目"
+          - "部門"
+          - "責任者"
+          - "開始日"
+          - "終了日"
+        customFieldColumns:
+          - "id"
+          - "部門"
+          - "責任者"

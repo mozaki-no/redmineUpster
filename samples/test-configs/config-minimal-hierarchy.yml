@@ -1,9 +1,9 @@
 projects:
-  - name: "テスト用プロジェクト"
+  - name: "テスト用プロジェクト（最小階層）"
     default: true
     redmine:
       baseUrl: "http://localhost:3000"
-      apiKey: "test-api-key"
+      apiKey: "test-api-key-minimal-hierarchy"
       projectId: "test-project"
     sync:
       tracker:
@@ -13,19 +13,19 @@ projects:
         enabled: true
         mode: "BY_DATES"
         fixed: "New"
-      customFieldMap: {}
+      customFieldMap:
+        担当者名: "4"
       columns:
+        # 2階層のみの最小構成
         hierarchy:
-          - "大分類"
-          - "中分類"
-          - "小分類"
-          - "成果物"
+          - "カテゴリ"
           - "タスク"
         required:
           - "id"
-          - "チーム"
-          - "工程"
+          - "カテゴリ"
+          - "タスク"
+          - "担当"
+          - "着手予定"
+          - "完了予定"
         customFieldColumns:
           - "id"
-          - "チーム"
-          - "工程"

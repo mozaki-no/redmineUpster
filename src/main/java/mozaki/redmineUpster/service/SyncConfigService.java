@@ -18,6 +18,7 @@ import org.yaml.snakeyaml.Yaml;
 
 import jakarta.annotation.PostConstruct;
 import mozaki.redmineUpster.config.SyncConfigProperties;
+import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
@@ -205,6 +206,39 @@ public class SyncConfigService {
 				expandedMap.put(key, value);
 			}
 			config.setCustomFieldMap(expandedMap);
+		}
+
+		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
+		if (columnsMap != null) {
+			config.setColumns(parseColumnsConfig(columnsMap));
+		}
+
+		return config;
+	}
+
+	/**
+	 * MapからColumnsConfigを解析します。
+	 *
+	 * @param map 列設定のMap
+	 * @return 解析されたColumnsConfig
+	 */
+	@SuppressWarnings("unchecked")
+	private ColumnsConfig parseColumnsConfig(Map<String, Object> map) {
+		ColumnsConfig config = new ColumnsConfig();
+
+		List<String> hierarchy = (List<String>) map.get("hierarchy");
+		if (hierarchy != null) {
+			config.setHierarchy(new ArrayList<>(hierarchy));
+		}
+
+		List<String> required = (List<String>) map.get("required");
+		if (required != null) {
+			config.setRequired(new ArrayList<>(required));
+		}
+
+		List<String> customFieldColumns = (List<String>) map.get("customFieldColumns");
+		if (customFieldColumns != null) {
+			config.setCustomFieldColumns(new ArrayList<>(customFieldColumns));
 		}
 
 		return config;

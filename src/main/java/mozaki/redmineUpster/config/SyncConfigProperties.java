@@ -114,6 +114,39 @@ public class SyncConfigProperties {
 		 * キーはCSV/Excelの列名、値はRedmineのカスタムフィールド名。
 		 */
 		private Map<String, String> customFieldMap = new HashMap<>();
+
+		/**
+		 * 列設定。
+		 */
+		private ColumnsConfig columns;
+	}
+
+	/**
+	 * 列設定クラス。
+	 * <p>
+	 * CSV/Excelの列に関する設定を保持します。
+	 * 階層列、必須列、カスタムフィールド対象列を定義します。
+	 * </p>
+	 */
+	@Data
+	public static class ColumnsConfig {
+		/**
+		 * 階層列のリスト（親子関係推定に使用、順番が重要）。
+		 * 例: ["大分類", "中分類", "小分類", "成果物", "タスク"]
+		 */
+		private List<String> hierarchy = new ArrayList<>();
+
+		/**
+		 * 必須列のリスト（CSVに必ず含める列）。
+		 * 例: ["id", "チーム", "工程", ...]
+		 */
+		private List<String> required = new ArrayList<>();
+
+		/**
+		 * カスタムフィールドマッピング対象列のリスト。
+		 * 例: ["id", "チーム", "工程", ...]
+		 */
+		private List<String> customFieldColumns = new ArrayList<>();
 	}
 
 	/**
