@@ -13,6 +13,10 @@ projects:
         enabled: true
         mode: "BY_DATES"  # BY_DATES | FIXED
         fixed: "New"
+        statusMap:
+          "未着手": "1"
+          "進行中": "2"
+          "完了": "5"
       customFieldMap:
         チーム: "12"
         工程: "13"
@@ -20,6 +24,9 @@ projects:
         着手実績: "15"
         完了実績: "16"
         成果物: "17"
+      customFieldDateColumns:
+        - "着手実績"
+        - "完了実績"
       # 列設定（省略時はデフォルト値を使用）
       columns:
         # 外部キー列（Redmineチケットと紐付けるためのID列）
@@ -31,6 +38,10 @@ projects:
           - "小分類"
           - "成果物"
           - "タスク"
+        # Redmineに反映する日付/ステータス列
+        startDateColumn: "着手予定"
+        dueDateColumn: "完了予定"
+        statusColumn: "ステータス"
         # 必須列（CSVに必ず含める列）
         required:
           - "id"

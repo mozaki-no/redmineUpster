@@ -208,6 +208,11 @@ public class SyncConfigService {
 			config.setCustomFieldMap(expandedMap);
 		}
 
+		List<String> customFieldDateColumns = (List<String>) map.get("customFieldDateColumns");
+		if (customFieldDateColumns != null) {
+			config.setCustomFieldDateColumns(new ArrayList<>(customFieldDateColumns));
+		}
+
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
 		if (columnsMap != null) {
 			config.setColumns(parseColumnsConfig(columnsMap));
@@ -246,6 +251,21 @@ public class SyncConfigService {
 			config.setExternalKeyColumn(externalKeyColumn);
 		}
 
+		String startDateColumn = (String) map.get("startDateColumn");
+		if (startDateColumn != null && !startDateColumn.isBlank()) {
+			config.setStartDateColumn(startDateColumn);
+		}
+
+		String dueDateColumn = (String) map.get("dueDateColumn");
+		if (dueDateColumn != null && !dueDateColumn.isBlank()) {
+			config.setDueDateColumn(dueDateColumn);
+		}
+
+		String statusColumn = (String) map.get("statusColumn");
+		if (statusColumn != null && !statusColumn.isBlank()) {
+			config.setStatusColumn(statusColumn);
+		}
+
 		return config;
 	}
 
@@ -273,6 +293,17 @@ public class SyncConfigService {
 		config.setEnabled(Boolean.TRUE.equals(map.get("enabled")));
 		config.setMode(expandEnvVars((String) map.get("mode")));
 		config.setFixed(expandEnvVars((String) map.get("fixed")));
+
+		Map<String, Object> statusMap = (Map<String, Object>) map.get("statusMap");
+		if (statusMap != null) {
+			Map<String, String> expandedMap = new HashMap<>();
+			for (Map.Entry<String, Object> entry : statusMap.entrySet()) {
+				String key = expandEnvVars(entry.getKey());
+				String value = expandEnvVars(String.valueOf(entry.getValue()));
+				expandedMap.put(key, value);
+			}
+			config.setStatusMap(expandedMap);
+		}
 		return config;
 	}
 

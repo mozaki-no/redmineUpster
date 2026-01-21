@@ -116,6 +116,12 @@ public class SyncConfigProperties {
 		private Map<String, String> customFieldMap = new HashMap<>();
 
 		/**
+		 * 日付として扱うカスタムフィールド列のリスト。
+		 * 指定された列は日付正規化されます。
+		 */
+		private List<String> customFieldDateColumns = new ArrayList<>();
+
+		/**
 		 * 列設定。
 		 */
 		private ColumnsConfig columns;
@@ -154,6 +160,24 @@ public class SyncConfigProperties {
 		 * 例: "WBS番号" などに変更可能。
 		 */
 		private String externalKeyColumn = "id";
+
+		/**
+		 * 開始日列名（Redmineのstart_dateに反映）。
+		 * デフォルト値は "着手予定"。
+		 */
+		private String startDateColumn = "着手予定";
+
+		/**
+		 * 期限列名（Redmineのdue_dateに反映）。
+		 * デフォルト値は "完了予定"。
+		 */
+		private String dueDateColumn = "完了予定";
+
+		/**
+		 * ステータス列名（CSVのステータス値を優先する場合に使用）。
+		 * デフォルト値は "ステータス"。
+		 */
+		private String statusColumn = "ステータス";
 	}
 
 	/**
@@ -200,5 +224,11 @@ public class SyncConfigProperties {
 		 * modeが"FIXED"の場合に使用されます。
 		 */
 		private String fixed;
+
+		/**
+		 * CSVのステータス名をRedmineのステータスID/名称に変換するマップ。
+		 * 例: {"進行中": "2"}
+		 */
+		private Map<String, String> statusMap = new HashMap<>();
 	}
 }

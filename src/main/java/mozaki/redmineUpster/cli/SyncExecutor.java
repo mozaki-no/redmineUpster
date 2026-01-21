@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClientResponseException;
 
 import lombok.RequiredArgsConstructor;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
@@ -26,6 +27,7 @@ import mozaki.redmineUpster.config.SyncConfigProperties.TrackerConfig;
 import mozaki.redmineUpster.domain.IssueLinkEntity;
 import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.service.RedmineClient;
+import mozaki.redmineUpster.util.DateParser;
 import mozaki.redmineUpster.util.DateParser;
 
 /**
@@ -65,6 +67,7 @@ public class SyncExecutor {
         List<String> errors = new ArrayList<>();
 
         Map<String, String> customFieldMap = getCustomFieldMap(projectConfig);
+        List<String> customFieldDateColumns = getCustomFieldDateColumns(projectConfig);
         Map<String, Long> createdIssueIds = new HashMap<>();
 
         // 階層の深さでソート（親を先に処理）
@@ -79,7 +82,8 @@ public class SyncExecutor {
                     continue;
                 }
 
-                Map<String, Object> issuePayload = buildIssuePayload(item, client, projectConfig, customFieldMap, createdIssueIds);
+                Map<String, Object> issuePayload = buildIssuePayload(item, client, projectConfig, customFieldMap,
+                        customFieldDateColumns, createdIssueIds);
 
                 if (ACTION_CREATE.equalsIgnoreCase(item.action())) {
                     logger.debug("API Request: POST " + client.getBaseUrl() + "/issues.json");
@@ -87,7 +91,7 @@ public class SyncExecutor {
                     Long issueId = client.createIssue(issuePayload);
                     if (issueId == null) {
                         errorCount++;
-                        String errorMsg = "create failed: " + item.externalKey();
+                        String errorMsg = "作成失敗: 外部キー=" + item.externalKey() + " (レスポンスにissue idがありません)";
                         errors.add(errorMsg);
                         logger.error(errorMsg);
                         continue;
@@ -103,7 +107,7 @@ public class SyncExecutor {
                     Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKey(item.externalKey());
                     if (link.isEmpty()) {
                         errorCount++;
-                        String errorMsg = "missing issue link for " + item.externalKey();
+                        String errorMsg = "更新失敗: 外部キー=" + item.externalKey() + " (issue_linkが見つかりません)";
                         errors.add(errorMsg);
                         logger.error(errorMsg);
                         continue;
@@ -116,7 +120,7 @@ public class SyncExecutor {
                 }
             } catch (RuntimeException ex) {
                 errorCount++;
-                String errorMsg = "sync failed for " + item.externalKey() + ": " + ex.getMessage();
+                String errorMsg = formatError(item.externalKey(), ex);
                 errors.add(errorMsg);
                 logger.error(errorMsg);
             }
@@ -141,6 +145,7 @@ public class SyncExecutor {
             RedmineClient client,
             ProjectConfig projectConfig,
             Map<String, String> customFieldMap,
+            List<String> customFieldDateColumns,
             Map<String, Long> createdIssueIds) {
 
         Map<String, Object> issue = new HashMap<>();
@@ -200,6 +205,7 @@ public class SyncExecutor {
         }
         if (statusConfig != null && statusConfig.isEnabled()) {
             String statusValue = resolveStatus(item, payload, statusConfig);
+            statusValue = mapStatusValue(statusValue, statusConfig);
             if (statusValue != null && !statusValue.isBlank()) {
                 if (isNumeric(statusValue)) {
                     issue.put("status_id", Long.parseLong(statusValue));
@@ -211,7 +217,7 @@ public class SyncExecutor {
 
         // カスタムフィールド
         Map<String, String> customFieldValues = (Map<String, String>) payload.get("customFields");
-        List<Map<String, Object>> customFields = buildCustomFields(customFieldValues, customFieldMap);
+        List<Map<String, Object>> customFields = buildCustomFields(customFieldValues, customFieldMap, customFieldDateColumns);
         if (!customFields.isEmpty()) {
             issue.put("custom_fields", customFields);
         }
@@ -245,16 +251,27 @@ public class SyncExecutor {
      * @param mapping カラム名からフィールド名へのマッピング
      * @return カスタムフィールドのリスト
      */
-    private List<Map<String, Object>> buildCustomFields(Map<String, String> values, Map<String, String> mapping) {
+    private List<Map<String, Object>> buildCustomFields(
+            Map<String, String> values,
+            Map<String, String> mapping,
+            List<String> customFieldDateColumns) {
         List<Map<String, Object>> customFields = new ArrayList<>();
         if (values == null || values.isEmpty()) {
             return customFields;
         }
+        List<String> dateColumns = customFieldDateColumns == null ? List.of() : customFieldDateColumns;
         for (Map.Entry<String, String> entry : values.entrySet()) {
             String column = entry.getKey();
             String value = entry.getValue();
             if (value == null || value.isBlank()) {
                 continue;
+            }
+            if (dateColumns.contains(column)) {
+                String normalized = DateParser.normalizeDate(value);
+                if (normalized == null) {
+                    continue;
+                }
+                value = normalized;
             }
             String field = mapping.get(column);
             if (field == null || field.isBlank()) {
@@ -299,6 +316,17 @@ public class SyncExecutor {
         return STATUS_NEW;
     }
 
+    private String mapStatusValue(String statusValue, StatusConfig statusConfig) {
+        if (statusValue == null || statusValue.isBlank() || statusConfig == null) {
+            return statusValue;
+        }
+        Map<String, String> map = statusConfig.getStatusMap();
+        if (map == null || map.isEmpty()) {
+            return statusValue;
+        }
+        return map.getOrDefault(statusValue, statusValue);
+    }
+
     /**
      * カスタムフィールドマップを取得します。
      *
@@ -310,6 +338,13 @@ public class SyncExecutor {
             return Map.of();
         }
         return projectConfig.getSync().getCustomFieldMap();
+    }
+
+    private List<String> getCustomFieldDateColumns(ProjectConfig projectConfig) {
+        if (projectConfig.getSync() == null || projectConfig.getSync().getCustomFieldDateColumns() == null) {
+            return List.of();
+        }
+        return projectConfig.getSync().getCustomFieldDateColumns();
     }
 
     /**
@@ -353,5 +388,17 @@ public class SyncExecutor {
         }
         sb.append("}}");
         return sb.toString();
+    }
+
+    private String formatError(String externalKey, RuntimeException ex) {
+        if (ex instanceof RestClientResponseException responseEx) {
+            String body = responseEx.getResponseBodyAsString();
+            String reason = responseEx.getStatusText();
+            return "同期失敗: 外部キー=" + externalKey + " 理由=" + responseEx.getRawStatusCode() + " "
+                    + (reason == null ? "" : reason) + " " + body;
+        }
+        String message = ex.getMessage();
+        return "同期失敗: 外部キー=" + externalKey + " 理由="
+                + (message == null ? ex.getClass().getSimpleName() : message);
     }
 }

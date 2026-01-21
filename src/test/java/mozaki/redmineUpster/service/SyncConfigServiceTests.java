@@ -119,6 +119,7 @@ class SyncConfigServiceTests {
 			assertThat(project2.getSync().getStatus()).isNotNull();
 			assertThat(project2.getSync().getStatus().isEnabled()).isTrue();
 			assertThat(project2.getSync().getStatus().getMode()).isEqualTo("BY_DATES");
+			assertThat(project2.getSync().getStatus().getStatusMap()).containsEntry("進行中", "2");
 
 			// customFieldMap
 			assertThat(project2.getSync().getCustomFieldMap()).containsEntry("担当者", "assignee");
@@ -554,10 +555,12 @@ class SyncConfigServiceTests {
 			Map<String, String> customFieldMap = new HashMap<>();
 			customFieldMap.put("key", "value");
 			config.setCustomFieldMap(customFieldMap);
+			config.setCustomFieldDateColumns(List.of("開始日", "期限"));
 
 			assertThat(config.getTracker()).isEqualTo(tracker);
 			assertThat(config.getStatus()).isEqualTo(status);
 			assertThat(config.getCustomFieldMap()).containsEntry("key", "value");
+			assertThat(config.getCustomFieldDateColumns()).containsExactly("開始日", "期限");
 		}
 
 		@Test
@@ -567,6 +570,8 @@ class SyncConfigServiceTests {
 
 			assertThat(config.getCustomFieldMap()).isNotNull();
 			assertThat(config.getCustomFieldMap()).isEmpty();
+			assertThat(config.getCustomFieldDateColumns()).isNotNull();
+			assertThat(config.getCustomFieldDateColumns()).isEmpty();
 		}
 
 		@Test
@@ -587,10 +592,12 @@ class SyncConfigServiceTests {
 			config.setEnabled(true);
 			config.setMode("FIXED");
 			config.setFixed("Closed");
+			config.setStatusMap(Map.of("進行中", "2"));
 
 			assertThat(config.isEnabled()).isTrue();
 			assertThat(config.getMode()).isEqualTo("FIXED");
 			assertThat(config.getFixed()).isEqualTo("Closed");
+			assertThat(config.getStatusMap()).containsEntry("進行中", "2");
 		}
 
 		@Test
@@ -600,10 +607,16 @@ class SyncConfigServiceTests {
 			config.setHierarchy(List.of("A", "B", "C"));
 			config.setRequired(List.of("id", "name"));
 			config.setCustomFieldColumns(List.of("field1", "field2"));
+			config.setStartDateColumn("開始日");
+			config.setDueDateColumn("期限");
+			config.setStatusColumn("状態");
 
 			assertThat(config.getHierarchy()).containsExactly("A", "B", "C");
 			assertThat(config.getRequired()).containsExactly("id", "name");
 			assertThat(config.getCustomFieldColumns()).containsExactly("field1", "field2");
+			assertThat(config.getStartDateColumn()).isEqualTo("開始日");
+			assertThat(config.getDueDateColumn()).isEqualTo("期限");
+			assertThat(config.getStatusColumn()).isEqualTo("状態");
 		}
 
 		@Test
@@ -617,6 +630,9 @@ class SyncConfigServiceTests {
 			assertThat(config.getRequired()).isEmpty();
 			assertThat(config.getCustomFieldColumns()).isNotNull();
 			assertThat(config.getCustomFieldColumns()).isEmpty();
+			assertThat(config.getStartDateColumn()).isEqualTo("着手予定");
+			assertThat(config.getDueDateColumn()).isEqualTo("完了予定");
+			assertThat(config.getStatusColumn()).isEqualTo("ステータス");
 		}
 
 		@Test
@@ -650,6 +666,9 @@ class SyncConfigServiceTests {
 
 			ColumnsConfig columns = project.getSync().getColumns();
 			assertThat(columns.getHierarchy()).containsExactly("大分類", "中分類", "小分類", "成果物", "タスク");
+			assertThat(columns.getStartDateColumn()).isEqualTo("開始日");
+			assertThat(columns.getDueDateColumn()).isEqualTo("期限");
+			assertThat(columns.getStatusColumn()).isEqualTo("状態");
 			assertThat(columns.getRequired()).containsExactly("id", "チーム", "工程");
 			assertThat(columns.getCustomFieldColumns()).containsExactly("id", "チーム", "工程");
 		}

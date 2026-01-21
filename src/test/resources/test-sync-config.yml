@@ -14,6 +14,8 @@ projects:
         mode: "BY_DATES"
         fixed: "New"
       customFieldMap: {}
+      customFieldDateColumns:
+        - "開始日"
       columns:
         hierarchy:
           - "大分類"
@@ -21,6 +23,9 @@ projects:
           - "小分類"
           - "成果物"
           - "タスク"
+        startDateColumn: "開始日"
+        dueDateColumn: "期限"
+        statusColumn: "状態"
         required:
           - "id"
           - "チーム"
