@@ -11,9 +11,13 @@ import static mozaki.redmineUpster.cli.SyncConstants.STATUS_NEW;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 
 import org.springframework.stereotype.Component;
 
@@ -24,6 +28,7 @@ import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.domain.IssueLinkEntity;
 import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.util.ColumnDefinitions;
+import mozaki.redmineUpster.util.DateParser;
 import mozaki.redmineUpster.util.StringUtils;
 
 /**
@@ -69,13 +74,19 @@ public class DiffCalculator {
             if (externalKey.isBlank()) {
                 continue;
             }
-            List<String> hierarchy = hierarchyValues(row, hierarchyColumns);
+            HierarchyData hierarchyData = hierarchyValues(row, hierarchyColumns);
+            List<String> hierarchy = hierarchyData.values();
+            List<String> hierarchyColumnsUsed = hierarchyData.columns();
             String subject = resolveSubject(row, hierarchy);
             String levelPath = String.join(" > ", hierarchy);
             List<String> parentHierarchy = hierarchy.size() > 1 ? hierarchy.subList(0, hierarchy.size() - 1) : List.of();
+            List<String> parentHierarchyColumns = hierarchyColumnsUsed.size() > 1
+                    ? hierarchyColumnsUsed.subList(0, hierarchyColumnsUsed.size() - 1)
+                    : List.of();
             String parentPath = String.join(" > ", parentHierarchy);
             RowData data = new RowData(externalKey, subject, levelPath, parentPath, row,
-                    startDateColumn, dueDateColumn, statusColumn);
+                    startDateColumn, dueDateColumn, statusColumn, hierarchyColumnsUsed, hierarchy,
+                    parentHierarchyColumns, parentHierarchy);
             parsed.add(data);
 
             // デバッグログ: 階層パスの生成結果
@@ -85,7 +96,9 @@ public class DiffCalculator {
         }
 
         Map<String, String> pathToExternalKey = new HashMap<>();
+        Set<String> existingExternalKeys = new LinkedHashSet<>();
         for (RowData rowData : parsed) {
+            existingExternalKeys.add(rowData.externalKey);
             if (!rowData.levelPath.isBlank() && !pathToExternalKey.containsKey(rowData.levelPath)) {
                 pathToExternalKey.put(rowData.levelPath, rowData.externalKey);
             }
@@ -93,6 +106,7 @@ public class DiffCalculator {
 
         Map<String, String> customFieldMap = getCustomFieldMap(projectConfig);
         List<DiffItem> items = new ArrayList<>();
+        Map<String, ParentAggregate> virtualParents = new LinkedHashMap<>();
 
         for (RowData rowData : parsed) {
             String parentKey = pathToExternalKey.get(rowData.parentPath);
@@ -119,6 +133,28 @@ public class DiffCalculator {
                 logger.debug("Parent key: " + (parentKey != null ? parentKey : "(none)"));
                 logger.debug("Action: " + action + " (" + (ACTION_CREATE.equals(action) ? "no existing link" : "existing link found") + ")");
             }
+
+            collectVirtualParents(rowData, existingExternalKeys, virtualParents);
+        }
+
+        if (!virtualParents.isEmpty()) {
+            for (ParentAggregate parent : virtualParents.values()) {
+                String action = resolveAction(parent.externalKey, logger);
+                Map<String, Object> payload = buildParentPayload(parent);
+                DiffItem parentItem = new DiffItem(
+                        parent.externalKey,
+                        parent.subject,
+                        parent.parentKey,
+                        parent.levelPath,
+                        action,
+                        null,
+                        payload
+                );
+                items.add(parentItem);
+                if (logger != null) {
+                    logger.debug("Virtual parent: " + parent.externalKey + " path=" + parent.levelPath);
+                }
+            }
         }
 
         return items;
@@ -143,15 +179,17 @@ public class DiffCalculator {
      * @param hierarchyColumns 階層列のリスト
      * @return 階層値のリスト
      */
-    private List<String> hierarchyValues(Map<String, String> row, List<String> hierarchyColumns) {
+    private HierarchyData hierarchyValues(Map<String, String> row, List<String> hierarchyColumns) {
         List<String> values = new ArrayList<>();
+        List<String> columns = new ArrayList<>();
         for (String column : hierarchyColumns) {
             String value = value(row, column);
             if (!value.isBlank()) {
                 values.add(value);
+                columns.add(column);
             }
         }
-        return values;
+        return new HierarchyData(columns, values);
     }
 
     /**
@@ -358,6 +396,25 @@ public class DiffCalculator {
         return payload;
     }
 
+    private Map<String, Object> buildParentPayload(ParentAggregate parent) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (parent.startPlan != null) {
+            payload.put("startDate", parent.startPlan);
+        } else {
+            payload.put("startDate", "");
+        }
+        if (parent.duePlan != null) {
+            payload.put("dueDate", parent.duePlan);
+        } else {
+            payload.put("dueDate", "");
+        }
+        payload.put("startActual", "");
+        payload.put("dueActual", "");
+        payload.put("customFields", parent.customFieldValues);
+        payload.put("trackerId", 6);
+        return payload;
+    }
+
     /**
      * 行から値を取得します。
      *
@@ -385,9 +442,15 @@ public class DiffCalculator {
         private final String startActual;
         private final String dueActual;
         private final String statusValue;
+        private final List<String> hierarchyColumnsUsed;
+        private final List<String> hierarchyValues;
+        private final List<String> parentHierarchyColumns;
+        private final List<String> parentHierarchyValues;
 
         private RowData(String externalKey, String subject, String levelPath, String parentPath,
-                Map<String, String> row, String startDateColumn, String dueDateColumn, String statusColumn) {
+                Map<String, String> row, String startDateColumn, String dueDateColumn, String statusColumn,
+                List<String> hierarchyColumnsUsed, List<String> hierarchyValues,
+                List<String> parentHierarchyColumns, List<String> parentHierarchyValues) {
             this.externalKey = externalKey;
             this.subject = subject;
             this.levelPath = levelPath;
@@ -399,7 +462,101 @@ public class DiffCalculator {
             this.startActual = value(row, ColumnDefinitions.COL_START_ACTUAL);
             this.dueActual = value(row, ColumnDefinitions.COL_DUE_ACTUAL);
             this.statusValue = value(row, statusColumn);
+            this.hierarchyColumnsUsed = hierarchyColumnsUsed;
+            this.hierarchyValues = hierarchyValues;
+            this.parentHierarchyColumns = parentHierarchyColumns;
+            this.parentHierarchyValues = parentHierarchyValues;
         }
+    }
+
+    private record HierarchyData(List<String> columns, List<String> values) {}
+
+    private static class ParentAggregate {
+        private final String externalKey;
+        private final String levelPath;
+        private final String subject;
+        private final String parentKey;
+        private final List<String> hierarchyColumns;
+        private final List<String> hierarchyValues;
+        private final Map<String, String> customFieldValues = new LinkedHashMap<>();
+        private LocalDate minStart;
+        private LocalDate maxDue;
+        private String startPlan;
+        private String duePlan;
+
+        private ParentAggregate(String externalKey, String levelPath, String subject, String parentKey,
+                List<String> hierarchyColumns, List<String> hierarchyValues) {
+            this.externalKey = externalKey;
+            this.levelPath = levelPath;
+            this.subject = subject;
+            this.parentKey = parentKey;
+            this.hierarchyColumns = hierarchyColumns;
+            this.hierarchyValues = hierarchyValues;
+        }
+
+        private void addChild(RowData rowData) {
+            updateDates(rowData.startPlan, rowData.duePlan);
+            for (String column : hierarchyColumns) {
+                String value = value(rowData.row, column);
+                if (!value.isBlank() && !customFieldValues.containsKey(column)) {
+                    customFieldValues.put(column, value);
+                }
+            }
+        }
+
+        private void updateDates(String startValue, String dueValue) {
+            LocalDate start = parseDate(startValue);
+            if (start != null && (minStart == null || start.isBefore(minStart))) {
+                minStart = start;
+                startPlan = minStart.format(DateTimeFormatter.ISO_LOCAL_DATE);
+            }
+            LocalDate due = parseDate(dueValue);
+            if (due != null && (maxDue == null || due.isAfter(maxDue))) {
+                maxDue = due;
+                duePlan = maxDue.format(DateTimeFormatter.ISO_LOCAL_DATE);
+            }
+        }
+    }
+
+    private void collectVirtualParents(RowData rowData, Set<String> existingExternalKeys,
+            Map<String, ParentAggregate> virtualParents) {
+        if (rowData.hierarchyValues.size() < 2) {
+            return;
+        }
+        String externalKey = rowData.externalKey;
+        String[] segments = externalKey == null ? new String[0] : externalKey.split("\\.");
+        if (segments.length < rowData.hierarchyValues.size()) {
+            return;
+        }
+        for (int levelIndex = 0; levelIndex < rowData.hierarchyValues.size() - 1; levelIndex++) {
+            String parentKey = joinSegments(segments, levelIndex + 1);
+            if (parentKey == null || existingExternalKeys.contains(parentKey)) {
+                continue;
+            }
+            List<String> values = rowData.hierarchyValues.subList(0, levelIndex + 1);
+            List<String> columns = rowData.hierarchyColumnsUsed.subList(0, levelIndex + 1);
+            String levelPath = String.join(" > ", values);
+            String subject = values.get(values.size() - 1);
+            String parentParentKey = levelIndex > 0 ? joinSegments(segments, levelIndex) : null;
+            ParentAggregate aggregate = virtualParents.computeIfAbsent(
+                    parentKey,
+                    key -> new ParentAggregate(key, levelPath, subject, parentParentKey, columns, values));
+            aggregate.addChild(rowData);
+        }
+    }
+
+    private static String joinSegments(String[] segments, int length) {
+        if (segments == null || segments.length < length || length <= 0) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < length; i++) {
+            if (i > 0) {
+                sb.append(".");
+            }
+            sb.append(segments[i]);
+        }
+        return sb.toString();
     }
 
     private String inferParentKeyFromExternalKey(String externalKey) {
@@ -415,5 +572,13 @@ public class DiffCalculator {
             return null;
         }
         return parent;
+    }
+
+    private static LocalDate parseDate(String value) {
+        String normalized = DateParser.normalizeDate(value);
+        if (normalized == null) {
+            return null;
+        }
+        return LocalDate.parse(normalized, DateTimeFormatter.ISO_LOCAL_DATE);
     }
 }

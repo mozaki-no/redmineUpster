@@ -185,16 +185,19 @@ public class SyncExecutor {
         }
 
         // トラッカー
-        TrackerConfig trackerConfig = null;
-        if (projectConfig.getSync() != null) {
-            trackerConfig = projectConfig.getSync().getTracker();
-        }
-        if (trackerConfig != null && trackerConfig.isEnabled() && trackerConfig.getValue() != null && !trackerConfig.getValue().isBlank()) {
-            String trackerValue = trackerConfig.getValue();
-            if (isNumeric(trackerValue)) {
-                issue.put("tracker_id", Long.parseLong(trackerValue));
-            } else {
-                issue.put("tracker", trackerValue);
+        boolean trackerApplied = applyTrackerOverride(issue, payload);
+        if (!trackerApplied) {
+            TrackerConfig trackerConfig = null;
+            if (projectConfig.getSync() != null) {
+                trackerConfig = projectConfig.getSync().getTracker();
+            }
+            if (trackerConfig != null && trackerConfig.isEnabled() && trackerConfig.getValue() != null && !trackerConfig.getValue().isBlank()) {
+                String trackerValue = trackerConfig.getValue();
+                if (isNumeric(trackerValue)) {
+                    issue.put("tracker_id", Long.parseLong(trackerValue));
+                } else {
+                    issue.put("tracker", trackerValue);
+                }
             }
         }
 
@@ -400,5 +403,27 @@ public class SyncExecutor {
         String message = ex.getMessage();
         return "同期失敗: 外部キー=" + externalKey + " 理由="
                 + (message == null ? ex.getClass().getSimpleName() : message);
+    }
+
+    private boolean applyTrackerOverride(Map<String, Object> issue, Map<String, Object> payload) {
+        Object trackerId = payload.get("trackerId");
+        if (trackerId instanceof Number) {
+            issue.put("tracker_id", ((Number) trackerId).longValue());
+            return true;
+        }
+        if (trackerId instanceof String trackerIdString && !trackerIdString.isBlank()) {
+            if (isNumeric(trackerIdString)) {
+                issue.put("tracker_id", Long.parseLong(trackerIdString));
+            } else {
+                issue.put("tracker", trackerIdString);
+            }
+            return true;
+        }
+        Object tracker = payload.get("tracker");
+        if (tracker instanceof String trackerName && !trackerName.isBlank()) {
+            issue.put("tracker", trackerName);
+            return true;
+        }
+        return false;
     }
 }
