@@ -22,6 +22,8 @@ projects:
         成果物: "17"
       # 列設定（省略時はデフォルト値を使用）
       columns:
+        # 外部キー列（Redmineチケットと紐付けるためのID列）
+        externalKeyColumn: "id"  # デフォルト。"WBS番号"などに変更可能
         # 階層列（親子関係推定に使用、順番が重要）
         hierarchy:
           - "大分類"

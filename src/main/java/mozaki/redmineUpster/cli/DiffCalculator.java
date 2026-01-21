@@ -58,10 +58,11 @@ public class DiffCalculator {
 
         List<String> hierarchyColumns = getHierarchyColumns(projectConfig);
         List<String> customFieldColumns = getCustomFieldColumns(projectConfig);
+        String externalKeyColumn = getExternalKeyColumn(projectConfig);
 
         List<RowData> parsed = new ArrayList<>();
         for (Map<String, String> row : rows) {
-            String externalKey = value(row, ColumnDefinitions.COL_ID);
+            String externalKey = value(row, externalKeyColumn);
             if (externalKey.isBlank()) {
                 continue;
             }
@@ -178,6 +179,24 @@ public class DiffCalculator {
             }
         }
         return ColumnDefinitions.CUSTOM_FIELD_COLUMNS;
+    }
+
+    /**
+     * プロジェクト設定から外部キー列名を取得します。
+     * 設定がない場合はデフォルト値（"id"）を返します。
+     *
+     * @param projectConfig プロジェクト設定
+     * @return 外部キー列名
+     */
+    private String getExternalKeyColumn(ProjectConfig projectConfig) {
+        if (projectConfig != null && projectConfig.getSync() != null
+                && projectConfig.getSync().getColumns() != null) {
+            String col = projectConfig.getSync().getColumns().getExternalKeyColumn();
+            if (col != null && !col.isBlank()) {
+                return col;
+            }
+        }
+        return ColumnDefinitions.COL_ID;
     }
 
     /**

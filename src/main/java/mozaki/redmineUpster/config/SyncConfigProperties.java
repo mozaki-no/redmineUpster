@@ -147,6 +147,13 @@ public class SyncConfigProperties {
 		 * 例: ["id", "チーム", "工程", ...]
 		 */
 		private List<String> customFieldColumns = new ArrayList<>();
+
+		/**
+		 * 外部キー列名（Redmineチケットと紐付けるためのID列）。
+		 * デフォルト値は "id"。
+		 * 例: "WBS番号" などに変更可能。
+		 */
+		private String externalKeyColumn = "id";
 	}
 
 	/**

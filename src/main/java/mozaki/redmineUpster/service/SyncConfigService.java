@@ -241,6 +241,11 @@ public class SyncConfigService {
 			config.setCustomFieldColumns(new ArrayList<>(customFieldColumns));
 		}
 
+		String externalKeyColumn = (String) map.get("externalKeyColumn");
+		if (externalKeyColumn != null && !externalKeyColumn.isBlank()) {
+			config.setExternalKeyColumn(externalKeyColumn);
+		}
+
 		return config;
 	}
 
