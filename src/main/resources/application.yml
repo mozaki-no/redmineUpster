@@ -2,7 +2,7 @@ spring:
   application:
     name: redmineUpster
   datasource:
-    url: "${DB_URL:jdbc:postgresql://localhost:5432/redmine_upster}"
+    url: "${DB_URL:jdbc:postgresql://localhost:5433/redmine_upster}"
     username: "${DB_USER:postgres}"
     password: "${DB_PASSWORD:postgres}"
   jpa:
