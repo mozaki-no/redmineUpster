@@ -554,10 +554,12 @@ class SyncConfigServiceTests {
 			Map<String, String> customFieldMap = new HashMap<>();
 			customFieldMap.put("key", "value");
 			config.setCustomFieldMap(customFieldMap);
+			config.setCustomFieldDateColumns(List.of("開始日", "期限"));
 
 			assertThat(config.getTracker()).isEqualTo(tracker);
 			assertThat(config.getStatus()).isEqualTo(status);
 			assertThat(config.getCustomFieldMap()).containsEntry("key", "value");
+			assertThat(config.getCustomFieldDateColumns()).containsExactly("開始日", "期限");
 		}
 
 		@Test
@@ -567,6 +569,8 @@ class SyncConfigServiceTests {
 
 			assertThat(config.getCustomFieldMap()).isNotNull();
 			assertThat(config.getCustomFieldMap()).isEmpty();
+			assertThat(config.getCustomFieldDateColumns()).isNotNull();
+			assertThat(config.getCustomFieldDateColumns()).isEmpty();
 		}
 
 		@Test

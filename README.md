@@ -72,6 +72,9 @@ projects:
       customFieldMap:
         チーム: "12"
         工程: "13"
+      customFieldDateColumns:
+        - "着手実績"
+        - "完了実績"
       columns:
         externalKeyColumn: "id"  # 外部キー列（"WBS番号"などに変更可能）
         hierarchy:  # 親子関係推定に使用する列
@@ -116,6 +119,8 @@ id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織
 
 - `yyyy-MM-dd`
 - `yyyy/M/d`（例: `2026-1-3` / `2026/1/3`）
+
+日付型カスタムフィールドは `customFieldDateColumns` に列名を指定すると同様に正規化されます。
 
 ## 詳細
 

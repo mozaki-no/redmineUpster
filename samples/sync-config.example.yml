@@ -20,6 +20,9 @@ projects:
         着手実績: "15"
         完了実績: "16"
         成果物: "17"
+      customFieldDateColumns:
+        - "着手実績"
+        - "完了実績"
       # 列設定（省略時はデフォルト値を使用）
       columns:
         # 外部キー列（Redmineチケットと紐付けるためのID列）

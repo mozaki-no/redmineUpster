@@ -116,6 +116,12 @@ public class SyncConfigProperties {
 		private Map<String, String> customFieldMap = new HashMap<>();
 
 		/**
+		 * 日付として扱うカスタムフィールド列のリスト。
+		 * 指定された列は日付正規化されます。
+		 */
+		private List<String> customFieldDateColumns = new ArrayList<>();
+
+		/**
 		 * 列設定。
 		 */
 		private ColumnsConfig columns;

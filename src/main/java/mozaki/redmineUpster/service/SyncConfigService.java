@@ -208,6 +208,11 @@ public class SyncConfigService {
 			config.setCustomFieldMap(expandedMap);
 		}
 
+		List<String> customFieldDateColumns = (List<String>) map.get("customFieldDateColumns");
+		if (customFieldDateColumns != null) {
+			config.setCustomFieldDateColumns(new ArrayList<>(customFieldDateColumns));
+		}
+
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
 		if (columnsMap != null) {
 			config.setColumns(parseColumnsConfig(columnsMap));

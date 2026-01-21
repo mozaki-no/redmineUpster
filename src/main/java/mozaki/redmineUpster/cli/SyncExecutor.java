@@ -28,6 +28,7 @@ import mozaki.redmineUpster.domain.IssueLinkEntity;
 import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.util.DateParser;
+import mozaki.redmineUpster.util.DateParser;
 
 /**
  * 同期実行クラス。
@@ -66,6 +67,7 @@ public class SyncExecutor {
         List<String> errors = new ArrayList<>();
 
         Map<String, String> customFieldMap = getCustomFieldMap(projectConfig);
+        List<String> customFieldDateColumns = getCustomFieldDateColumns(projectConfig);
         Map<String, Long> createdIssueIds = new HashMap<>();
 
         // 階層の深さでソート（親を先に処理）
@@ -80,7 +82,8 @@ public class SyncExecutor {
                     continue;
                 }
 
-                Map<String, Object> issuePayload = buildIssuePayload(item, client, projectConfig, customFieldMap, createdIssueIds);
+                Map<String, Object> issuePayload = buildIssuePayload(item, client, projectConfig, customFieldMap,
+                        customFieldDateColumns, createdIssueIds);
 
                 if (ACTION_CREATE.equalsIgnoreCase(item.action())) {
                     logger.debug("API Request: POST " + client.getBaseUrl() + "/issues.json");
@@ -142,6 +145,7 @@ public class SyncExecutor {
             RedmineClient client,
             ProjectConfig projectConfig,
             Map<String, String> customFieldMap,
+            List<String> customFieldDateColumns,
             Map<String, Long> createdIssueIds) {
 
         Map<String, Object> issue = new HashMap<>();
@@ -212,7 +216,7 @@ public class SyncExecutor {
 
         // カスタムフィールド
         Map<String, String> customFieldValues = (Map<String, String>) payload.get("customFields");
-        List<Map<String, Object>> customFields = buildCustomFields(customFieldValues, customFieldMap);
+        List<Map<String, Object>> customFields = buildCustomFields(customFieldValues, customFieldMap, customFieldDateColumns);
         if (!customFields.isEmpty()) {
             issue.put("custom_fields", customFields);
         }
@@ -246,16 +250,27 @@ public class SyncExecutor {
      * @param mapping カラム名からフィールド名へのマッピング
      * @return カスタムフィールドのリスト
      */
-    private List<Map<String, Object>> buildCustomFields(Map<String, String> values, Map<String, String> mapping) {
+    private List<Map<String, Object>> buildCustomFields(
+            Map<String, String> values,
+            Map<String, String> mapping,
+            List<String> customFieldDateColumns) {
         List<Map<String, Object>> customFields = new ArrayList<>();
         if (values == null || values.isEmpty()) {
             return customFields;
         }
+        List<String> dateColumns = customFieldDateColumns == null ? List.of() : customFieldDateColumns;
         for (Map.Entry<String, String> entry : values.entrySet()) {
             String column = entry.getKey();
             String value = entry.getValue();
             if (value == null || value.isBlank()) {
                 continue;
+            }
+            if (dateColumns.contains(column)) {
+                String normalized = DateParser.normalizeDate(value);
+                if (normalized == null) {
+                    continue;
+                }
+                value = normalized;
             }
             String field = mapping.get(column);
             if (field == null || field.isBlank()) {
@@ -311,6 +326,13 @@ public class SyncExecutor {
             return Map.of();
         }
         return projectConfig.getSync().getCustomFieldMap();
+    }
+
+    private List<String> getCustomFieldDateColumns(ProjectConfig projectConfig) {
+        if (projectConfig.getSync() == null || projectConfig.getSync().getCustomFieldDateColumns() == null) {
+            return List.of();
+        }
+        return projectConfig.getSync().getCustomFieldDateColumns();
     }
 
     /**

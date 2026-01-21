@@ -14,6 +14,8 @@ projects:
         mode: "BY_DATES"
         fixed: "New"
       customFieldMap: {}
+      customFieldDateColumns:
+        - "開始日"
       columns:
         hierarchy:
           - "大分類"
