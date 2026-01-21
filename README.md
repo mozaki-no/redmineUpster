@@ -26,6 +26,7 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--file=<path>` | はい | 同期するCSV/Excelファイルのパス |
 | `--dry-run` | いいえ | ドライランモード（実際のRedmine更新なし） |
 | `--log-dir=<path>` | いいえ | ログ出力ディレクトリ（デフォルト: カレントディレクトリ） |
+| `--debug` | いいえ | デバッグログを出力（APIリクエスト/レスポンス等） |
 
 ### 実行例
 
@@ -43,6 +44,9 @@ java -jar redmineUpster.jar \
 
 # ドライラン（本番実行前の確認）
 java -jar redmineUpster.jar --sync --file=tasks.csv --dry-run
+
+# デバッグログ付き実行
+java -jar redmineUpster.jar --sync --file=tasks.csv --debug
 ```
 
 ## 設定ファイル（sync-config.yml）
@@ -68,6 +72,14 @@ projects:
       customFieldMap:
         チーム: "12"
         工程: "13"
+      columns:
+        externalKeyColumn: "id"  # 外部キー列（"WBS番号"などに変更可能）
+        hierarchy:  # 親子関係推定に使用する列
+          - "大分類"
+          - "中分類"
+          - "小分類"
+          - "成果物"
+          - "タスク"
 ```
 
 環境変数は `${VAR_NAME}` 形式で参照可能です。
@@ -88,9 +100,12 @@ export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
 
 ## ヘッダ仕様
 
+デフォルトのCSVヘッダ:
 ```
 id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績
 ```
+
+※ 外部キー列（`id`）、階層列、カスタムフィールド列は設定ファイルで変更可能です。
 
 ## 詳細
 
