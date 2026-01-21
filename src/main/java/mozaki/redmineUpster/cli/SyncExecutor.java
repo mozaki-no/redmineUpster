@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClientResponseException;
 
 import lombok.RequiredArgsConstructor;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
@@ -87,7 +88,7 @@ public class SyncExecutor {
                     Long issueId = client.createIssue(issuePayload);
                     if (issueId == null) {
                         errorCount++;
-                        String errorMsg = "create failed: " + item.externalKey();
+                        String errorMsg = "作成失敗: 外部キー=" + item.externalKey() + " (レスポンスにissue idがありません)";
                         errors.add(errorMsg);
                         logger.error(errorMsg);
                         continue;
@@ -103,7 +104,7 @@ public class SyncExecutor {
                     Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKey(item.externalKey());
                     if (link.isEmpty()) {
                         errorCount++;
-                        String errorMsg = "missing issue link for " + item.externalKey();
+                        String errorMsg = "更新失敗: 外部キー=" + item.externalKey() + " (issue_linkが見つかりません)";
                         errors.add(errorMsg);
                         logger.error(errorMsg);
                         continue;
@@ -116,7 +117,7 @@ public class SyncExecutor {
                 }
             } catch (RuntimeException ex) {
                 errorCount++;
-                String errorMsg = "sync failed for " + item.externalKey() + ": " + ex.getMessage();
+                String errorMsg = formatError(item.externalKey(), ex);
                 errors.add(errorMsg);
                 logger.error(errorMsg);
             }
@@ -353,5 +354,17 @@ public class SyncExecutor {
         }
         sb.append("}}");
         return sb.toString();
+    }
+
+    private String formatError(String externalKey, RuntimeException ex) {
+        if (ex instanceof RestClientResponseException responseEx) {
+            String body = responseEx.getResponseBodyAsString();
+            String reason = responseEx.getStatusText();
+            return "同期失敗: 外部キー=" + externalKey + " 理由=" + responseEx.getRawStatusCode() + " "
+                    + (reason == null ? "" : reason) + " " + body;
+        }
+        String message = ex.getMessage();
+        return "同期失敗: 外部キー=" + externalKey + " 理由="
+                + (message == null ? ex.getClass().getSimpleName() : message);
     }
 }
