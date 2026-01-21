@@ -1,37 +1,119 @@
-# Repository Guidelines
+# AGENTS.md
 
-## Project Structure & Module Organization
-- ソースコードは `src/main/java/mozaki/redmineUpster` にあり、`domain`（JPA エンティティ）、`repository`（Spring Data リポジトリ）、`dto`、`config` のパッケージ構成です。
-- リソースは `src/main/resources` にあり、Flyway のマイグレーションは `src/main/resources/db/migration`（例: `V1__init.sql`）。`application.yml`、`static`、`templates` もここにあります。
-- テストは `src/test/java/mozaki/redmineUpster` にあり、Spring Boot の標準的な構成に従います。
+AI エージェント向けのプロジェクト概要。
 
-## Build, Test, and Development Commands
-- `./mvnw spring-boot:run` で Spring Boot プラグインを使ってローカル起動します。
-- `./mvnw test` で JUnit 5 テストを実行します。
-- `./mvnw package` で `target/` 配下に jar を作成します。
-- `docker-compose up` で `application.yml` に合わせたローカル Postgres を起動します。
+---
 
-## Coding Style & Naming Conventions
-- 言語: Java 17、Spring Boot 3.5.x、Maven。
-- インデント: Java 標準（4 スペース）。import の整理とワイルドカード import の回避。
-- 命名: パッケージは小文字（`mozaki.redmineUpster`）、クラスは `UpperCamelCase`、エンティティは末尾に `Entity` を付けるのが基本。
-- Lombok を有効化しています。既存で使われている箇所は Lombok を優先してボイラープレートを避けます。
+## プロジェクト目的
 
-## Testing Guidelines
-- フレームワーク: JUnit 5、`@SpringBootTest` による結合テスト寄り。
-- 命名: テストクラスは `*Tests`（例: `RedmineUpsterApplicationTests`）。
-- 実行: `./mvnw test`。カバレッジ閾値は特に設定されていません。
+**RedmineのチケットをCSV/Excelから一括同期するCLIツール**
 
-## Commit & Pull Request Guidelines
-- この環境では Git 履歴が参照できないため、確立されたコミット規約は不明です。簡潔な命令形（例: “Add diff repository”）を推奨します。
-- PR には概要、検証手順（コマンドやテスト結果）、DB や設定変更の有無を記載してください。
+- WBS（Excel/CSV）からRedmineチケットを自動作成・更新
+- 階層列（大分類→中分類→小分類→成果物→タスク）から親子関係を推定
+- `external_key`（CSVのid列）でRedmineチケットと紐付け管理
+- Jenkinsから定期実行を想定
 
-## Configuration & Environment
-- DB 設定は `src/main/resources/application.yml` にあり、`DB_URL`、`DB_USER`、`DB_PASSWORD` で上書き可能です。
-- Redmine 連携は `REDMINE_BASE_URL`、`REDMINE_API_KEY`、`REDMINE_PROJECT_ID` を使用します。
+---
 
-## Operations Notes
-- Jenkins 配布・起動手順の記録は `docs/ops/jenkins-deploy-notes.md` を参照します。
+## 現状
 
-## Agent Response Guidelines
-- 返答は日本語で、簡潔に回答してください。
+### 動くもの
+- CLI同期実行（`--sync`）
+- dry-runモード（`--dry-run`）
+- デバッグログ（`--debug`）
+- YAML設定ファイルによる複数プロジェクト対応
+- 階層列・外部キー列のカスタマイズ
+- 環境変数展開（`${VAR_NAME}`形式）
+
+### 未実装・課題
+- テストカバレッジ100%未達成
+- 本番環境でRedmine更新されない問題を調査中（`--debug`で原因特定予定）
+
+---
+
+## これまでの意思決定
+
+| 決定事項 | 理由 |
+|----------|------|
+| Web UI（admin.html）を廃止 | Jenkins実行に移行、UIは不要 |
+| 設定をYAMLファイルに統一 | DB管理からファイル管理へ、Git管理可能に |
+| 差分/履歴をDBに保存しない | ログファイルで十分、DBスキーマを簡素化 |
+| `issue_link`テーブルのみ維持 | 更新判定（CREATE/UPDATE）に必須 |
+| 列設定を外部化 | プロジェクトごとにCSVフォーマットが異なるため |
+
+---
+
+## 重要ファイルの地図
+
+### 入口ファイル
+| ファイル | 役割 |
+|----------|------|
+| `cli/SyncCommand.java` | CLIエントリーポイント（CommandLineRunner） |
+| `cli/SyncRunner.java` | 同期フロー統合 |
+| `RedmineUpsterApplication.java` | Spring Boot起動クラス |
+
+### 設定
+| ファイル | 役割 |
+|----------|------|
+| `samples/sync-config.example.yml` | 設定ファイルサンプル |
+| `config/SyncConfigProperties.java` | 設定クラス（@ConfigurationProperties） |
+| `service/SyncConfigService.java` | 設定読み込み・環境変数展開 |
+| `application.yml` | Spring Boot設定 |
+| `.env.example` | 環境変数テンプレート |
+
+### DB
+| ファイル | 役割 |
+|----------|------|
+| `domain/IssueLinkEntity.java` | external_key ↔ issue_id 紐付け |
+| `repository/IssueLinkRepository.java` | JPA リポジトリ |
+| `db/migration/V1__issue_link.sql` | Flywayマイグレーション |
+
+### 同期ロジック
+| ファイル | 役割 |
+|----------|------|
+| `cli/DiffCalculator.java` | 差分計算（インメモリ） |
+| `cli/SyncExecutor.java` | Redmine API呼び出し・IssueLink保存 |
+| `service/RedmineClient.java` | Redmine REST APIクライアント |
+| `service/SpreadsheetParser.java` | CSV/Excel解析 |
+
+### CI/デプロイ
+| ファイル | 役割 |
+|----------|------|
+| `docs/DEPLOY.md` | デプロイ手順書 |
+| `docs/setup/` | 環境セットアップガイド |
+| `deploy/` | Jenkinsスクリプト・systemdユニット |
+
+---
+
+## 実行コマンド
+
+```bash
+# ビルド
+./mvnw clean package
+
+# テスト
+./mvnw test
+
+# 単一テスト
+./mvnw test -Dtest=SyncConfigServiceTests
+
+# CLI実行（dry-run）
+java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
+  --sync --file=input.csv --dry-run
+
+# CLI実行（デバッグログ付き）
+java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
+  --sync --file=input.csv --debug
+
+# Docker Compose（PostgreSQL）
+docker compose up -d
+```
+
+---
+
+## まず最初に読むべき文書
+
+1. **README.md** - プロジェクト概要・CLI引数
+2. **CLAUDE.md** - 作業状況・アーキテクチャ詳細
+3. **docs/DEPLOY.md** - デプロイ・Jenkins設定
+4. **samples/sync-config.example.yml** - 設定ファイル仕様
