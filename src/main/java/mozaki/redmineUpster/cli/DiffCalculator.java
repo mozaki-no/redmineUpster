@@ -48,11 +48,13 @@ public class DiffCalculator {
      *
      * @param rows CSV/Excelから解析された行データ
      * @param projectConfig プロジェクト設定
+     * @param logger ファイルロガー
      * @return 差分アイテムのリスト
      */
     public List<DiffItem> calculate(
             List<Map<String, String>> rows,
-            ProjectConfig projectConfig) {
+            ProjectConfig projectConfig,
+            FileLogger logger) {
 
         List<String> hierarchyColumns = getHierarchyColumns(projectConfig);
         List<String> customFieldColumns = getCustomFieldColumns(projectConfig);
@@ -70,6 +72,11 @@ public class DiffCalculator {
             String parentPath = String.join(" > ", parentHierarchy);
             RowData data = new RowData(externalKey, subject, levelPath, parentPath, row);
             parsed.add(data);
+
+            // デバッグログ: 階層パスの生成結果
+            if (logger != null) {
+                logger.debug("Hierarchy path: " + levelPath);
+            }
         }
 
         Map<String, String> pathToExternalKey = new HashMap<>();
@@ -84,7 +91,7 @@ public class DiffCalculator {
 
         for (RowData rowData : parsed) {
             String parentKey = pathToExternalKey.get(rowData.parentPath);
-            String action = resolveAction(rowData.externalKey);
+            String action = resolveAction(rowData.externalKey, logger);
             String status = resolveStatus(rowData, projectConfig);
             Map<String, Object> payload = buildPayload(rowData, customFieldMap, customFieldColumns);
 
@@ -98,6 +105,12 @@ public class DiffCalculator {
                 payload
             );
             items.add(item);
+
+            // デバッグログ: 親子関係の推定結果とアクション判定
+            if (logger != null) {
+                logger.debug("Parent key: " + (parentKey != null ? parentKey : "(none)"));
+                logger.debug("Action: " + action + " (" + (ACTION_CREATE.equals(action) ? "no existing link" : "existing link found") + ")");
+            }
         }
 
         return items;
@@ -107,9 +120,10 @@ public class DiffCalculator {
      * アクションを解決します（CREATE/UPDATE）。
      *
      * @param externalKey 外部キー
+     * @param logger ファイルロガー
      * @return CREATE または UPDATE
      */
-    private String resolveAction(String externalKey) {
+    private String resolveAction(String externalKey, FileLogger logger) {
         Optional<IssueLinkEntity> existing = issueLinkRepository.findByExternalKey(externalKey);
         return existing.isPresent() ? ACTION_UPDATE : ACTION_CREATE;
     }

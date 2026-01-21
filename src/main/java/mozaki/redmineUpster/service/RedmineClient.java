@@ -8,6 +8,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
+import mozaki.redmineUpster.cli.FileLogger;
+
 /**
  * Redmine APIクライアント。
  * <p>
@@ -27,6 +29,7 @@ public class RedmineClient {
 	private final String apiKey;
 	private final String projectId;
 	private final RestTemplate restTemplate;
+	private FileLogger logger;
 
 	/**
 	 * RedmineClientを構築します。
@@ -52,8 +55,17 @@ public class RedmineClient {
 	@SuppressWarnings("rawtypes")
 	public Long createIssue(Map<String, Object> issue) {
 		String url = baseUrl + ISSUES_ENDPOINT;
-		HttpEntity<Map<String, Object>> entity = buildEntity(Map.of(RESPONSE_ISSUE_KEY, issue));
+		Map<String, Object> requestBody = Map.of(RESPONSE_ISSUE_KEY, issue);
+		HttpEntity<Map<String, Object>> entity = buildEntity(requestBody);
+
+		debugLog("Request URL: " + url);
+		debugLog("Request body: " + formatBodyForLog(requestBody));
+
 		ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
+
+		debugLog("Response status: " + response.getStatusCode());
+		debugLog("Response body: " + response.getBody());
+
 		Map body = response.getBody();
 		if (body == null || !body.containsKey(RESPONSE_ISSUE_KEY)) {
 			return null;
@@ -74,8 +86,15 @@ public class RedmineClient {
 	 */
 	public void updateIssue(Long issueId, Map<String, Object> issue) {
 		String url = baseUrl + "/issues/" + issueId + ".json";
-		HttpEntity<Map<String, Object>> entity = buildEntity(Map.of(RESPONSE_ISSUE_KEY, issue));
+		Map<String, Object> requestBody = Map.of(RESPONSE_ISSUE_KEY, issue);
+		HttpEntity<Map<String, Object>> entity = buildEntity(requestBody);
+
+		debugLog("Request URL: " + url);
+		debugLog("Request body: " + formatBodyForLog(requestBody));
+
 		restTemplate.put(url, entity);
+
+		debugLog("Response status: 200 OK (PUT success)");
 	}
 
 	/**
@@ -94,6 +113,15 @@ public class RedmineClient {
 	 */
 	public String getBaseUrl() {
 		return baseUrl;
+	}
+
+	/**
+	 * ロガーを設定します。
+	 *
+	 * @param logger ファイルロガー
+	 */
+	public void setLogger(FileLogger logger) {
+		this.logger = logger;
 	}
 
 	/**
@@ -123,5 +151,29 @@ public class RedmineClient {
 			return base.substring(0, base.length() - 1);
 		}
 		return base;
+	}
+
+	/**
+	 * デバッグログを出力します。
+	 *
+	 * @param message ログメッセージ
+	 */
+	private void debugLog(String message) {
+		if (logger != null) {
+			logger.debug(message);
+		}
+	}
+
+	/**
+	 * リクエストボディをログ出力用にフォーマットします。
+	 *
+	 * @param body リクエストボディ
+	 * @return フォーマットされた文字列
+	 */
+	private String formatBodyForLog(Map<String, Object> body) {
+		if (body == null) {
+			return "null";
+		}
+		return body.toString();
 	}
 }

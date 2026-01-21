@@ -33,6 +33,7 @@ import lombok.RequiredArgsConstructor;
  *   <li>{@code --file}: CSV/Excelファイルパス（必須）</li>
  *   <li>{@code --dry-run}: ドライランモード（省略時はfalse）</li>
  *   <li>{@code --log-dir}: ログ出力ディレクトリ（省略時はカレントディレクトリ）</li>
+ *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
  * </ul>
  */
 @Component
@@ -59,6 +60,7 @@ public class SyncCommand implements CommandLineRunner {
         String filePath = getArgValue(args, "--file");
         boolean dryRun = hasArg(args, "--dry-run");
         String logDir = getArgValue(args, "--log-dir");
+        boolean debug = hasArg(args, "--debug");
 
         // --fileは必須
         if (filePath == null || filePath.isBlank()) {
@@ -70,7 +72,7 @@ public class SyncCommand implements CommandLineRunner {
         }
 
         // 同期実行
-        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir);
+        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug);
         System.exit(exitCode);
     }
 
@@ -118,9 +120,11 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --file=<path>           CSV/Excel file path (required)");
         System.out.println("  --dry-run               Dry run mode (optional)");
         System.out.println("  --log-dir=<path>        Log output directory (optional, defaults to current directory)");
+        System.out.println("  --debug                 Debug mode (output detailed logs, optional)");
         System.out.println();
         System.out.println("Example:");
         System.out.println("  java -jar redmineUpster.jar --sync --file=input.csv --dry-run");
         System.out.println("  java -jar redmineUpster.jar --sync --config=my-config.yml --project=\"Production\" --file=tasks.xlsx");
+        System.out.println("  java -jar redmineUpster.jar --sync --file=input.csv --debug");
     }
 }

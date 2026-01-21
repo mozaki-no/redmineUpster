@@ -41,21 +41,25 @@ public class SyncRunner {
      * @param filePath CSV/Excelファイルパス
      * @param dryRun ドライランモードの場合はtrue
      * @param logDir ログ出力ディレクトリ
+     * @param debug デバッグモードの場合はtrue
      * @return 成功の場合は0、失敗の場合は1
      */
-    public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir) {
+    public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir, boolean debug) {
         FileLogger logger = null;
         try {
             // 1. ロガーの初期化
             logger = new FileLogger(logDir);
+            logger.setDebugEnabled(debug);
             logger.info("=== Redmine Sync Started ===");
             logger.info("File: " + filePath);
             logger.info("Dry Run: " + dryRun);
+            logger.info("Debug: " + debug);
             logger.info("Log File: " + logger.getLogFile());
 
             // 2. 設定ファイル読み込み
             if (configPath != null && !configPath.isBlank()) {
                 logger.info("Loading config from: " + configPath);
+                logger.debug("Config file path: " + configPath);
                 syncConfigService.loadConfig(configPath);
             }
 
@@ -66,12 +70,28 @@ public class SyncRunner {
                 return 1;
             }
             logger.info("Project: " + projectConfig.getName());
+            logger.debug("Config loaded: " + projectConfig.getName());
+            if (projectConfig.getRedmine() != null) {
+                logger.debug("Redmine URL: " + projectConfig.getRedmine().getBaseUrl());
+                logger.debug("Project ID: " + projectConfig.getRedmine().getProjectId());
+            }
 
             // 4. CSV/Excel解析
             logger.info("Parsing file: " + filePath);
             ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath);
             List<Map<String, String>> rows = parsed.rows();
             logger.info("Parsed " + rows.size() + " rows");
+
+            // デバッグ: 各行のデータを出力
+            for (int i = 0; i < rows.size(); i++) {
+                Map<String, String> row = rows.get(i);
+                String id = row.get("id");
+                String subject = row.get("タスク");
+                if (subject == null) {
+                    subject = row.get("成果物");
+                }
+                logger.debug("Parsing row " + (i + 1) + ": id=" + id + ", subject=" + subject);
+            }
 
             if (rows.isEmpty()) {
                 logger.warn("No data rows found in file");
@@ -80,7 +100,7 @@ public class SyncRunner {
 
             // 5. 差分計算（インメモリ）
             logger.info("Calculating diff...");
-            List<DiffItem> items = diffCalculator.calculate(rows, projectConfig);
+            List<DiffItem> items = diffCalculator.calculate(rows, projectConfig, logger);
             logger.info("Diff items: " + items.size());
 
             long createCount = items.stream().filter(i -> "CREATE".equals(i.action())).count();
@@ -90,6 +110,7 @@ public class SyncRunner {
 
             // 6. Redmineクライアント作成
             RedmineClient client = redmineClientFactory.createClient(projectConfig);
+            client.setLogger(logger);
             logger.info("Redmine URL: " + client.getBaseUrl());
             logger.info("Redmine Project: " + client.getProjectId());
 

@@ -82,6 +82,8 @@ public class SyncExecutor {
                 Map<String, Object> issuePayload = buildIssuePayload(item, client, projectConfig, customFieldMap, createdIssueIds);
 
                 if (ACTION_CREATE.equalsIgnoreCase(item.action())) {
+                    logger.debug("API Request: POST " + client.getBaseUrl() + "/issues.json");
+                    logger.debug("Request body: " + formatPayloadForLog(issuePayload));
                     Long issueId = client.createIssue(issuePayload);
                     if (issueId == null) {
                         errorCount++;
@@ -90,9 +92,11 @@ public class SyncExecutor {
                         logger.error(errorMsg);
                         continue;
                     }
+                    logger.debug("Created issue ID: " + issueId);
                     IssueLinkEntity link = new IssueLinkEntity(item.externalKey(), issueId);
                     issueLinkRepository.save(link);
                     createdIssueIds.put(item.externalKey(), issueId);
+                    logger.debug("Saved IssueLink: " + item.externalKey() + " -> " + issueId);
                     logger.info("created issue " + issueId + " for " + item.externalKey());
                     successCount++;
                 } else {
@@ -104,6 +108,8 @@ public class SyncExecutor {
                         logger.error(errorMsg);
                         continue;
                     }
+                    logger.debug("API Request: PUT " + client.getBaseUrl() + "/issues/" + link.get().getIssueId() + ".json");
+                    logger.debug("Request body: " + formatPayloadForLog(issuePayload));
                     client.updateIssue(link.get().getIssueId(), issuePayload);
                     logger.info("updated issue " + link.get().getIssueId() + " for " + item.externalKey());
                     successCount++;
@@ -318,5 +324,34 @@ public class SyncExecutor {
             return 0;
         }
         return path.split(HIERARCHY_DELIMITER).length;
+    }
+
+    /**
+     * ペイロードをログ出力用にフォーマットします。
+     *
+     * @param payload ペイロード
+     * @return フォーマットされた文字列
+     */
+    private String formatPayloadForLog(Map<String, Object> payload) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"issue\":{");
+        boolean first = true;
+        for (Map.Entry<String, Object> entry : payload.entrySet()) {
+            if (!first) {
+                sb.append(",");
+            }
+            first = false;
+            sb.append("\"").append(entry.getKey()).append("\":");
+            Object value = entry.getValue();
+            if (value instanceof String) {
+                sb.append("\"").append(value).append("\"");
+            } else if (value instanceof List) {
+                sb.append("[...]");
+            } else {
+                sb.append(value);
+            }
+        }
+        sb.append("}}");
+        return sb.toString();
     }
 }

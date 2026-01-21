@@ -24,6 +24,7 @@ public class FileLogger implements AutoCloseable {
 
     private final BufferedWriter writer;
     private final Path logFile;
+    private boolean debugEnabled = false;
 
     /**
      * FileLoggerを構築します。
@@ -56,6 +57,38 @@ public class FileLogger implements AutoCloseable {
      */
     public Path getLogFile() {
         return logFile;
+    }
+
+    /**
+     * デバッグモードを設定します。
+     *
+     * @param enabled デバッグモードを有効にする場合はtrue
+     */
+    public void setDebugEnabled(boolean enabled) {
+        this.debugEnabled = enabled;
+    }
+
+    /**
+     * デバッグモードが有効かどうかを取得します。
+     *
+     * @return デバッグモードが有効な場合はtrue
+     */
+    public boolean isDebugEnabled() {
+        return debugEnabled;
+    }
+
+    /**
+     * DEBUGレベルのログを出力します。
+     * <p>
+     * デバッグモードが有効な場合のみ出力されます。
+     * </p>
+     *
+     * @param message ログメッセージ
+     */
+    public void debug(String message) {
+        if (debugEnabled) {
+            log("DEBUG", message);
+        }
     }
 
     /**
