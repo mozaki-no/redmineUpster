@@ -31,6 +31,10 @@ projects:
           - "小分類"
           - "成果物"
           - "タスク"
+        # Redmineに反映する日付/ステータス列
+        startDateColumn: "着手予定"
+        dueDateColumn: "完了予定"
+        statusColumn: "ステータス"
         # 必須列（CSVに必ず含める列）
         required:
           - "id"

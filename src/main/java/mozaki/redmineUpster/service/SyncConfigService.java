@@ -246,6 +246,21 @@ public class SyncConfigService {
 			config.setExternalKeyColumn(externalKeyColumn);
 		}
 
+		String startDateColumn = (String) map.get("startDateColumn");
+		if (startDateColumn != null && !startDateColumn.isBlank()) {
+			config.setStartDateColumn(startDateColumn);
+		}
+
+		String dueDateColumn = (String) map.get("dueDateColumn");
+		if (dueDateColumn != null && !dueDateColumn.isBlank()) {
+			config.setDueDateColumn(dueDateColumn);
+		}
+
+		String statusColumn = (String) map.get("statusColumn");
+		if (statusColumn != null && !statusColumn.isBlank()) {
+			config.setStatusColumn(statusColumn);
+		}
+
 		return config;
 	}
 

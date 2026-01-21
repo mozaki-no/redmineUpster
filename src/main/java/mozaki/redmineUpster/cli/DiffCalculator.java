@@ -59,6 +59,9 @@ public class DiffCalculator {
         List<String> hierarchyColumns = getHierarchyColumns(projectConfig);
         List<String> customFieldColumns = getCustomFieldColumns(projectConfig);
         String externalKeyColumn = getExternalKeyColumn(projectConfig);
+        String startDateColumn = getStartDateColumn(projectConfig);
+        String dueDateColumn = getDueDateColumn(projectConfig);
+        String statusColumn = getStatusColumn(projectConfig);
 
         List<RowData> parsed = new ArrayList<>();
         for (Map<String, String> row : rows) {
@@ -71,7 +74,8 @@ public class DiffCalculator {
             String levelPath = String.join(" > ", hierarchy);
             List<String> parentHierarchy = hierarchy.size() > 1 ? hierarchy.subList(0, hierarchy.size() - 1) : List.of();
             String parentPath = String.join(" > ", parentHierarchy);
-            RowData data = new RowData(externalKey, subject, levelPath, parentPath, row);
+            RowData data = new RowData(externalKey, subject, levelPath, parentPath, row,
+                    startDateColumn, dueDateColumn, statusColumn);
             parsed.add(data);
 
             // デバッグログ: 階層パスの生成結果
@@ -92,6 +96,9 @@ public class DiffCalculator {
 
         for (RowData rowData : parsed) {
             String parentKey = pathToExternalKey.get(rowData.parentPath);
+            if (parentKey == null || parentKey.isBlank()) {
+                parentKey = inferParentKeyFromExternalKey(rowData.externalKey);
+            }
             String action = resolveAction(rowData.externalKey, logger);
             String status = resolveStatus(rowData, projectConfig);
             Map<String, Object> payload = buildPayload(rowData, customFieldMap, customFieldColumns);
@@ -200,6 +207,60 @@ public class DiffCalculator {
     }
 
     /**
+     * プロジェクト設定から開始日列名を取得します。
+     * 設定がない場合はデフォルト値を返します。
+     *
+     * @param projectConfig プロジェクト設定
+     * @return 開始日列名
+     */
+    private String getStartDateColumn(ProjectConfig projectConfig) {
+        if (projectConfig != null && projectConfig.getSync() != null
+                && projectConfig.getSync().getColumns() != null) {
+            String col = projectConfig.getSync().getColumns().getStartDateColumn();
+            if (col != null && !col.isBlank()) {
+                return col;
+            }
+        }
+        return ColumnDefinitions.COL_START_PLAN;
+    }
+
+    /**
+     * プロジェクト設定から期限列名を取得します。
+     * 設定がない場合はデフォルト値を返します。
+     *
+     * @param projectConfig プロジェクト設定
+     * @return 期限列名
+     */
+    private String getDueDateColumn(ProjectConfig projectConfig) {
+        if (projectConfig != null && projectConfig.getSync() != null
+                && projectConfig.getSync().getColumns() != null) {
+            String col = projectConfig.getSync().getColumns().getDueDateColumn();
+            if (col != null && !col.isBlank()) {
+                return col;
+            }
+        }
+        return ColumnDefinitions.COL_DUE_PLAN;
+    }
+
+    /**
+     * プロジェクト設定からステータス列名を取得します。
+     * 設定がない場合はデフォルト値を返します。
+     *
+     * @param projectConfig プロジェクト設定
+     * @return ステータス列名
+     */
+    private String getStatusColumn(ProjectConfig projectConfig) {
+        if (projectConfig != null && projectConfig.getSync() != null
+                && projectConfig.getSync().getColumns() != null) {
+            String col = projectConfig.getSync().getColumns().getStatusColumn();
+            if (col != null && !col.isBlank()) {
+                return col;
+            }
+        }
+        return ColumnDefinitions.COL_STATUS;
+    }
+
+    /**
      * 件名を解決します。
      *
      * @param row 行データ
@@ -232,6 +293,10 @@ public class DiffCalculator {
 
         if (statusConfig == null || !statusConfig.isEnabled()) {
             return null;
+        }
+
+        if (!rowData.statusValue.isBlank()) {
+            return rowData.statusValue;
         }
 
         String mode = StringUtils.valueOrDefault(statusConfig.getMode(), STATUS_MODE_BY_DATES);
@@ -319,19 +384,36 @@ public class DiffCalculator {
         private final String duePlan;
         private final String startActual;
         private final String dueActual;
+        private final String statusValue;
 
         private RowData(String externalKey, String subject, String levelPath, String parentPath,
-                Map<String, String> row) {
+                Map<String, String> row, String startDateColumn, String dueDateColumn, String statusColumn) {
             this.externalKey = externalKey;
             this.subject = subject;
             this.levelPath = levelPath;
             this.parentPath = parentPath;
             this.row = row;
             this.assignee = value(row, ColumnDefinitions.COL_ASSIGNEE);
-            this.startPlan = value(row, ColumnDefinitions.COL_START_PLAN);
-            this.duePlan = value(row, ColumnDefinitions.COL_DUE_PLAN);
+            this.startPlan = value(row, startDateColumn);
+            this.duePlan = value(row, dueDateColumn);
             this.startActual = value(row, ColumnDefinitions.COL_START_ACTUAL);
             this.dueActual = value(row, ColumnDefinitions.COL_DUE_ACTUAL);
+            this.statusValue = value(row, statusColumn);
         }
+    }
+
+    private String inferParentKeyFromExternalKey(String externalKey) {
+        if (externalKey == null || externalKey.isBlank()) {
+            return null;
+        }
+        int lastDot = externalKey.lastIndexOf('.');
+        if (lastDot <= 0 || lastDot == externalKey.length() - 1) {
+            return null;
+        }
+        String parent = externalKey.substring(0, lastDot);
+        if (parent.isBlank()) {
+            return null;
+        }
+        return parent;
     }
 }

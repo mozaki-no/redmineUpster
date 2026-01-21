@@ -154,6 +154,24 @@ public class SyncConfigProperties {
 		 * 例: "WBS番号" などに変更可能。
 		 */
 		private String externalKeyColumn = "id";
+
+		/**
+		 * 開始日列名（Redmineのstart_dateに反映）。
+		 * デフォルト値は "着手予定"。
+		 */
+		private String startDateColumn = "着手予定";
+
+		/**
+		 * 期限列名（Redmineのdue_dateに反映）。
+		 * デフォルト値は "完了予定"。
+		 */
+		private String dueDateColumn = "完了予定";
+
+		/**
+		 * ステータス列名（CSVのステータス値を優先する場合に使用）。
+		 * デフォルト値は "ステータス"。
+		 */
+		private String statusColumn = "ステータス";
 	}
 
 	/**

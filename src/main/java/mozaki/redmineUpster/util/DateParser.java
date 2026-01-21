@@ -7,7 +7,9 @@ import java.time.format.DateTimeParseException;
 public final class DateParser {
 	private static final DateTimeFormatter[] FORMATTERS = new DateTimeFormatter[] {
 			DateTimeFormatter.ISO_LOCAL_DATE,
-			DateTimeFormatter.ofPattern("yyyy/MM/dd")
+			DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+			DateTimeFormatter.ofPattern("yyyy/M/d"),
+			DateTimeFormatter.ofPattern("yyyy-M-d")
 	};
 
 	private DateParser() {
