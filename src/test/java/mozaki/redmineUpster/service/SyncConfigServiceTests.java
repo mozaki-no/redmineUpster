@@ -119,6 +119,7 @@ class SyncConfigServiceTests {
 			assertThat(project2.getSync().getStatus()).isNotNull();
 			assertThat(project2.getSync().getStatus().isEnabled()).isTrue();
 			assertThat(project2.getSync().getStatus().getMode()).isEqualTo("BY_DATES");
+			assertThat(project2.getSync().getStatus().getStatusMap()).containsEntry("進行中", "2");
 
 			// customFieldMap
 			assertThat(project2.getSync().getCustomFieldMap()).containsEntry("担当者", "assignee");
@@ -591,10 +592,12 @@ class SyncConfigServiceTests {
 			config.setEnabled(true);
 			config.setMode("FIXED");
 			config.setFixed("Closed");
+			config.setStatusMap(Map.of("進行中", "2"));
 
 			assertThat(config.isEnabled()).isTrue();
 			assertThat(config.getMode()).isEqualTo("FIXED");
 			assertThat(config.getFixed()).isEqualTo("Closed");
+			assertThat(config.getStatusMap()).containsEntry("進行中", "2");
 		}
 
 		@Test

@@ -69,6 +69,10 @@ projects:
         enabled: true
         mode: "BY_DATES"  # または "FIXED"
         fixed: "New"
+        statusMap:
+          "未着手": "1"
+          "進行中": "2"
+          "完了": "5"
       customFieldMap:
         チーム: "12"
         工程: "13"
@@ -121,6 +125,11 @@ id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織
 - `yyyy/M/d`（例: `2026-1-3` / `2026/1/3`）
 
 日付型カスタムフィールドは `customFieldDateColumns` に列名を指定すると同様に正規化されます。
+
+## ステータスマッピング
+
+CSVの日本語ステータスをRedmineのステータスIDへ変換したい場合は `statusMap` を指定します。
+`statusMap` の値が数値の場合は `status_id` として送信されます。
 
 ## 詳細
 

@@ -13,6 +13,10 @@ projects:
         enabled: true
         mode: "BY_DATES"  # BY_DATES | FIXED
         fixed: "New"
+        statusMap:
+          "未着手": "1"
+          "進行中": "2"
+          "完了": "5"
       customFieldMap:
         チーム: "12"
         工程: "13"

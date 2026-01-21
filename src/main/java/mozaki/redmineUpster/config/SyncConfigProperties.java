@@ -224,5 +224,11 @@ public class SyncConfigProperties {
 		 * modeが"FIXED"の場合に使用されます。
 		 */
 		private String fixed;
+
+		/**
+		 * CSVのステータス名をRedmineのステータスID/名称に変換するマップ。
+		 * 例: {"進行中": "2"}
+		 */
+		private Map<String, String> statusMap = new HashMap<>();
 	}
 }

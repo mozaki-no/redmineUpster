@@ -24,6 +24,9 @@ projects:
       status:
         enabled: true
         mode: "BY_DATES"
+        statusMap:
+          "未着手": "1"
+          "進行中": "2"
       customFieldMap:
         "担当者": "assignee"
         "優先度": "priority"

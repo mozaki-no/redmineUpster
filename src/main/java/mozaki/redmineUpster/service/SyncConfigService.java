@@ -293,6 +293,17 @@ public class SyncConfigService {
 		config.setEnabled(Boolean.TRUE.equals(map.get("enabled")));
 		config.setMode(expandEnvVars((String) map.get("mode")));
 		config.setFixed(expandEnvVars((String) map.get("fixed")));
+
+		Map<String, Object> statusMap = (Map<String, Object>) map.get("statusMap");
+		if (statusMap != null) {
+			Map<String, String> expandedMap = new HashMap<>();
+			for (Map.Entry<String, Object> entry : statusMap.entrySet()) {
+				String key = expandEnvVars(entry.getKey());
+				String value = expandEnvVars(String.valueOf(entry.getValue()));
+				expandedMap.put(key, value);
+			}
+			config.setStatusMap(expandedMap);
+		}
 		return config;
 	}
 

@@ -205,6 +205,7 @@ public class SyncExecutor {
         }
         if (statusConfig != null && statusConfig.isEnabled()) {
             String statusValue = resolveStatus(item, payload, statusConfig);
+            statusValue = mapStatusValue(statusValue, statusConfig);
             if (statusValue != null && !statusValue.isBlank()) {
                 if (isNumeric(statusValue)) {
                     issue.put("status_id", Long.parseLong(statusValue));
@@ -313,6 +314,17 @@ public class SyncExecutor {
             return STATUS_IN_PROGRESS;
         }
         return STATUS_NEW;
+    }
+
+    private String mapStatusValue(String statusValue, StatusConfig statusConfig) {
+        if (statusValue == null || statusValue.isBlank() || statusConfig == null) {
+            return statusValue;
+        }
+        Map<String, String> map = statusConfig.getStatusMap();
+        if (map == null || map.isEmpty()) {
+            return statusValue;
+        }
+        return map.getOrDefault(statusValue, statusValue);
     }
 
     /**
