@@ -17,6 +17,7 @@ projects:
           "未着手": "1"
           "進行中": "2"
           "完了": "5"
+      virtualParentTrackerId: 6
       customFieldMap:
         チーム: "12"
         工程: "13"

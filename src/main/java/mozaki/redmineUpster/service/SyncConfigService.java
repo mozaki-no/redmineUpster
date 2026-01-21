@@ -213,6 +213,16 @@ public class SyncConfigService {
 			config.setCustomFieldDateColumns(new ArrayList<>(customFieldDateColumns));
 		}
 
+		Object virtualParentTrackerId = map.get("virtualParentTrackerId");
+		if (virtualParentTrackerId != null) {
+			String rawValue = String.valueOf(virtualParentTrackerId).trim();
+			try {
+				config.setVirtualParentTrackerId(Integer.parseInt(rawValue));
+			} catch (NumberFormatException ex) {
+				throw new IllegalArgumentException("virtualParentTrackerId must be numeric: " + rawValue, ex);
+			}
+		}
+
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
 		if (columnsMap != null) {
 			config.setColumns(parseColumnsConfig(columnsMap));

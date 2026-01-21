@@ -16,6 +16,7 @@ projects:
       customFieldMap: {}
       customFieldDateColumns:
         - "開始日"
+      virtualParentTrackerId: 6
       columns:
         hierarchy:
           - "大分類"

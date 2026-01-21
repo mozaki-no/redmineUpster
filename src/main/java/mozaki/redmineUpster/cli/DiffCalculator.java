@@ -140,8 +140,10 @@ public class DiffCalculator {
         if (!virtualParents.isEmpty()) {
             for (ParentAggregate parent : virtualParents.values()) {
                 String action = resolveAction(parent.externalKey, logger);
-                Map<String, Object> payload = buildParentPayload(parent);
-                DiffItem parentItem = new DiffItem(
+        Integer trackerId = getVirtualParentTrackerId(projectConfig);
+        Map<String, Object> payload = buildParentPayload(parent, trackerId);
+        payload.put("virtualParent", true);
+        DiffItem parentItem = new DiffItem(
                         parent.externalKey,
                         parent.subject,
                         parent.parentKey,
@@ -396,7 +398,7 @@ public class DiffCalculator {
         return payload;
     }
 
-    private Map<String, Object> buildParentPayload(ParentAggregate parent) {
+    private Map<String, Object> buildParentPayload(ParentAggregate parent, Integer trackerId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         if (parent.startPlan != null) {
             payload.put("startDate", parent.startPlan);
@@ -411,7 +413,7 @@ public class DiffCalculator {
         payload.put("startActual", "");
         payload.put("dueActual", "");
         payload.put("customFields", parent.customFieldValues);
-        payload.put("trackerId", 6);
+        payload.put("trackerId", trackerId);
         return payload;
     }
 
@@ -516,6 +518,16 @@ public class DiffCalculator {
                 duePlan = maxDue.format(DateTimeFormatter.ISO_LOCAL_DATE);
             }
         }
+    }
+
+    private Integer getVirtualParentTrackerId(ProjectConfig projectConfig) {
+        if (projectConfig != null && projectConfig.getSync() != null) {
+            Integer value = projectConfig.getSync().getVirtualParentTrackerId();
+            if (value != null && value > 0) {
+                return value;
+            }
+        }
+        return 6;
     }
 
     private void collectVirtualParents(RowData rowData, Set<String> existingExternalKeys,

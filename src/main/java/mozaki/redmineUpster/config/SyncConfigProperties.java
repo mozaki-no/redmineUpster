@@ -122,6 +122,11 @@ public class SyncConfigProperties {
 		private List<String> customFieldDateColumns = new ArrayList<>();
 
 		/**
+		 * 仮想親チケットに使用するトラッカーID。
+		 */
+		private Integer virtualParentTrackerId = 6;
+
+		/**
 		 * 列設定。
 		 */
 		private ColumnsConfig columns;
