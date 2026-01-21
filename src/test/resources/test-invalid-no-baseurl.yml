@@ -1,0 +1,7 @@
+# baseUrl未設定エラーテスト用
+projects:
+  - name: "test-project"
+    default: true
+    redmine:
+      apiKey: "test-api-key"
+      projectId: "test-project"

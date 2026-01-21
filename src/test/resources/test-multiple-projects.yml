@@ -1,0 +1,29 @@
+# 複数プロジェクトテスト用
+projects:
+  - name: "project-1"
+    default: true
+    redmine:
+      baseUrl: "http://redmine1.example.com"
+      apiKey: "api-key-1"
+      projectId: "proj-1"
+    sync:
+      tracker:
+        enabled: true
+        value: "Task"
+      status:
+        enabled: false
+  - name: "project-2"
+    default: false
+    redmine:
+      baseUrl: "http://redmine2.example.com"
+      apiKey: "api-key-2"
+      projectId: "proj-2"
+    sync:
+      tracker:
+        enabled: false
+      status:
+        enabled: true
+        mode: "BY_DATES"
+      customFieldMap:
+        "担当者": "assignee"
+        "優先度": "priority"

@@ -1,0 +1,31 @@
+projects:
+  - name: "テスト用プロジェクト"
+    default: true
+    redmine:
+      baseUrl: "http://localhost:3000"
+      apiKey: "test-api-key"
+      projectId: "test-project"
+    sync:
+      tracker:
+        enabled: true
+        value: "タスク"
+      status:
+        enabled: true
+        mode: "BY_DATES"
+        fixed: "New"
+      customFieldMap: {}
+      columns:
+        hierarchy:
+          - "大分類"
+          - "中分類"
+          - "小分類"
+          - "成果物"
+          - "タスク"
+        required:
+          - "id"
+          - "チーム"
+          - "工程"
+        customFieldColumns:
+          - "id"
+          - "チーム"
+          - "工程"

@@ -1,0 +1,64 @@
+projects:
+  - name: "テスト用プロジェクト（カスタムフィールド拡張）"
+    default: true
+    redmine:
+      baseUrl: "http://localhost:3000"
+      apiKey: "test-api-key-extended-cf"
+      projectId: "test-project"
+    sync:
+      tracker:
+        enabled: true
+        value: "タスク"
+      status:
+        enabled: true
+        mode: "BY_DATES"
+        fixed: "New"
+      customFieldMap:
+        チーム: "10"
+        工程: "11"
+        社/組織: "12"
+        着手実績: "13"
+        完了実績: "14"
+        成果物: "15"
+        備考: "16"
+        優先度: "17"
+        見積工数: "18"
+        進捗率: "19"
+      columns:
+        hierarchy:
+          - "大分類"
+          - "中分類"
+          - "小分類"
+          - "成果物"
+          - "タスク"
+        required:
+          - "id"
+          - "チーム"
+          - "工程"
+          - "大分類"
+          - "中分類"
+          - "小分類"
+          - "成果物"
+          - "タスク"
+          - "社/組織"
+          - "担当"
+          - "着手予定"
+          - "着手実績"
+          - "完了予定"
+          - "完了実績"
+          - "備考"
+          - "優先度"
+          - "見積工数"
+          - "進捗率"
+        customFieldColumns:
+          - "id"
+          - "チーム"
+          - "工程"
+          - "社/組織"
+          - "着手実績"
+          - "完了実績"
+          - "成果物"
+          - "備考"
+          - "優先度"
+          - "見積工数"
+          - "進捗率"

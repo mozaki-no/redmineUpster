@@ -1,0 +1,6 @@
+テスト結果
+- コマンド: ./mvnw test
+- 結果: BUILD SUCCESS
+- Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+- 有効プロファイル: test
+- DB接続: jdbc:postgresql://localhost:5432/redmine_upster

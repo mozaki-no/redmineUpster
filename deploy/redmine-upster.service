@@ -1,0 +1,16 @@
+[Unit]
+Description=redmineUpster service
+After=network.target
+
+[Service]
+Type=simple
+User=redmineupster
+Group=redmineupster
+WorkingDirectory=/opt/redmine-upster
+EnvironmentFile=-/etc/redmine-upster.env
+ExecStart=/usr/bin/java -jar /opt/redmine-upster/app.jar
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

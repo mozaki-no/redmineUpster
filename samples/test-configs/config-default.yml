@@ -1,0 +1,20 @@
+projects:
+  - name: "テスト用プロジェクト（デフォルト設定）"
+    default: true
+    redmine:
+      baseUrl: "http://localhost:3000"
+      apiKey: "test-api-key-default"
+      projectId: "test-project"
+    sync:
+      tracker:
+        enabled: true
+        value: "タスク"
+      status:
+        enabled: true
+        mode: "BY_DATES"
+        fixed: "New"
+      customFieldMap:
+        チーム: "1"
+        工程: "2"
+        社/組織: "3"
+      # columns設定を省略（デフォルト値を使用）

@@ -1,0 +1,18 @@
+# 環境変数展開テスト用設定ファイル
+projects:
+  - name: "${TEST_PROJECT_NAME:default-project}"
+    default: true
+    redmine:
+      baseUrl: "${TEST_REDMINE_URL:http://default.example.com}"
+      apiKey: "${TEST_API_KEY}"
+      projectId: "${TEST_PROJECT_ID:default-id}"
+    sync:
+      tracker:
+        enabled: true
+        value: "${TEST_TRACKER:Bug}"
+      status:
+        enabled: true
+        mode: "FIXED"
+        fixed: "${TEST_STATUS:New}"
+      customFieldMap:
+        field1: "${TEST_CUSTOM_FIELD:default-value}"

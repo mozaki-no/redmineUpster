@@ -1,0 +1,74 @@
+projects:
+  - name: "本番環境"
+    default: true
+    redmine:
+      baseUrl: "https://redmine.example.com"
+      apiKey: "${REDMINE_API_KEY}"  # 環境変数展開対応
+      projectId: "project-a"
+    sync:
+      tracker:
+        enabled: true
+        value: "タスク"
+      status:
+        enabled: true
+        mode: "BY_DATES"  # BY_DATES | FIXED
+        fixed: "New"
+      customFieldMap:
+        チーム: "12"
+        工程: "13"
+        社/組織: "14"
+        着手実績: "15"
+        完了実績: "16"
+        成果物: "17"
+      # 列設定（省略時はデフォルト値を使用）
+      columns:
+        # 外部キー列（Redmineチケットと紐付けるためのID列）
+        externalKeyColumn: "id"  # デフォルト。"WBS番号"などに変更可能
+        # 階層列（親子関係推定に使用、順番が重要）
+        hierarchy:
+          - "大分類"
+          - "中分類"
+          - "小分類"
+          - "成果物"
+          - "タスク"
+        # 必須列（CSVに必ず含める列）
+        required:
+          - "id"
+          - "チーム"
+          - "工程"
+          - "大分類"
+          - "中分類"
+          - "小分類"
+          - "成果物"
+          - "タスク"
+          - "社/組織"
+          - "担当"
+          - "着手予定"
+          - "着手実績"
+          - "完了予定"
+          - "完了実績"
+        # カスタムフィールドマッピング対象列
+        customFieldColumns:
+          - "id"
+          - "チーム"
+          - "工程"
+          - "社/組織"
+          - "着手実績"
+          - "完了実績"
+          - "成果物"
+
+  - name: "テスト環境"
+    default: false
+    redmine:
+      baseUrl: "https://redmine-test.example.com"
+      apiKey: "${REDMINE_TEST_API_KEY}"
+      projectId: "project-test"
+    sync:
+      tracker:
+        enabled: false
+      status:
+        enabled: true
+        mode: "FIXED"
+        fixed: "New"
+      customFieldMap: {}
+      # 列設定を省略するとデフォルト値が使用されます
