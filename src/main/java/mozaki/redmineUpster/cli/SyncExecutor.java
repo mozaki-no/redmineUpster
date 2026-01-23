@@ -219,6 +219,7 @@ public class SyncExecutor {
         if (statusConfig != null && statusConfig.isEnabled()) {
             String statusValue = resolveStatus(item, payload, statusConfig);
             statusValue = mapStatusValue(statusValue, statusConfig);
+            statusValue = mapByDatesDefaultStatusId(statusValue, statusConfig);
             if (statusValue != null && !statusValue.isBlank()) {
                 if (isNumeric(statusValue)) {
                     issue.put("status_id", Long.parseLong(statusValue));
@@ -338,6 +339,26 @@ public class SyncExecutor {
             return statusValue;
         }
         return map.getOrDefault(statusValue, statusValue);
+    }
+
+    private String mapByDatesDefaultStatusId(String statusValue, StatusConfig statusConfig) {
+        if (statusValue == null || statusValue.isBlank() || statusConfig == null) {
+            return statusValue;
+        }
+        String mode = valueOrDefault(statusConfig.getMode(), STATUS_MODE_BY_DATES);
+        if (!STATUS_MODE_BY_DATES.equalsIgnoreCase(mode)) {
+            return statusValue;
+        }
+        if (STATUS_NEW.equalsIgnoreCase(statusValue)) {
+            return "1";
+        }
+        if (STATUS_IN_PROGRESS.equalsIgnoreCase(statusValue)) {
+            return "2";
+        }
+        if (STATUS_CLOSED.equalsIgnoreCase(statusValue)) {
+            return "5";
+        }
+        return statusValue;
     }
 
     /**

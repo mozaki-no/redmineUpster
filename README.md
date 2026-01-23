@@ -135,6 +135,8 @@ id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織
 CSVの日本語ステータスをRedmineのステータスIDへ変換したい場合は `statusMap` を指定します。
 `statusMap` の値が数値の場合は `status_id` として送信されます。
 
+`BY_DATES` の場合は、デフォルトで `New=1` / `In Progress=2` / `Closed=5` のIDに変換されます。
+
 ## 詳細
 
 Jenkins連携、設定ファイルの詳細、トラブルシューティングについては [docs/DEPLOY.md](./docs/DEPLOY.md) を参照してください。
