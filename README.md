@@ -93,6 +93,7 @@ projects:
         startDateColumn: "着手予定"  # Redmine start_date
         dueDateColumn: "完了予定"    # Redmine due_date
         statusColumn: "ステータス"  # CSVのステータス列（優先）
+        progressColumn: "進捗率"    # Redmine done_ratio
 ```
 
 環境変数は `${VAR_NAME}` 形式で参照可能です。
@@ -115,10 +116,10 @@ export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
 
 デフォルトのCSVヘッダ:
 ```
-id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績,ステータス
+id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績,ステータス,進捗率
 ```
 
-※ 外部キー列（`id`）、階層列、カスタムフィールド列、開始日/期限/ステータス列は設定ファイルで変更可能です。
+※ 外部キー列（`id`）、階層列、カスタムフィールド列、開始日/期限/ステータス/進捗率列は設定ファイルで変更可能です。
 
 ## 日付形式
 

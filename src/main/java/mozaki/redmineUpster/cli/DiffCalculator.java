@@ -67,6 +67,7 @@ public class DiffCalculator {
         String startDateColumn = getStartDateColumn(projectConfig);
         String dueDateColumn = getDueDateColumn(projectConfig);
         String statusColumn = getStatusColumn(projectConfig);
+        String progressColumn = getProgressColumn(projectConfig);
 
         List<RowData> parsed = new ArrayList<>();
         for (Map<String, String> row : rows) {
@@ -85,7 +86,7 @@ public class DiffCalculator {
                     : List.of();
             String parentPath = String.join(" > ", parentHierarchy);
             RowData data = new RowData(externalKey, subject, levelPath, parentPath, row,
-                    startDateColumn, dueDateColumn, statusColumn, hierarchyColumnsUsed, hierarchy,
+                    startDateColumn, dueDateColumn, statusColumn, progressColumn, hierarchyColumnsUsed, hierarchy,
                     parentHierarchyColumns, parentHierarchy);
             parsed.add(data);
 
@@ -141,7 +142,7 @@ public class DiffCalculator {
             for (ParentAggregate parent : virtualParents.values()) {
                 String action = resolveAction(parent.externalKey, logger);
         Integer trackerId = getVirtualParentTrackerId(projectConfig);
-        Map<String, Object> payload = buildParentPayload(parent, trackerId);
+        Map<String, Object> payload = buildParentPayload(parent, trackerId, externalKeyColumn);
         payload.put("virtualParent", true);
         DiffItem parentItem = new DiffItem(
                         parent.externalKey,
@@ -301,6 +302,24 @@ public class DiffCalculator {
     }
 
     /**
+     * プロジェクト設定から進捗率列名を取得します。
+     * 設定がない場合はデフォルト値を返します。
+     *
+     * @param projectConfig プロジェクト設定
+     * @return 進捗率列名
+     */
+    private String getProgressColumn(ProjectConfig projectConfig) {
+        if (projectConfig != null && projectConfig.getSync() != null
+                && projectConfig.getSync().getColumns() != null) {
+            String col = projectConfig.getSync().getColumns().getProgressColumn();
+            if (col != null && !col.isBlank()) {
+                return col;
+            }
+        }
+        return ColumnDefinitions.COL_PROGRESS;
+    }
+
+    /**
      * 件名を解決します。
      *
      * @param row 行データ
@@ -381,6 +400,9 @@ public class DiffCalculator {
         payload.put("dueDate", rowData.duePlan);
         payload.put("startActual", rowData.startActual);
         payload.put("dueActual", rowData.dueActual);
+        if (rowData.progress != null) {
+            payload.put("progress", rowData.progress);
+        }
 
         Map<String, String> customFields = new LinkedHashMap<>();
         for (String column : customFieldColumns) {
@@ -398,7 +420,7 @@ public class DiffCalculator {
         return payload;
     }
 
-    private Map<String, Object> buildParentPayload(ParentAggregate parent, Integer trackerId) {
+    private Map<String, Object> buildParentPayload(ParentAggregate parent, Integer trackerId, String externalKeyColumn) {
         Map<String, Object> payload = new LinkedHashMap<>();
         if (parent.startPlan != null) {
             payload.put("startDate", parent.startPlan);
@@ -410,8 +432,20 @@ public class DiffCalculator {
         } else {
             payload.put("dueDate", "");
         }
-        payload.put("startActual", "");
-        payload.put("dueActual", "");
+        if (parent.startActual != null) {
+            payload.put("startActual", parent.startActual);
+        } else {
+            payload.put("startActual", "");
+        }
+        if (parent.dueActual != null) {
+            payload.put("dueActual", parent.dueActual);
+        } else {
+            payload.put("dueActual", "");
+        }
+        if (parent.progress != null) {
+            payload.put("progress", parent.progress);
+        }
+        parent.customFieldValues.putIfAbsent(externalKeyColumn, parent.externalKey);
         payload.put("customFields", parent.customFieldValues);
         payload.put("trackerId", trackerId);
         return payload;
@@ -444,6 +478,7 @@ public class DiffCalculator {
         private final String startActual;
         private final String dueActual;
         private final String statusValue;
+        private final Integer progress;
         private final List<String> hierarchyColumnsUsed;
         private final List<String> hierarchyValues;
         private final List<String> parentHierarchyColumns;
@@ -451,6 +486,7 @@ public class DiffCalculator {
 
         private RowData(String externalKey, String subject, String levelPath, String parentPath,
                 Map<String, String> row, String startDateColumn, String dueDateColumn, String statusColumn,
+                String progressColumn,
                 List<String> hierarchyColumnsUsed, List<String> hierarchyValues,
                 List<String> parentHierarchyColumns, List<String> parentHierarchyValues) {
             this.externalKey = externalKey;
@@ -464,6 +500,7 @@ public class DiffCalculator {
             this.startActual = value(row, ColumnDefinitions.COL_START_ACTUAL);
             this.dueActual = value(row, ColumnDefinitions.COL_DUE_ACTUAL);
             this.statusValue = value(row, statusColumn);
+            this.progress = parseProgress(value(row, progressColumn));
             this.hierarchyColumnsUsed = hierarchyColumnsUsed;
             this.hierarchyValues = hierarchyValues;
             this.parentHierarchyColumns = parentHierarchyColumns;
@@ -485,6 +522,13 @@ public class DiffCalculator {
         private LocalDate maxDue;
         private String startPlan;
         private String duePlan;
+        private LocalDate minStartActual;
+        private LocalDate maxDueActual;
+        private String startActual;
+        private String dueActual;
+        private int progressSum;
+        private int progressCount;
+        private Integer progress;
 
         private ParentAggregate(String externalKey, String levelPath, String subject, String parentKey,
                 List<String> hierarchyColumns, List<String> hierarchyValues) {
@@ -498,6 +542,8 @@ public class DiffCalculator {
 
         private void addChild(RowData rowData) {
             updateDates(rowData.startPlan, rowData.duePlan);
+            updateActualDates(rowData.startActual, rowData.dueActual);
+            updateProgress(rowData.progress);
             for (String column : hierarchyColumns) {
                 String value = value(rowData.row, column);
                 if (!value.isBlank() && !customFieldValues.containsKey(column)) {
@@ -517,6 +563,28 @@ public class DiffCalculator {
                 maxDue = due;
                 duePlan = maxDue.format(DateTimeFormatter.ISO_LOCAL_DATE);
             }
+        }
+
+        private void updateActualDates(String startValue, String dueValue) {
+            LocalDate start = parseDate(startValue);
+            if (start != null && (minStartActual == null || start.isBefore(minStartActual))) {
+                minStartActual = start;
+                startActual = minStartActual.format(DateTimeFormatter.ISO_LOCAL_DATE);
+            }
+            LocalDate due = parseDate(dueValue);
+            if (due != null && (maxDueActual == null || due.isAfter(maxDueActual))) {
+                maxDueActual = due;
+                dueActual = maxDueActual.format(DateTimeFormatter.ISO_LOCAL_DATE);
+            }
+        }
+
+        private void updateProgress(Integer value) {
+            if (value == null) {
+                return;
+            }
+            progressSum += value;
+            progressCount++;
+            progress = (int) Math.round(progressSum / (double) progressCount);
         }
     }
 
@@ -592,5 +660,30 @@ public class DiffCalculator {
             return null;
         }
         return LocalDate.parse(normalized, DateTimeFormatter.ISO_LOCAL_DATE);
+    }
+
+    private static Integer parseProgress(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String trimmed = value.trim();
+        if (trimmed.endsWith("%")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
+        }
+        if (!StringUtils.isNumeric(trimmed)) {
+            return null;
+        }
+        try {
+            int progress = Integer.parseInt(trimmed);
+            if (progress < 0) {
+                return 0;
+            }
+            if (progress > 100) {
+                return 100;
+            }
+            return progress;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 }

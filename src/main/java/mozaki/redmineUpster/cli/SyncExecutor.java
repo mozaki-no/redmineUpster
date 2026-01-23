@@ -1,7 +1,6 @@
 package mozaki.redmineUpster.cli;
 
 import static mozaki.redmineUpster.cli.SyncConstants.ACTION_CREATE;
-import static mozaki.redmineUpster.cli.SyncConstants.ACTION_UPDATE;
 import static mozaki.redmineUpster.cli.SyncConstants.HIERARCHY_DELIMITER;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_CLOSED;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_IN_PROGRESS;
@@ -179,6 +178,16 @@ public class SyncExecutor {
             issue.put("due_date", dueDate);
         }
 
+        // 進捗率
+        Object progress = payload.get("progress");
+        if (progress instanceof Number) {
+            issue.put("done_ratio", ((Number) progress).intValue());
+        } else if (progress instanceof String progressString && !progressString.isBlank()) {
+            if (isNumeric(progressString)) {
+                issue.put("done_ratio", Integer.parseInt(progressString));
+            }
+        }
+
         // 親チケット
         Long parentIssueId = resolveParentIssueId(item.parentKey(), createdIssueIds);
         if (parentIssueId != null) {
@@ -208,16 +217,13 @@ public class SyncExecutor {
             statusConfig = projectConfig.getSync().getStatus();
         }
         if (statusConfig != null && statusConfig.isEnabled()) {
-            boolean skipStatus = shouldSkipVirtualParentStatus(item, payload);
-            if (!skipStatus) {
-                String statusValue = resolveStatus(item, payload, statusConfig);
-                statusValue = mapStatusValue(statusValue, statusConfig);
-                if (statusValue != null && !statusValue.isBlank()) {
-                    if (isNumeric(statusValue)) {
-                        issue.put("status_id", Long.parseLong(statusValue));
-                    } else {
-                        issue.put("status", statusValue);
-                    }
+            String statusValue = resolveStatus(item, payload, statusConfig);
+            statusValue = mapStatusValue(statusValue, statusConfig);
+            if (statusValue != null && !statusValue.isBlank()) {
+                if (isNumeric(statusValue)) {
+                    issue.put("status_id", Long.parseLong(statusValue));
+                } else {
+                    issue.put("status", statusValue);
                 }
             }
         }
@@ -332,17 +338,6 @@ public class SyncExecutor {
             return statusValue;
         }
         return map.getOrDefault(statusValue, statusValue);
-    }
-
-    private boolean shouldSkipVirtualParentStatus(DiffItem item, Map<String, Object> payload) {
-        if (item == null || payload == null) {
-            return false;
-        }
-        Object flag = payload.get("virtualParent");
-        if (!(flag instanceof Boolean) || !((Boolean) flag)) {
-            return false;
-        }
-        return ACTION_UPDATE.equalsIgnoreCase(item.action());
     }
 
     /**

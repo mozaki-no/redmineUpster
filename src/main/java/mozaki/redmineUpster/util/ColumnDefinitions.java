@@ -18,6 +18,7 @@ public final class ColumnDefinitions {
 	public static final String COL_DUE_PLAN = "完了予定";
 	public static final String COL_DUE_ACTUAL = "完了実績";
 	public static final String COL_STATUS = "ステータス";
+	public static final String COL_PROGRESS = "進捗率";
 
 	public static final List<String> REQUIRED_HEADERS = List.of(
 			COL_ID,

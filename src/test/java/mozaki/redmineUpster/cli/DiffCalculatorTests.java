@@ -32,6 +32,7 @@ class DiffCalculatorTests {
 		columns.setStartDateColumn("開始日");
 		columns.setDueDateColumn("期限");
 		columns.setStatusColumn("状態");
+		columns.setProgressColumn("進捗率");
 
 		StatusConfig statusConfig = new StatusConfig();
 		statusConfig.setEnabled(true);
@@ -49,7 +50,8 @@ class DiffCalculatorTests {
 				"レベル2", "子",
 				"開始日", "2026-1-3",
 				"期限", "2026-1-10",
-				"状態", "進行中"
+				"状態", "進行中",
+				"進捗率", "40"
 		);
 
 		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null);
@@ -62,6 +64,7 @@ class DiffCalculatorTests {
 		assertThat(item.status()).isEqualTo("進行中");
 		assertThat(item.payload().get("startDate")).isEqualTo("2026-1-3");
 		assertThat(item.payload().get("dueDate")).isEqualTo("2026-1-10");
+		assertThat(item.payload().get("progress")).isEqualTo(40);
 	}
 
 	@Test
@@ -77,6 +80,7 @@ class DiffCalculatorTests {
 		columns.setStartDateColumn("開始日");
 		columns.setDueDateColumn("期限");
 		columns.setStatusColumn("状態");
+		columns.setProgressColumn("進捗率");
 
 		StatusConfig statusConfig = new StatusConfig();
 		statusConfig.setEnabled(true);
@@ -94,7 +98,8 @@ class DiffCalculatorTests {
 				"レベル2", "B",
 				"レベル3", "C",
 				"開始日", "2026-1-3",
-				"期限", "2026-1-10"
+				"期限", "2026-1-10",
+				"進捗率", "50"
 		);
 		Map<String, String> row2 = Map.of(
 				"WBS_ID", "1.1.2",
@@ -102,7 +107,8 @@ class DiffCalculatorTests {
 				"レベル2", "B",
 				"レベル3", "D",
 				"開始日", "2026-1-1",
-				"期限", "2026-1-20"
+				"期限", "2026-1-20",
+				"進捗率", "100"
 		);
 
 		List<DiffItem> items = calculator.calculate(List.of(row1, row2), projectConfig, null);
@@ -116,5 +122,8 @@ class DiffCalculatorTests {
 		assertThat(parent.payload().get("startDate")).isEqualTo("2026-01-01");
 		assertThat(parent.payload().get("dueDate")).isEqualTo("2026-01-20");
 		assertThat(parent.payload().get("trackerId")).isEqualTo(6);
+		assertThat(parent.payload().get("progress")).isEqualTo(75);
+		assertThat(parent.payload().get("customFields")).asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+				.containsEntry("WBS_ID", "1.1");
 	}
 }

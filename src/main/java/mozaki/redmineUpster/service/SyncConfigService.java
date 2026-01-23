@@ -276,6 +276,11 @@ public class SyncConfigService {
 			config.setStatusColumn(statusColumn);
 		}
 
+		String progressColumn = (String) map.get("progressColumn");
+		if (progressColumn != null && !progressColumn.isBlank()) {
+			config.setProgressColumn(progressColumn);
+		}
+
 		return config;
 	}
 

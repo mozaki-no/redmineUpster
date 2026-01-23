@@ -43,6 +43,7 @@ projects:
         startDateColumn: "着手予定"
         dueDateColumn: "完了予定"
         statusColumn: "ステータス"
+        progressColumn: "進捗率"
         # 必須列（CSVに必ず含める列）
         required:
           - "id"

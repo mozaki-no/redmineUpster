@@ -27,6 +27,7 @@ projects:
         startDateColumn: "開始日"
         dueDateColumn: "期限"
         statusColumn: "状態"
+        progressColumn: "進捗率"
         required:
           - "id"
           - "チーム"

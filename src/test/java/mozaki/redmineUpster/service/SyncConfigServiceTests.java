@@ -613,6 +613,7 @@ class SyncConfigServiceTests {
 			config.setStartDateColumn("開始日");
 			config.setDueDateColumn("期限");
 			config.setStatusColumn("状態");
+			config.setProgressColumn("進捗率");
 
 			assertThat(config.getHierarchy()).containsExactly("A", "B", "C");
 			assertThat(config.getRequired()).containsExactly("id", "name");
@@ -620,6 +621,7 @@ class SyncConfigServiceTests {
 			assertThat(config.getStartDateColumn()).isEqualTo("開始日");
 			assertThat(config.getDueDateColumn()).isEqualTo("期限");
 			assertThat(config.getStatusColumn()).isEqualTo("状態");
+			assertThat(config.getProgressColumn()).isEqualTo("進捗率");
 		}
 
 		@Test
@@ -636,6 +638,7 @@ class SyncConfigServiceTests {
 			assertThat(config.getStartDateColumn()).isEqualTo("着手予定");
 			assertThat(config.getDueDateColumn()).isEqualTo("完了予定");
 			assertThat(config.getStatusColumn()).isEqualTo("ステータス");
+			assertThat(config.getProgressColumn()).isEqualTo("進捗率");
 		}
 
 		@Test
@@ -672,6 +675,7 @@ class SyncConfigServiceTests {
 			assertThat(columns.getStartDateColumn()).isEqualTo("開始日");
 			assertThat(columns.getDueDateColumn()).isEqualTo("期限");
 			assertThat(columns.getStatusColumn()).isEqualTo("状態");
+			assertThat(columns.getProgressColumn()).isEqualTo("進捗率");
 			assertThat(project.getSync().getVirtualParentTrackerId()).isEqualTo(6);
 			assertThat(columns.getRequired()).containsExactly("id", "チーム", "工程");
 			assertThat(columns.getCustomFieldColumns()).containsExactly("id", "チーム", "工程");

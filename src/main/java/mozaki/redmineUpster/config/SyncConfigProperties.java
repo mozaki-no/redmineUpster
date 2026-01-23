@@ -183,6 +183,12 @@ public class SyncConfigProperties {
 		 * デフォルト値は "ステータス"。
 		 */
 		private String statusColumn = "ステータス";
+
+		/**
+		 * 進捗率列名（Redmineのdone_ratioに反映）。
+		 * デフォルト値は "進捗率"。
+		 */
+		private String progressColumn = "進捗率";
 	}
 
 	/**
