@@ -9,12 +9,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -190,17 +195,43 @@ public class SpreadsheetParser {
 		return switch (cell.getCellType()) {
 			case STRING -> cell.getStringCellValue();
 			case NUMERIC -> {
-				double value = cell.getNumericCellValue();
-				long asLong = (long) value;
-				if (Math.abs(value - asLong) < DOUBLE_TOLERANCE) {
-					yield Long.toString(asLong);
+				if (DateUtil.isCellDateFormatted(cell)) {
+					yield formatDateCell(cell);
 				}
-				yield Double.toString(value);
+				yield formatNumericCell(cell.getNumericCellValue());
 			}
 			case BOOLEAN -> Boolean.toString(cell.getBooleanCellValue());
-			case FORMULA -> cell.getCellFormula();
+			case FORMULA -> formatFormulaCell(cell);
 			default -> "";
 		};
+	}
+
+	private String formatFormulaCell(Cell cell) {
+		return switch (cell.getCachedFormulaResultType()) {
+			case STRING -> cell.getStringCellValue();
+			case NUMERIC -> {
+				if (DateUtil.isCellDateFormatted(cell)) {
+					yield formatDateCell(cell);
+				}
+				yield formatNumericCell(cell.getNumericCellValue());
+			}
+			case BOOLEAN -> Boolean.toString(cell.getBooleanCellValue());
+			default -> cell.getCellFormula();
+		};
+	}
+
+	private String formatNumericCell(double value) {
+		long asLong = (long) value;
+		if (Math.abs(value - asLong) < DOUBLE_TOLERANCE) {
+			return Long.toString(asLong);
+		}
+		return Double.toString(value);
+	}
+
+	private String formatDateCell(Cell cell) {
+		Instant instant = cell.getDateCellValue().toInstant();
+		LocalDate date = instant.atZone(ZoneId.systemDefault()).toLocalDate();
+		return date.format(DateTimeFormatter.ISO_LOCAL_DATE);
 	}
 
 	private boolean isEmptyRow(Map<String, String> values) {

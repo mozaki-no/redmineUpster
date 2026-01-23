@@ -3,10 +3,20 @@ package mozaki.redmineUpster.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.CreationHelper;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockMultipartFile;
 
@@ -34,5 +44,40 @@ class SpreadsheetParserTests {
 		assertEquals("T-001", firstRow.get("id"));
 		assertEquals("ログイン画面作成", firstRow.get("タスク"));
 		assertTrue(firstRow.containsKey("完了実績"));
+	}
+
+	@Test
+	void parseExcelFormatsDateCells() throws Exception {
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet sheet = workbook.createSheet("Sheet1");
+			Row header = sheet.createRow(0);
+			header.createCell(0).setCellValue("id");
+			header.createCell(1).setCellValue("着手予定");
+
+			CreationHelper creationHelper = workbook.getCreationHelper();
+			CellStyle dateStyle = workbook.createCellStyle();
+			dateStyle.setDataFormat(creationHelper.createDataFormat().getFormat("yyyy-MM-dd"));
+
+			Row row = sheet.createRow(1);
+			row.createCell(0).setCellValue("T-001");
+			row.createCell(1).setCellStyle(dateStyle);
+			LocalDate date = LocalDate.of(2026, 1, 3);
+			row.getCell(1).setCellValue(Date.from(date.atStartOfDay(ZoneId.systemDefault()).toInstant()));
+
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			workbook.write(out);
+
+			MockMultipartFile file = new MockMultipartFile(
+					"file",
+					"sample.xlsx",
+					"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+					out.toByteArray());
+
+			SpreadsheetParser parser = new SpreadsheetParser();
+			SpreadsheetParser.ParsedSheet sheetData = parser.parse(file);
+
+			assertEquals(2, sheetData.headers().size());
+			assertEquals("2026-01-03", sheetData.rows().get(0).get("着手予定"));
+		}
 	}
 }
