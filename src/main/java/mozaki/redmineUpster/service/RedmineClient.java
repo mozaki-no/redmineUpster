@@ -4,6 +4,7 @@ import java.util.Map;
 
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
@@ -107,7 +108,8 @@ public class RedmineClient {
 
 		debugLog("Request URL: " + url);
 
-		restTemplate.delete(url);
+		HttpEntity<Map<String, Object>> entity = buildEntity(Map.of());
+		restTemplate.exchange(url, HttpMethod.DELETE, entity, Void.class);
 
 		debugLog("Response status: 204 NO_CONTENT (DELETE success)");
 	}
