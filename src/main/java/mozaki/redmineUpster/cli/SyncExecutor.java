@@ -29,6 +29,7 @@ import mozaki.redmineUpster.domain.IssueLinkEntity;
 import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.util.DateParser;
+import mozaki.redmineUpster.util.PayloadHashUtils;
 
 /**
  * 同期実行クラス。
@@ -69,6 +70,7 @@ public class SyncExecutor {
         Map<String, String> customFieldMap = getCustomFieldMap(projectConfig);
         List<String> customFieldDateColumns = getCustomFieldDateColumns(projectConfig);
         Map<String, Long> createdIssueIds = new HashMap<>();
+        String projectId = client.getProjectId();
 
         List<DiffItem> deleteItems = new ArrayList<>();
         List<DiffItem> upsertItems = new ArrayList<>();
@@ -121,6 +123,7 @@ public class SyncExecutor {
                 Map<String, Object> issuePayload = buildIssuePayload(item, client, projectConfig, customFieldMap,
                         customFieldDateColumns, createdIssueIds);
 
+                String payloadHash = PayloadHashUtils.hashPayload(issuePayload);
                 if (ACTION_CREATE.equalsIgnoreCase(item.action())) {
                     logger.debug("API Request: POST " + client.getBaseUrl() + "/issues.json");
                     logger.debug("Request body: " + formatPayloadForLog(issuePayload));
@@ -134,6 +137,8 @@ public class SyncExecutor {
                     }
                     logger.debug("Created issue ID: " + issueId);
                     IssueLinkEntity link = new IssueLinkEntity(item.externalKey(), issueId);
+                    link.setPayloadHash(payloadHash);
+                    link.setProjectId(projectId);
                     issueLinkRepository.save(link);
                     createdIssueIds.put(item.externalKey(), issueId);
                     logger.debug("Saved IssueLink: " + item.externalKey() + " -> " + issueId);
@@ -148,9 +153,19 @@ public class SyncExecutor {
                         logger.error(errorMsg);
                         continue;
                     }
+                    IssueLinkEntity existing = link.get();
+                    if (payloadHash.equals(existing.getPayloadHash())
+                            && projectId.equals(existing.getProjectId())) {
+                        logger.info("skipped update for " + item.externalKey() + " (no changes)");
+                        successCount++;
+                        continue;
+                    }
                     logger.debug("API Request: PUT " + client.getBaseUrl() + "/issues/" + link.get().getIssueId() + ".json");
                     logger.debug("Request body: " + formatPayloadForLog(issuePayload));
                     client.updateIssue(link.get().getIssueId(), issuePayload);
+                    existing.setPayloadHash(payloadHash);
+                    existing.setProjectId(projectId);
+                    issueLinkRepository.save(existing);
                     logger.info("updated issue " + link.get().getIssueId() + " for " + item.externalKey());
                     successCount++;
                 }

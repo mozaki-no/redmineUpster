@@ -20,6 +20,12 @@ public class IssueLinkEntity {
 	@Column(name = "issue_id", nullable = false)
 	private Long issueId;
 
+	@Column(name = "payload_hash")
+	private String payloadHash;
+
+	@Column(name = "project_id")
+	private String projectId;
+
 	public IssueLinkEntity() {
 	}
 
@@ -46,5 +52,21 @@ public class IssueLinkEntity {
 
 	public void setIssueId(Long issueId) {
 		this.issueId = issueId;
+	}
+
+	public String getPayloadHash() {
+		return payloadHash;
+	}
+
+	public void setPayloadHash(String payloadHash) {
+		this.payloadHash = payloadHash;
+	}
+
+	public String getProjectId() {
+		return projectId;
+	}
+
+	public void setProjectId(String projectId) {
+		this.projectId = projectId;
 	}
 }

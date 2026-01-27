@@ -66,6 +66,10 @@ public class DiffCalculator {
         if (projectConfig.getSync() != null) {
             statusConfig = projectConfig.getSync().getStatus();
         }
+        String projectId = null;
+        if (projectConfig.getRedmine() != null) {
+            projectId = projectConfig.getRedmine().getProjectId();
+        }
 
         List<String> hierarchyColumns = getHierarchyColumns(projectConfig);
         List<String> customFieldColumns = getCustomFieldColumns(projectConfig);
@@ -169,7 +173,7 @@ public class DiffCalculator {
             }
         }
 
-        List<DiffItem> deleteItems = buildDeleteItems(requiredExternalKeys);
+        List<DiffItem> deleteItems = buildDeleteItems(requiredExternalKeys, projectId, logger);
         if (!deleteItems.isEmpty()) {
             items.addAll(deleteItems);
         }
@@ -813,11 +817,21 @@ public class DiffCalculator {
         return parents;
     }
 
-    private List<DiffItem> buildDeleteItems(Set<String> requiredExternalKeys) {
+    private List<DiffItem> buildDeleteItems(Set<String> requiredExternalKeys, String projectId, FileLogger logger) {
         List<DiffItem> deletions = new ArrayList<>();
         for (IssueLinkEntity link : issueLinkRepository.findAll()) {
             String externalKey = link.getExternalKey();
             if (externalKey == null || externalKey.isBlank()) {
+                continue;
+            }
+            if (projectId != null && link.getProjectId() != null
+                    && !projectId.equals(link.getProjectId())) {
+                continue;
+            }
+            if (link.getProjectId() == null || link.getProjectId().isBlank()) {
+                if (logger != null) {
+                    logger.debug("Skip delete (missing project_id) for external_key=" + externalKey);
+                }
                 continue;
             }
             if (requiredExternalKeys.contains(externalKey)) {

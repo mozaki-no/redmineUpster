@@ -13,6 +13,7 @@ import org.mockito.Mockito;
 
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
 import mozaki.redmineUpster.domain.IssueLinkEntity;
@@ -138,10 +139,11 @@ class DiffCalculatorTests {
 	void calculate_marksMissingKeysForDeletion() {
 		IssueLinkRepository repository = Mockito.mock(IssueLinkRepository.class);
 		when(repository.findByExternalKey(Mockito.anyString())).thenReturn(Optional.empty());
-		when(repository.findAll()).thenReturn(List.of(
-				new IssueLinkEntity("1.1", 100L),
-				new IssueLinkEntity("9.9", 200L)
-		));
+		IssueLinkEntity link1 = new IssueLinkEntity("1.1", 100L);
+		link1.setProjectId("proj");
+		IssueLinkEntity link2 = new IssueLinkEntity("9.9", 200L);
+		link2.setProjectId("proj");
+		when(repository.findAll()).thenReturn(List.of(link1, link2));
 		DiffCalculator calculator = new DiffCalculator(repository);
 
 		ColumnsConfig columns = new ColumnsConfig();
@@ -159,8 +161,12 @@ class DiffCalculatorTests {
 		syncConfig.setColumns(columns);
 		syncConfig.setStatus(statusConfig);
 
+		RedmineConfig redmineConfig = new RedmineConfig();
+		redmineConfig.setProjectId("proj");
+
 		ProjectConfig projectConfig = new ProjectConfig();
 		projectConfig.setSync(syncConfig);
+		projectConfig.setRedmine(redmineConfig);
 
 		Map<String, String> row = Map.of(
 				"WBS_ID", "1.1.1",
