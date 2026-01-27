@@ -17,6 +17,8 @@ public final class SyncConstants {
     public static final String ACTION_CREATE = "CREATE";
     /** アクション: 更新 */
     public static final String ACTION_UPDATE = "UPDATE";
+    /** アクション: 削除 */
+    public static final String ACTION_DELETE = "DELETE";
 
     // ステータス
     /** ステータス: 新規 */

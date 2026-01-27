@@ -13,7 +13,7 @@ import java.util.Map;
  * @param subject チケットの件名
  * @param parentKey 親チケットの外部キー
  * @param levelPath 階層パス（例: "大分類 > 中分類 > 小分類"）
- * @param action アクション（CREATE または UPDATE）
+ * @param action アクション（CREATE / UPDATE / DELETE）
  * @param status ステータス
  * @param payload Redmine APIに送信するペイロード
  */

@@ -105,8 +105,10 @@ public class SyncRunner {
 
             long createCount = items.stream().filter(i -> "CREATE".equals(i.action())).count();
             long updateCount = items.stream().filter(i -> "UPDATE".equals(i.action())).count();
+            long deleteCount = items.stream().filter(i -> "DELETE".equals(i.action())).count();
             logger.info("  CREATE: " + createCount);
             logger.info("  UPDATE: " + updateCount);
+            logger.info("  DELETE: " + deleteCount);
 
             // 6. Redmineクライアント作成
             RedmineClient client = redmineClientFactory.createClient(projectConfig);

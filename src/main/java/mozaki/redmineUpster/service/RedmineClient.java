@@ -98,6 +98,21 @@ public class RedmineClient {
 	}
 
 	/**
+	 * チケットを削除します。
+	 *
+	 * @param issueId チケットID
+	 */
+	public void deleteIssue(Long issueId) {
+		String url = baseUrl + "/issues/" + issueId + ".json";
+
+		debugLog("Request URL: " + url);
+
+		restTemplate.delete(url);
+
+		debugLog("Response status: 204 NO_CONTENT (DELETE success)");
+	}
+
+	/**
 	 * プロジェクトIDを取得します。
 	 *
 	 * @return プロジェクトID

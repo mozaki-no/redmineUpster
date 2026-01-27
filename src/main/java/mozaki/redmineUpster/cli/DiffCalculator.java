@@ -1,6 +1,7 @@
 package mozaki.redmineUpster.cli;
 
 import static mozaki.redmineUpster.cli.SyncConstants.ACTION_CREATE;
+import static mozaki.redmineUpster.cli.SyncConstants.ACTION_DELETE;
 import static mozaki.redmineUpster.cli.SyncConstants.ACTION_UPDATE;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_CLOSED;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_IN_PROGRESS;
@@ -61,6 +62,11 @@ public class DiffCalculator {
             ProjectConfig projectConfig,
             FileLogger logger) {
 
+        StatusConfig statusConfig = null;
+        if (projectConfig.getSync() != null) {
+            statusConfig = projectConfig.getSync().getStatus();
+        }
+
         List<String> hierarchyColumns = getHierarchyColumns(projectConfig);
         List<String> customFieldColumns = getCustomFieldColumns(projectConfig);
         String externalKeyColumn = getExternalKeyColumn(projectConfig);
@@ -98,8 +104,11 @@ public class DiffCalculator {
 
         Map<String, String> pathToExternalKey = new HashMap<>();
         Set<String> existingExternalKeys = new LinkedHashSet<>();
+        Set<String> requiredExternalKeys = new LinkedHashSet<>();
         for (RowData rowData : parsed) {
             existingExternalKeys.add(rowData.externalKey);
+            requiredExternalKeys.add(rowData.externalKey);
+            requiredExternalKeys.addAll(resolveParentKeys(rowData.externalKey));
             if (!rowData.levelPath.isBlank() && !pathToExternalKey.containsKey(rowData.levelPath)) {
                 pathToExternalKey.put(rowData.levelPath, rowData.externalKey);
             }
@@ -135,22 +144,22 @@ public class DiffCalculator {
                 logger.debug("Action: " + action + " (" + (ACTION_CREATE.equals(action) ? "no existing link" : "existing link found") + ")");
             }
 
-            collectVirtualParents(rowData, existingExternalKeys, virtualParents);
+            collectVirtualParents(rowData, existingExternalKeys, virtualParents, status, statusConfig);
         }
 
         if (!virtualParents.isEmpty()) {
             for (ParentAggregate parent : virtualParents.values()) {
                 String action = resolveAction(parent.externalKey, logger);
-        Integer trackerId = getVirtualParentTrackerId(projectConfig);
-        Map<String, Object> payload = buildParentPayload(parent, trackerId, externalKeyColumn);
-        payload.put("virtualParent", true);
-        DiffItem parentItem = new DiffItem(
+                Integer trackerId = getVirtualParentTrackerId(projectConfig);
+                Map<String, Object> payload = buildParentPayload(parent, trackerId, externalKeyColumn);
+                payload.put("virtualParent", true);
+                DiffItem parentItem = new DiffItem(
                         parent.externalKey,
                         parent.subject,
                         parent.parentKey,
                         parent.levelPath,
                         action,
-                        null,
+                        parent.statusValue,
                         payload
                 );
                 items.add(parentItem);
@@ -158,6 +167,11 @@ public class DiffCalculator {
                     logger.debug("Virtual parent: " + parent.externalKey + " path=" + parent.levelPath);
                 }
             }
+        }
+
+        List<DiffItem> deleteItems = buildDeleteItems(requiredExternalKeys);
+        if (!deleteItems.isEmpty()) {
+            items.addAll(deleteItems);
         }
 
         return items;
@@ -529,6 +543,11 @@ public class DiffCalculator {
         private int progressSum;
         private int progressCount;
         private Integer progress;
+        private int totalChildren;
+        private int inProgressCount;
+        private int closedCount;
+        private int newCount;
+        private String statusValue;
 
         private ParentAggregate(String externalKey, String levelPath, String subject, String parentKey,
                 List<String> hierarchyColumns, List<String> hierarchyValues) {
@@ -540,10 +559,11 @@ public class DiffCalculator {
             this.hierarchyValues = hierarchyValues;
         }
 
-        private void addChild(RowData rowData) {
+        private void addChild(RowData rowData, ParentStatus status) {
             updateDates(rowData.startPlan, rowData.duePlan);
             updateActualDates(rowData.startActual, rowData.dueActual);
             updateProgress(rowData.progress);
+            updateStatus(status);
             for (String column : hierarchyColumns) {
                 String value = value(rowData.row, column);
                 if (!value.isBlank() && !customFieldValues.containsKey(column)) {
@@ -586,6 +606,30 @@ public class DiffCalculator {
             progressCount++;
             progress = (int) Math.round(progressSum / (double) progressCount);
         }
+
+        private void updateStatus(ParentStatus status) {
+            totalChildren++;
+            if (status == ParentStatus.CLOSED) {
+                closedCount++;
+            } else if (status == ParentStatus.IN_PROGRESS) {
+                inProgressCount++;
+            } else {
+                newCount++;
+            }
+            if (inProgressCount > 0) {
+                statusValue = STATUS_IN_PROGRESS;
+                return;
+            }
+            if (closedCount == totalChildren) {
+                statusValue = STATUS_CLOSED;
+                return;
+            }
+            if (newCount == totalChildren) {
+                statusValue = STATUS_NEW;
+                return;
+            }
+            statusValue = STATUS_IN_PROGRESS;
+        }
     }
 
     private Integer getVirtualParentTrackerId(ProjectConfig projectConfig) {
@@ -599,7 +643,7 @@ public class DiffCalculator {
     }
 
     private void collectVirtualParents(RowData rowData, Set<String> existingExternalKeys,
-            Map<String, ParentAggregate> virtualParents) {
+            Map<String, ParentAggregate> virtualParents, String statusValue, StatusConfig statusConfig) {
         if (rowData.hierarchyValues.size() < 2) {
             return;
         }
@@ -608,6 +652,7 @@ public class DiffCalculator {
         if (segments.length < rowData.hierarchyValues.size()) {
             return;
         }
+        ParentStatus parentStatus = classifyStatus(statusValue, statusConfig);
         for (int levelIndex = 0; levelIndex < rowData.hierarchyValues.size() - 1; levelIndex++) {
             String parentKey = joinSegments(segments, levelIndex + 1);
             if (parentKey == null || existingExternalKeys.contains(parentKey)) {
@@ -621,7 +666,7 @@ public class DiffCalculator {
             ParentAggregate aggregate = virtualParents.computeIfAbsent(
                     parentKey,
                     key -> new ParentAggregate(key, levelPath, subject, parentParentKey, columns, values));
-            aggregate.addChild(rowData);
+            aggregate.addChild(rowData, parentStatus);
         }
     }
 
@@ -685,5 +730,109 @@ public class DiffCalculator {
         } catch (NumberFormatException ex) {
             return null;
         }
+    }
+
+    private ParentStatus classifyStatus(String statusValue, StatusConfig statusConfig) {
+        if (statusValue == null || statusValue.isBlank()) {
+            return ParentStatus.NEW;
+        }
+        String mapped = mapStatusValue(statusValue, statusConfig);
+        if (mapped != null) {
+            if (StringUtils.isNumeric(mapped)) {
+                return mapStatusId(mapped);
+            }
+            if (STATUS_CLOSED.equalsIgnoreCase(mapped) || "完了".equals(mapped)) {
+                return ParentStatus.CLOSED;
+            }
+            if (STATUS_IN_PROGRESS.equalsIgnoreCase(mapped) || "進行中".equals(mapped)) {
+                return ParentStatus.IN_PROGRESS;
+            }
+            if (STATUS_NEW.equalsIgnoreCase(mapped) || "未着手".equals(mapped)) {
+                return ParentStatus.NEW;
+            }
+        }
+        if (STATUS_CLOSED.equalsIgnoreCase(statusValue) || "完了".equals(statusValue)) {
+            return ParentStatus.CLOSED;
+        }
+        if (STATUS_IN_PROGRESS.equalsIgnoreCase(statusValue) || "進行中".equals(statusValue)) {
+            return ParentStatus.IN_PROGRESS;
+        }
+        if (STATUS_NEW.equalsIgnoreCase(statusValue) || "未着手".equals(statusValue)) {
+            return ParentStatus.NEW;
+        }
+        return ParentStatus.IN_PROGRESS;
+    }
+
+    private String mapStatusValue(String statusValue, StatusConfig statusConfig) {
+        if (statusValue == null || statusValue.isBlank() || statusConfig == null) {
+            return statusValue;
+        }
+        Map<String, String> map = statusConfig.getStatusMap();
+        if (map == null || map.isEmpty()) {
+            return statusValue;
+        }
+        return map.getOrDefault(statusValue, statusValue);
+    }
+
+    private ParentStatus mapStatusId(String statusId) {
+        if ("1".equals(statusId)) {
+            return ParentStatus.NEW;
+        }
+        if ("2".equals(statusId)) {
+            return ParentStatus.IN_PROGRESS;
+        }
+        if ("5".equals(statusId)) {
+            return ParentStatus.CLOSED;
+        }
+        return ParentStatus.IN_PROGRESS;
+    }
+
+    private enum ParentStatus {
+        NEW,
+        IN_PROGRESS,
+        CLOSED
+    }
+
+    private List<String> resolveParentKeys(String externalKey) {
+        List<String> parents = new ArrayList<>();
+        if (externalKey == null || externalKey.isBlank()) {
+            return parents;
+        }
+        String[] segments = externalKey.split("\\.");
+        if (segments.length < 2) {
+            return parents;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < segments.length - 1; i++) {
+            if (i > 0) {
+                sb.append(".");
+            }
+            sb.append(segments[i]);
+            parents.add(sb.toString());
+        }
+        return parents;
+    }
+
+    private List<DiffItem> buildDeleteItems(Set<String> requiredExternalKeys) {
+        List<DiffItem> deletions = new ArrayList<>();
+        for (IssueLinkEntity link : issueLinkRepository.findAll()) {
+            String externalKey = link.getExternalKey();
+            if (externalKey == null || externalKey.isBlank()) {
+                continue;
+            }
+            if (requiredExternalKeys.contains(externalKey)) {
+                continue;
+            }
+            deletions.add(new DiffItem(
+                    externalKey,
+                    "",
+                    null,
+                    "",
+                    ACTION_DELETE,
+                    null,
+                    Map.of()
+            ));
+        }
+        return deletions;
     }
 }

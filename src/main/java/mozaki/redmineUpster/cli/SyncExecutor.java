@@ -1,6 +1,7 @@
 package mozaki.redmineUpster.cli;
 
 import static mozaki.redmineUpster.cli.SyncConstants.ACTION_CREATE;
+import static mozaki.redmineUpster.cli.SyncConstants.ACTION_DELETE;
 import static mozaki.redmineUpster.cli.SyncConstants.HIERARCHY_DELIMITER;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_CLOSED;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_IN_PROGRESS;
@@ -27,7 +28,6 @@ import mozaki.redmineUpster.config.SyncConfigProperties.TrackerConfig;
 import mozaki.redmineUpster.domain.IssueLinkEntity;
 import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.service.RedmineClient;
-import mozaki.redmineUpster.util.DateParser;
 import mozaki.redmineUpster.util.DateParser;
 
 /**
@@ -70,11 +70,47 @@ public class SyncExecutor {
         List<String> customFieldDateColumns = getCustomFieldDateColumns(projectConfig);
         Map<String, Long> createdIssueIds = new HashMap<>();
 
-        // 階層の深さでソート（親を先に処理）
-        List<DiffItem> sortedItems = new ArrayList<>(items);
-        sortedItems.sort(Comparator.comparingInt(this::depth));
+        List<DiffItem> deleteItems = new ArrayList<>();
+        List<DiffItem> upsertItems = new ArrayList<>();
+        for (DiffItem item : items) {
+            if (ACTION_DELETE.equalsIgnoreCase(item.action())) {
+                deleteItems.add(item);
+            } else {
+                upsertItems.add(item);
+            }
+        }
+        deleteItems.sort(Comparator.comparingInt(this::depth).reversed());
+        upsertItems.sort(Comparator.comparingInt(this::depth));
 
-        for (DiffItem item : sortedItems) {
+        for (DiffItem item : deleteItems) {
+            try {
+                if (dryRun) {
+                    logger.info("DRY_RUN " + item.action() + " " + item.externalKey());
+                    successCount++;
+                    continue;
+                }
+                Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKey(item.externalKey());
+                if (link.isEmpty()) {
+                    errorCount++;
+                    String errorMsg = "削除失敗: 外部キー=" + item.externalKey() + " (issue_linkが見つかりません)";
+                    errors.add(errorMsg);
+                    logger.error(errorMsg);
+                    continue;
+                }
+                logger.debug("API Request: DELETE " + client.getBaseUrl() + "/issues/" + link.get().getIssueId() + ".json");
+                client.deleteIssue(link.get().getIssueId());
+                issueLinkRepository.delete(link.get());
+                logger.info("deleted issue " + link.get().getIssueId() + " for " + item.externalKey());
+                successCount++;
+            } catch (RuntimeException ex) {
+                errorCount++;
+                String errorMsg = formatError(item.externalKey(), ex);
+                errors.add(errorMsg);
+                logger.error(errorMsg);
+            }
+        }
+
+        for (DiffItem item : upsertItems) {
             try {
                 if (dryRun) {
                     logger.info("DRY_RUN " + item.action() + " " + item.externalKey() + " " + item.subject());
@@ -390,7 +426,11 @@ public class SyncExecutor {
     private int depth(DiffItem item) {
         String path = item.levelPath();
         if (path == null || path.isBlank()) {
-            return 0;
+            String externalKey = item.externalKey();
+            if (externalKey == null || externalKey.isBlank()) {
+                return 0;
+            }
+            return externalKey.split("\\.").length;
         }
         return path.split(HIERARCHY_DELIMITER).length;
     }
