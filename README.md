@@ -33,6 +33,8 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--dry-run` | いいえ | ドライランモード（実際のRedmine更新なし） |
 | `--log-dir=<path>` | いいえ | ログ出力ディレクトリ（デフォルト: カレントディレクトリ） |
 | `--debug` | いいえ | デバッグログを出力（APIリクエスト/レスポンス等） |
+| `--relink-parent` | いいえ | 親子関係の再計算を強制（削除は実行しない） |
+| `--force-update` | いいえ | 更新スキップを無効化して全件Update |
 
 ### 実行例
 
@@ -53,6 +55,12 @@ java -jar redmineUpster.jar --sync --file=tasks.csv --dry-run
 
 # デバッグログ付き実行
 java -jar redmineUpster.jar --sync --file=tasks.csv --debug
+
+# 親子関係の再計算のみ（削除スキップ）
+java -jar redmineUpster.jar --sync --file=tasks.csv --relink-parent
+
+# 更新スキップを無効化（全件Update）
+java -jar redmineUpster.jar --sync --file=tasks.csv --force-update
 ```
 
 ## 設定ファイル（sync-config.yml）

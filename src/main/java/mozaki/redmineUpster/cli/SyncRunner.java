@@ -44,7 +44,8 @@ public class SyncRunner {
      * @param debug デバッグモードの場合はtrue
      * @return 成功の場合は0、失敗の場合は1
      */
-    public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir, boolean debug) {
+    public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir, boolean debug,
+            boolean relinkOnly, boolean forceUpdate) {
         FileLogger logger = null;
         try {
             // 1. ロガーの初期化
@@ -100,7 +101,7 @@ public class SyncRunner {
 
             // 5. 差分計算（インメモリ）
             logger.info("Calculating diff...");
-            List<DiffItem> items = diffCalculator.calculate(rows, projectConfig, logger);
+            List<DiffItem> items = diffCalculator.calculate(rows, projectConfig, logger, relinkOnly);
             logger.info("Diff items: " + items.size());
 
             long createCount = items.stream().filter(i -> "CREATE".equals(i.action())).count();
@@ -118,7 +119,7 @@ public class SyncRunner {
 
             // 7. 同期実行
             logger.info("Executing sync...");
-            SyncResult result = syncExecutor.execute(items, projectConfig, client, dryRun, logger);
+            SyncResult result = syncExecutor.execute(items, projectConfig, client, dryRun, logger, forceUpdate);
 
             // 8. 結果出力
             logger.info("=== Sync Complete ===");

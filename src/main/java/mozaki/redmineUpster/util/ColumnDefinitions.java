@@ -19,6 +19,7 @@ public final class ColumnDefinitions {
 	public static final String COL_DUE_ACTUAL = "完了実績";
 	public static final String COL_STATUS = "ステータス";
 	public static final String COL_PROGRESS = "進捗率";
+	public static final String COL_DELAY_CATEGORY = "遅延区分";
 
 	public static final List<String> REQUIRED_HEADERS = List.of(
 			COL_ID,
@@ -50,7 +51,8 @@ public final class ColumnDefinitions {
 			COL_ORG,
 			COL_START_ACTUAL,
 			COL_DUE_ACTUAL,
-			COL_OUTPUT);
+			COL_OUTPUT,
+			COL_DELAY_CATEGORY);
 
 	private ColumnDefinitions() {
 	}

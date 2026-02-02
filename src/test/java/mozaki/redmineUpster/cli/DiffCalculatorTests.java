@@ -57,7 +57,7 @@ class DiffCalculatorTests {
 				"進捗率", "40"
 		);
 
-		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null);
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false);
 
 		DiffItem item = items.stream()
 				.filter(diffItem -> "1.2.3.4".equals(diffItem.externalKey()))
@@ -117,7 +117,7 @@ class DiffCalculatorTests {
 				"状態", "進行中"
 		);
 
-		List<DiffItem> items = calculator.calculate(List.of(row1, row2), projectConfig, null);
+		List<DiffItem> items = calculator.calculate(List.of(row1, row2), projectConfig, null, false);
 
 		DiffItem parent = items.stream()
 				.filter(item -> "1.1".equals(item.externalKey()))
@@ -178,9 +178,56 @@ class DiffCalculatorTests {
 				"進捗率", "50"
 		);
 
-		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null);
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false);
 
 		assertThat(items).anyMatch(item -> "9.9".equals(item.externalKey()) && "DELETE".equals(item.action()));
 		assertThat(items).noneMatch(item -> "1.1".equals(item.externalKey()) && "DELETE".equals(item.action()));
+	}
+
+	@Test
+	@DisplayName("relinkモードでは削除を行わない")
+	void calculate_relinkModeSkipsDeletion() {
+		IssueLinkRepository repository = Mockito.mock(IssueLinkRepository.class);
+		when(repository.findByExternalKey(Mockito.anyString())).thenReturn(Optional.empty());
+		IssueLinkEntity link = new IssueLinkEntity("9.9", 200L);
+		link.setProjectId("proj");
+		when(repository.findAll()).thenReturn(List.of(link));
+		DiffCalculator calculator = new DiffCalculator(repository);
+
+		ColumnsConfig columns = new ColumnsConfig();
+		columns.setExternalKeyColumn("WBS_ID");
+		columns.setHierarchy(List.of("レベル1", "レベル2"));
+		columns.setStartDateColumn("開始日");
+		columns.setDueDateColumn("期限");
+		columns.setStatusColumn("状態");
+		columns.setProgressColumn("進捗率");
+
+		StatusConfig statusConfig = new StatusConfig();
+		statusConfig.setEnabled(true);
+
+		SyncConfig syncConfig = new SyncConfig();
+		syncConfig.setColumns(columns);
+		syncConfig.setStatus(statusConfig);
+
+		RedmineConfig redmineConfig = new RedmineConfig();
+		redmineConfig.setProjectId("proj");
+
+		ProjectConfig projectConfig = new ProjectConfig();
+		projectConfig.setSync(syncConfig);
+		projectConfig.setRedmine(redmineConfig);
+
+		Map<String, String> row = Map.of(
+				"WBS_ID", "1.1.1",
+				"レベル1", "A",
+				"レベル2", "B",
+				"開始日", "2026-1-3",
+				"期限", "2026-1-10",
+				"状態", "進行中",
+				"進捗率", "50"
+		);
+
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, true);
+
+		assertThat(items).noneMatch(item -> "DELETE".equals(item.action()));
 	}
 }

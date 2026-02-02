@@ -34,6 +34,8 @@ import lombok.RequiredArgsConstructor;
  *   <li>{@code --dry-run}: ドライランモード（省略時はfalse）</li>
  *   <li>{@code --log-dir}: ログ出力ディレクトリ（省略時はカレントディレクトリ）</li>
  *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
+ *   <li>{@code --relink-parent}: 親子関係の再計算を強制（削除は実行しない）</li>
+ *   <li>{@code --force-update}: 更新スキップを無効化して全件Update</li>
  * </ul>
  */
 @Component
@@ -61,6 +63,8 @@ public class SyncCommand implements CommandLineRunner {
         boolean dryRun = hasArg(args, "--dry-run");
         String logDir = getArgValue(args, "--log-dir");
         boolean debug = hasArg(args, "--debug");
+        boolean relinkOnly = hasArg(args, "--relink-parent");
+        boolean forceUpdate = hasArg(args, "--force-update");
 
         // --fileは必須
         if (filePath == null || filePath.isBlank()) {
@@ -72,7 +76,7 @@ public class SyncCommand implements CommandLineRunner {
         }
 
         // 同期実行
-        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug);
+        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, relinkOnly, forceUpdate);
         System.exit(exitCode);
     }
 
@@ -121,6 +125,8 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --dry-run               Dry run mode (optional)");
         System.out.println("  --log-dir=<path>        Log output directory (optional, defaults to current directory)");
         System.out.println("  --debug                 Debug mode (output detailed logs, optional)");
+        System.out.println("  --relink-parent         Recalculate parent links (skips deletion)");
+        System.out.println("  --force-update          Disable update skipping (force all updates)");
         System.out.println();
         System.out.println("Example:");
         System.out.println("  java -jar redmineUpster.jar --sync --file=input.csv --dry-run");

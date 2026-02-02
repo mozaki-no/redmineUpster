@@ -60,7 +60,8 @@ public class SyncExecutor {
             ProjectConfig projectConfig,
             RedmineClient client,
             boolean dryRun,
-            FileLogger logger) {
+            FileLogger logger,
+            boolean forceUpdate) {
 
         int totalCount = items.size();
         int successCount = 0;
@@ -154,7 +155,8 @@ public class SyncExecutor {
                         continue;
                     }
                     IssueLinkEntity existing = link.get();
-                    if (payloadHash.equals(existing.getPayloadHash())
+                    if (!forceUpdate
+                            && payloadHash.equals(existing.getPayloadHash())
                             && projectId.equals(existing.getProjectId())) {
                         logger.info("skipped update for " + item.externalKey() + " (no changes)");
                         successCount++;

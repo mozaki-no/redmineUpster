@@ -25,6 +25,7 @@ projects:
         着手実績: "15"
         完了実績: "16"
         成果物: "17"
+        遅延区分: "20"
       customFieldDateColumns:
         - "着手実績"
         - "完了実績"
@@ -69,6 +70,7 @@ projects:
           - "着手実績"
           - "完了実績"
           - "成果物"
+          - "遅延区分"
 
   - name: "テスト環境"
     default: false

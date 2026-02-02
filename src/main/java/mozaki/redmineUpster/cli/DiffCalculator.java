@@ -60,7 +60,8 @@ public class DiffCalculator {
     public List<DiffItem> calculate(
             List<Map<String, String>> rows,
             ProjectConfig projectConfig,
-            FileLogger logger) {
+            FileLogger logger,
+            boolean relinkOnly) {
 
         StatusConfig statusConfig = null;
         if (projectConfig.getSync() != null) {
@@ -173,9 +174,11 @@ public class DiffCalculator {
             }
         }
 
-        List<DiffItem> deleteItems = buildDeleteItems(requiredExternalKeys, projectId, logger);
-        if (!deleteItems.isEmpty()) {
-            items.addAll(deleteItems);
+        if (!relinkOnly) {
+            List<DiffItem> deleteItems = buildDeleteItems(requiredExternalKeys, projectId, logger);
+            if (!deleteItems.isEmpty()) {
+                items.addAll(deleteItems);
+            }
         }
 
         return items;
