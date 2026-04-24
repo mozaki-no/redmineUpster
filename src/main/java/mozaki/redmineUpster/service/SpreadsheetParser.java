@@ -142,9 +142,23 @@ public class SpreadsheetParser {
 			lastValues[i] = "";
 		}
 		while ((row = csv.readNext()) != null) {
+			// まず生の正規化値だけで空行か判定する（完全に空行なら前方補完しない）
+			boolean allBlank = true;
+			String[] normalized = new String[headers.size()];
+			for (int i = 0; i < headers.size(); i++) {
+				String v = i < row.length ? normalize(row[i]) : "";
+				normalized[i] = v;
+				if (!v.isBlank()) {
+					allBlank = false;
+				}
+			}
+			if (allBlank) {
+				continue;
+			}
+
 			Map<String, String> values = new LinkedHashMap<>();
 			for (int i = 0; i < headers.size(); i++) {
-				String value = i < row.length ? normalize(row[i]) : "";
+				String value = normalized[i];
 				if (value.isBlank()) {
 					value = lastValues[i];
 				} else {
@@ -189,10 +203,25 @@ public class SpreadsheetParser {
 			if (row == null) {
 				continue;
 			}
-			Map<String, String> values = new LinkedHashMap<>();
+
+			// 先にセルを読み取って正規化し、行全体が空ならスキップする
+			boolean allBlank = true;
+			String[] normalized = new String[headers.size()];
 			for (int i = 0; i < headers.size(); i++) {
 				Cell cell = row.getCell(i);
 				String v = normalize(getCellString(cell));
+				normalized[i] = v;
+				if (!v.isBlank()) {
+					allBlank = false;
+				}
+			}
+			if (allBlank) {
+				continue;
+			}
+
+			Map<String, String> values = new LinkedHashMap<>();
+			for (int i = 0; i < headers.size(); i++) {
+				String v = normalized[i];
 				if (v.isBlank()) {
 					v = lastValues.get(i);
 				} else {
