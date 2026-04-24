@@ -655,14 +655,8 @@ public class DiffCalculator {
         String[] segments = externalKey == null ? new String[0] : externalKey.split("\\.");
         ParentStatus parentStatus = classifyStatus(statusValue, statusConfig);
 
-        int maxLevels;
-        if (rowData.hierarchyValues.size() >= 2) {
-            // 挙動互換: 階層列がある場合は既存の階層長を優先
-            maxLevels = rowData.hierarchyValues.size() - 1;
-        } else {
-            // 階層列がない/少ない場合は WBS セグメント数に基づいて仮想親を作成
-            maxLevels = Math.max(0, segments.length - 1);
-        }
+        // 深い WBS セグメントをカバーするため、階層列と外部キーセグメントの両方を考慮して最大レベルを決定
+        int maxLevels = Math.max(Math.max(0, rowData.hierarchyValues.size() - 1), Math.max(0, segments.length - 1));
 
         for (int levelIndex = 0; levelIndex < maxLevels; levelIndex++) {
             String parentKey = joinSegments(segments, levelIndex + 1);
@@ -676,6 +670,7 @@ public class DiffCalculator {
                 values = rowData.hierarchyValues.subList(0, levelIndex + 1);
                 columns = rowData.hierarchyColumnsUsed.subList(0, levelIndex + 1);
             } else {
+                // 階層名が不足している場合は、親キーを件名に使う（数字のみのWBSでも扱えるようにする）
                 values = List.of(parentKey);
                 columns = List.of();
             }
