@@ -149,7 +149,7 @@ public class DiffCalculator {
                 logger.debug("Action: " + action + " (" + (ACTION_CREATE.equals(action) ? "no existing link" : "existing link found") + ")");
             }
 
-            collectVirtualParents(rowData, existingExternalKeys, virtualParents, status, statusConfig);
+            collectVirtualParents(rowData, existingExternalKeys, virtualParents, status, statusConfig, logger);
         }
 
         if (!virtualParents.isEmpty()) {
@@ -184,6 +184,9 @@ public class DiffCalculator {
                 items.addAll(deleteItems);
             }
         }
+
+        // 最終的に外部キーを数値的自然順でソートして返す（1,2,3,...）
+        items.sort((a, b) -> compareExternalKeys(a.externalKey(), b.externalKey()));
 
         return items;
     }
@@ -685,18 +688,33 @@ public class DiffCalculator {
         return 6;
     }
 
-    private void collectVirtualParents(RowData rowData, Set<String> existingExternalKeys,
-            Map<String, ParentAggregate> virtualParents, String statusValue, StatusConfig statusConfig) {
-        String externalKey = rowData.externalKey;
-        String[] segments = externalKey == null ? new String[0] : externalKey.split("\\.");
+        private void collectVirtualParents(RowData rowData, Set<String> existingExternalKeys,
+            Map<String, ParentAggregate> virtualParents, String statusValue, StatusConfig statusConfig, FileLogger logger) {
+        String externalKey = rowData.externalKey == null ? "" : rowData.externalKey.trim();
+        String[] rawSegments = externalKey.isEmpty() ? new String[0] : externalKey.split("\\.");
+        // 空文字や空白のみのセグメントを除去して正規化
+        List<String> segList = new ArrayList<>();
+        for (String s : rawSegments) {
+            if (s == null) continue;
+            String t = s.trim();
+            if (!t.isEmpty()) segList.add(t);
+        }
+        String[] segments = segList.toArray(new String[0]);
         ParentStatus parentStatus = classifyStatus(statusValue, statusConfig);
 
         // 深い WBS セグメントをカバーするため、階層列と外部キーセグメントの両方を考慮して最大レベルを決定
-        int maxLevels = Math.max(Math.max(0, rowData.hierarchyValues.size() - 1), Math.max(0, segments.length - 1));
+        int hierarchyLevels = Math.max(0, Math.max(0, rowData.hierarchyValues.size() - 1));
+        int segmentLevels = Math.max(0, Math.max(0, segments.length - 1));
+        int maxLevels = Math.max(hierarchyLevels, segmentLevels);
 
         for (int levelIndex = 0; levelIndex < maxLevels; levelIndex++) {
-            String parentKey = joinSegments(segments, levelIndex + 1);
-            if (parentKey == null || existingExternalKeys.contains(parentKey)) {
+            String parentKey = segments.length > 0 ? joinSegments(segments, levelIndex + 1) : null;
+            if ((parentKey == null || parentKey.isBlank()) && rowData.hierarchyValues.size() < levelIndex + 1) {
+                if (logger != null) logger.debug("Skipping generation: no parentKey and no hierarchy value for level=" + levelIndex + " externalKey=" + externalKey);
+                continue;
+            }
+            if (parentKey != null && existingExternalKeys.contains(parentKey)) {
+                if (logger != null) logger.debug("Skip virtual parent generation because parent exists in CSV: " + parentKey);
                 continue;
             }
 
@@ -707,17 +725,21 @@ public class DiffCalculator {
                 columns = rowData.hierarchyColumnsUsed.subList(0, levelIndex + 1);
             } else {
                 // 階層名が不足している場合は、親キーを件名に使う（数字のみのWBSでも扱えるようにする）
-                values = List.of(parentKey);
+                values = parentKey == null ? List.of() : List.of(parentKey);
                 columns = List.of();
             }
 
             String levelPath = String.join(" > ", values);
-            String subject = values.isEmpty() ? parentKey : values.get(values.size() - 1);
-            String parentParentKey = levelIndex > 0 ? joinSegments(segments, levelIndex) : null;
+            String subject = values.isEmpty() ? (parentKey == null ? "" : parentKey) : values.get(values.size() - 1);
+            String parentParentKey = (segments.length > 0 && levelIndex > 0) ? joinSegments(segments, levelIndex) : null;
+            String useParentKey = parentKey == null || parentKey.isBlank() ? subject : parentKey;
             ParentAggregate aggregate = virtualParents.computeIfAbsent(
-                    parentKey,
+                    useParentKey,
                     key -> new ParentAggregate(key, levelPath, subject, parentParentKey, columns, values));
             aggregate.addChild(rowData, parentStatus);
+            if (logger != null) {
+                logger.debug("Added/updated virtual parent: " + useParentKey + " levelPath=" + levelPath + " subject=" + subject);
+            }
         }
     }
 
@@ -894,6 +916,8 @@ public class DiffCalculator {
                     Map.of()
             ));
         }
+        // 数値的に自然順で返す
+        deletions.sort((a, b) -> compareExternalKeys(a.externalKey(), b.externalKey()));
         return deletions;
     }
 }
