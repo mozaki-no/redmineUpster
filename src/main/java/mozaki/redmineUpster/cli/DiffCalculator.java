@@ -651,24 +651,37 @@ public class DiffCalculator {
 
     private void collectVirtualParents(RowData rowData, Set<String> existingExternalKeys,
             Map<String, ParentAggregate> virtualParents, String statusValue, StatusConfig statusConfig) {
-        if (rowData.hierarchyValues.size() < 2) {
-            return;
-        }
         String externalKey = rowData.externalKey;
         String[] segments = externalKey == null ? new String[0] : externalKey.split("\\.");
-        if (segments.length < rowData.hierarchyValues.size()) {
-            return;
-        }
         ParentStatus parentStatus = classifyStatus(statusValue, statusConfig);
-        for (int levelIndex = 0; levelIndex < rowData.hierarchyValues.size() - 1; levelIndex++) {
+
+        int maxLevels;
+        if (rowData.hierarchyValues.size() >= 2) {
+            // 挙動互換: 階層列がある場合は既存の階層長を優先
+            maxLevels = rowData.hierarchyValues.size() - 1;
+        } else {
+            // 階層列がない/少ない場合は WBS セグメント数に基づいて仮想親を作成
+            maxLevels = Math.max(0, segments.length - 1);
+        }
+
+        for (int levelIndex = 0; levelIndex < maxLevels; levelIndex++) {
             String parentKey = joinSegments(segments, levelIndex + 1);
             if (parentKey == null || existingExternalKeys.contains(parentKey)) {
                 continue;
             }
-            List<String> values = rowData.hierarchyValues.subList(0, levelIndex + 1);
-            List<String> columns = rowData.hierarchyColumnsUsed.subList(0, levelIndex + 1);
+
+            List<String> values;
+            List<String> columns;
+            if (rowData.hierarchyValues.size() >= levelIndex + 1) {
+                values = rowData.hierarchyValues.subList(0, levelIndex + 1);
+                columns = rowData.hierarchyColumnsUsed.subList(0, levelIndex + 1);
+            } else {
+                values = List.of(parentKey);
+                columns = List.of();
+            }
+
             String levelPath = String.join(" > ", values);
-            String subject = values.get(values.size() - 1);
+            String subject = values.isEmpty() ? parentKey : values.get(values.size() - 1);
             String parentParentKey = levelIndex > 0 ? joinSegments(segments, levelIndex) : null;
             ParentAggregate aggregate = virtualParents.computeIfAbsent(
                     parentKey,

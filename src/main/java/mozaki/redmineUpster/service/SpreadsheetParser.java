@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
 
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DateUtil;
@@ -135,10 +136,20 @@ public class SpreadsheetParser {
 		}
 		List<Map<String, String>> rows = new ArrayList<>();
 		String[] row;
+		// 前行の値で空セルを埋める（ExcelのマージセルやCSVの省略行に対応）
+		String[] lastValues = new String[headers.size()];
+		for (int i = 0; i < lastValues.length; i++) {
+			lastValues[i] = "";
+		}
 		while ((row = csv.readNext()) != null) {
 			Map<String, String> values = new LinkedHashMap<>();
 			for (int i = 0; i < headers.size(); i++) {
 				String value = i < row.length ? normalize(row[i]) : "";
+				if (value.isBlank()) {
+					value = lastValues[i];
+				} else {
+					lastValues[i] = value;
+				}
 				values.put(headers.get(i), value);
 			}
 			if (!isEmptyRow(values)) {
@@ -170,7 +181,9 @@ public class SpreadsheetParser {
 		for (int i = 0; i < headerRow.getLastCellNum(); i++) {
 			headers.add(normalize(getCellString(headerRow.getCell(i))));
 		}
+		// 前行の値で空セルを埋める（マージセル対応）
 		List<Map<String, String>> rows = new ArrayList<>();
+		List<String> lastValues = new ArrayList<>(Collections.nCopies(headers.size(), ""));
 		for (int rowIndex = headerRow.getRowNum() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
 			Row row = sheet.getRow(rowIndex);
 			if (row == null) {
@@ -179,7 +192,13 @@ public class SpreadsheetParser {
 			Map<String, String> values = new LinkedHashMap<>();
 			for (int i = 0; i < headers.size(); i++) {
 				Cell cell = row.getCell(i);
-				values.put(headers.get(i), normalize(getCellString(cell)));
+				String v = normalize(getCellString(cell));
+				if (v.isBlank()) {
+					v = lastValues.get(i);
+				} else {
+					lastValues.set(i, v);
+				}
+				values.put(headers.get(i), v);
 			}
 			if (!isEmptyRow(values)) {
 				rows.add(values);
