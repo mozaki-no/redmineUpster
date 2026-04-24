@@ -153,7 +153,11 @@ public class DiffCalculator {
         }
 
         if (!virtualParents.isEmpty()) {
-            for (ParentAggregate parent : virtualParents.values()) {
+            // 仮想親は外部キーの数値的順序でソートして出力する（1,2,3,...）
+            List<String> keys = new ArrayList<>(virtualParents.keySet());
+            keys.sort(DiffCalculator::compareExternalKeys);
+            for (String key : keys) {
+                ParentAggregate parent = virtualParents.get(key);
                 String action = resolveAction(parent.externalKey, logger);
                 Integer trackerId = getVirtualParentTrackerId(projectConfig);
                 Map<String, Object> payload = buildParentPayload(parent, trackerId, externalKeyColumn);
@@ -182,6 +186,38 @@ public class DiffCalculator {
         }
 
         return items;
+    }
+
+    private static int compareExternalKeys(String a, String b) {
+        if (a == null) return b == null ? 0 : -1;
+        if (b == null) return 1;
+        String[] sa = a.split("\\.");
+        String[] sb = b.split("\\.");
+        int n = Math.max(sa.length, sb.length);
+        for (int i = 0; i < n; i++) {
+            if (i >= sa.length) return -1;
+            if (i >= sb.length) return 1;
+            String pa = sa[i];
+            String pb = sb[i];
+            Integer ia = parseIntOrNull(pa);
+            Integer ib = parseIntOrNull(pb);
+            if (ia != null && ib != null) {
+                int cmp = Integer.compare(ia, ib);
+                if (cmp != 0) return cmp;
+            } else {
+                int cmp = pa.compareTo(pb);
+                if (cmp != 0) return cmp;
+            }
+        }
+        return 0;
+    }
+
+    private static Integer parseIntOrNull(String s) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     /**
