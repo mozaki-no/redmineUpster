@@ -128,6 +128,14 @@ public class DiffCalculator {
             if (parentKey == null || parentKey.isBlank()) {
                 parentKey = inferParentKeyFromExternalKey(rowData.externalKey);
             }
+            if ((parentKey == null || parentKey.isBlank()) && logger != null) {
+                String segs = rowData.externalKey == null ? "" : String.join(",", rowData.externalKey.split("\\."));
+                logger.debug("ParentKey null for externalKey=" + rowData.externalKey
+                        + " parentPath=[" + rowData.parentPath + "] levelPath=[" + rowData.levelPath + "]"
+                        + " hierarchyValues=" + rowData.hierarchyValues
+                        + " hierarchyCols=" + rowData.hierarchyColumnsUsed
+                        + " segments=" + segs);
+            }
             String action = resolveAction(rowData.externalKey, logger);
             String status = resolveStatus(rowData, projectConfig);
             Map<String, Object> payload = buildPayload(rowData, customFieldMap, customFieldColumns);
