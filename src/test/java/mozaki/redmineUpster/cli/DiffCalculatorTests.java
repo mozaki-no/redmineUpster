@@ -57,7 +57,7 @@ class DiffCalculatorTests {
 				"進捗率", "40"
 		);
 
-		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false);
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false, false);
 
 		DiffItem item = items.stream()
 				.filter(diffItem -> "1.2.3.4".equals(diffItem.externalKey()))
@@ -117,7 +117,7 @@ class DiffCalculatorTests {
 				"状態", "進行中"
 		);
 
-		List<DiffItem> items = calculator.calculate(List.of(row1, row2), projectConfig, null, false);
+		List<DiffItem> items = calculator.calculate(List.of(row1, row2), projectConfig, null, false, false);
 
 		DiffItem parent = items.stream()
 				.filter(item -> "1.1".equals(item.externalKey()))
@@ -178,7 +178,7 @@ class DiffCalculatorTests {
 				"進捗率", "50"
 		);
 
-		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false);
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false, false);
 
 		assertThat(items).anyMatch(item -> "9.9".equals(item.externalKey()) && "DELETE".equals(item.action()));
 		assertThat(items).noneMatch(item -> "1.1".equals(item.externalKey()) && "DELETE".equals(item.action()));
@@ -226,7 +226,7 @@ class DiffCalculatorTests {
 				"進捗率", "50"
 		);
 
-		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, true);
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, true, false);
 
 		assertThat(items).noneMatch(item -> "DELETE".equals(item.action()));
 	}
@@ -261,7 +261,7 @@ class DiffCalculatorTests {
 				"担当", ""
 		);
 
-		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false);
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false, false);
 
 		DiffItem item = items.stream()
 				.filter(diffItem -> "1.2.1.4.2.2.12".equals(diffItem.externalKey()))
@@ -271,5 +271,49 @@ class DiffCalculatorTests {
 		assertThat(item.parentKey()).isEqualTo("1.2.1.4.2.2");
 		assertThat(item.subject()).isEqualTo("(サービス（見積）)初版作成");
 		assertThat(item.levelPath()).isEqualTo("新eD拡張 > 業務共通(WF、会計連携) > ビジネスルール(WF一覧、仕訳パターン) > 会計連携 > 仕訳整理/パターン作成・ビジネスルール作成 > (サービス（見積）)初版作成");
+	}
+
+	@Test
+	@DisplayName("resetモードでは既存リンクを全削除し対象行をCREATEに固定する")
+	void calculate_resetSyncDeletesAllExistingAndRecreatesRows() {
+		IssueLinkRepository repository = Mockito.mock(IssueLinkRepository.class);
+		IssueLinkEntity link1 = new IssueLinkEntity("1.1", 100L);
+		link1.setProjectId("proj");
+		IssueLinkEntity link2 = new IssueLinkEntity("9.9", 200L);
+		link2.setProjectId("proj");
+		when(repository.findAll()).thenReturn(List.of(link1, link2));
+		when(repository.findByExternalKey(Mockito.anyString())).thenReturn(Optional.of(link1));
+		DiffCalculator calculator = new DiffCalculator(repository);
+
+		ColumnsConfig columns = new ColumnsConfig();
+		columns.setExternalKeyColumn("WBS_ID");
+		columns.setHierarchy(List.of("レベル1", "レベル2"));
+
+		SyncConfig syncConfig = new SyncConfig();
+		syncConfig.setColumns(columns);
+
+		RedmineConfig redmineConfig = new RedmineConfig();
+		redmineConfig.setProjectId("proj");
+
+		ProjectConfig projectConfig = new ProjectConfig();
+		projectConfig.setSync(syncConfig);
+		projectConfig.setRedmine(redmineConfig);
+
+		Map<String, String> row = Map.of(
+				"WBS_ID", "1.1",
+				"レベル1", "親",
+				"レベル2", "子"
+		);
+
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false, true);
+
+		assertThat(items)
+				.filteredOn(item -> "1.1".equals(item.externalKey()))
+				.extracting(DiffItem::action)
+				.containsExactlyInAnyOrder("CREATE", "DELETE");
+		assertThat(items)
+				.filteredOn(item -> "9.9".equals(item.externalKey()))
+				.extracting(DiffItem::action)
+				.containsExactly("DELETE");
 	}
 }

@@ -36,6 +36,7 @@ import lombok.RequiredArgsConstructor;
  *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
  *   <li>{@code --relink-parent}: 親子関係の再計算を強制（削除は実行しない）</li>
  *   <li>{@code --force-update}: 更新スキップを無効化して全件Update</li>
+ *   <li>{@code --reset-sync}: 既存チケットを全削除してからCSV/Excelを全件再作成</li>
  * </ul>
  */
 @Component
@@ -65,6 +66,7 @@ public class SyncCommand implements CommandLineRunner {
         boolean debug = hasArg(args, "--debug");
         boolean relinkOnly = hasArg(args, "--relink-parent");
         boolean forceUpdate = hasArg(args, "--force-update");
+        boolean resetSync = hasArg(args, "--reset-sync");
 
         // --fileは必須
         if (filePath == null || filePath.isBlank()) {
@@ -76,7 +78,8 @@ public class SyncCommand implements CommandLineRunner {
         }
 
         // 同期実行
-        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, relinkOnly, forceUpdate);
+        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, relinkOnly, forceUpdate,
+            resetSync);
         System.exit(exitCode);
     }
 
@@ -127,6 +130,7 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --debug                 Debug mode (output detailed logs, optional)");
         System.out.println("  --relink-parent         Recalculate parent links (skips deletion)");
         System.out.println("  --force-update          Disable update skipping (force all updates)");
+        System.out.println("  --reset-sync           Delete existing issues first, then recreate all rows");
         System.out.println();
         System.out.println("Example:");
         System.out.println("  java -jar redmineUpster.jar --sync --file=input.csv --dry-run");

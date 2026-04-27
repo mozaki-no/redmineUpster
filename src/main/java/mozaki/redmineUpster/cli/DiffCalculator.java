@@ -62,7 +62,8 @@ public class DiffCalculator {
             List<Map<String, String>> rows,
             ProjectConfig projectConfig,
             FileLogger logger,
-            boolean relinkOnly) {
+            boolean relinkOnly,
+            boolean resetSync) {
 
         StatusConfig statusConfig = null;
         if (projectConfig.getSync() != null) {
@@ -138,7 +139,7 @@ public class DiffCalculator {
                         + " hierarchyCols=" + rowData.hierarchyColumnsUsed
                         + " segments=" + segs);
             }
-            String action = resolveAction(rowData.externalKey, logger);
+            String action = resetSync ? ACTION_CREATE : resolveAction(rowData.externalKey, logger);
             String status = resolveStatus(rowData, projectConfig);
             Map<String, Object> payload = buildPayload(rowData, customFieldMap, customFieldColumns);
 
@@ -168,7 +169,7 @@ public class DiffCalculator {
             keys.sort(DiffCalculator::compareExternalKeys);
             for (String key : keys) {
                 ParentAggregate parent = virtualParents.get(key);
-                String action = resolveAction(parent.externalKey, logger);
+                String action = resetSync ? ACTION_CREATE : resolveAction(parent.externalKey, logger);
                 Integer trackerId = getVirtualParentTrackerId(projectConfig);
                 Map<String, Object> payload = buildParentPayload(parent, trackerId, externalKeyColumn);
                 payload.put("virtualParent", true);
@@ -189,7 +190,9 @@ public class DiffCalculator {
         }
 
         if (!relinkOnly) {
-            List<DiffItem> deleteItems = buildDeleteItems(requiredExternalKeys, projectId, logger);
+            List<DiffItem> deleteItems = resetSync
+                    ? buildResetDeleteItems(projectId, logger)
+                    : buildDeleteItems(requiredExternalKeys, projectId, logger);
             if (!deleteItems.isEmpty()) {
                 items.addAll(deleteItems);
             }
@@ -972,6 +975,37 @@ public class DiffCalculator {
             ));
         }
         // 数値的に自然順で返す
+        deletions.sort((a, b) -> compareExternalKeys(a.externalKey(), b.externalKey()));
+        return deletions;
+    }
+
+    private List<DiffItem> buildResetDeleteItems(String projectId, FileLogger logger) {
+        List<DiffItem> deletions = new ArrayList<>();
+        for (IssueLinkEntity link : issueLinkRepository.findAll()) {
+            String externalKey = link.getExternalKey();
+            if (externalKey == null || externalKey.isBlank()) {
+                continue;
+            }
+            if (projectId != null && link.getProjectId() != null
+                    && !projectId.equals(link.getProjectId())) {
+                continue;
+            }
+            if (link.getProjectId() == null || link.getProjectId().isBlank()) {
+                if (logger != null) {
+                    logger.debug("Skip reset delete (missing project_id) for external_key=" + externalKey);
+                }
+                continue;
+            }
+            deletions.add(new DiffItem(
+                    externalKey,
+                    "",
+                    null,
+                    "",
+                    ACTION_DELETE,
+                    null,
+                    Map.of()
+            ));
+        }
         deletions.sort((a, b) -> compareExternalKeys(a.externalKey(), b.externalKey()));
         return deletions;
     }

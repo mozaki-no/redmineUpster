@@ -35,6 +35,7 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--debug` | いいえ | デバッグログを出力（APIリクエスト/レスポンス等） |
 | `--relink-parent` | いいえ | 親子関係の再計算を強制（削除は実行しない） |
 | `--force-update` | いいえ | 更新スキップを無効化して全件Update |
+| `--reset-sync` | いいえ | 既存チケットを全削除してからCSV/Excelの内容を全件再作成 |
 
 ### 実行例
 
@@ -61,6 +62,9 @@ java -jar redmineUpster.jar --sync --file=tasks.csv --relink-parent
 
 # 更新スキップを無効化（全件Update）
 java -jar redmineUpster.jar --sync --file=tasks.csv --force-update
+
+# 既存チケットを全削除してから再投入
+java -jar redmineUpster.jar --sync --file=tasks.csv --reset-sync
 ```
 
 ## 設定ファイル（sync-config.yml）
