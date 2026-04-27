@@ -45,3 +45,4 @@ sync-config.yml
 .env.test
 !.env.example
 【バックオフィス領域_J0】WBS.xlsx
+issues.csv

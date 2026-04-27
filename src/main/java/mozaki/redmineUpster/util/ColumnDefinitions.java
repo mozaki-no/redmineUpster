@@ -20,6 +20,21 @@ public final class ColumnDefinitions {
 	public static final String COL_STATUS = "ステータス";
 	public static final String COL_PROGRESS = "進捗率";
 	public static final String COL_DELAY_CATEGORY = "遅延区分";
+	public static final String COL_TASK_NO = "タスクNo";
+
+	public static final List<String> LEGACY_HIERARCHY_COLUMNS = List.of(
+			"Lv.01",
+			"Lv.02",
+			"Lv.03",
+			"Lv.04",
+			"Lv.05",
+			"Lv.06");
+
+	public static final List<String> EXTERNAL_KEY_CANDIDATES = List.of(
+			COL_ID,
+			COL_TASK_NO,
+			"WBS_ID",
+			"#");
 
 	public static final List<String> REQUIRED_HEADERS = List.of(
 			COL_ID,

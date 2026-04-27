@@ -230,4 +230,46 @@ class DiffCalculatorTests {
 
 		assertThat(items).noneMatch(item -> "DELETE".equals(item.action()));
 	}
+
+	@Test
+	@DisplayName("既定設定でも issues.csv 形式の列名から外部キーと階層を自動判定する")
+	void calculate_detectsLegacyIssueCsvColumns() {
+		IssueLinkRepository repository = Mockito.mock(IssueLinkRepository.class);
+		when(repository.findByExternalKey(Mockito.anyString())).thenReturn(Optional.empty());
+		when(repository.findAll()).thenReturn(List.of());
+		DiffCalculator calculator = new DiffCalculator(repository);
+
+		StatusConfig statusConfig = new StatusConfig();
+		statusConfig.setEnabled(true);
+
+		SyncConfig syncConfig = new SyncConfig();
+		syncConfig.setStatus(statusConfig);
+
+		ProjectConfig projectConfig = new ProjectConfig();
+		projectConfig.setSync(syncConfig);
+
+		Map<String, String> row = Map.of(
+				"#", "2374",
+				"Lv.01", "新eD拡張",
+				"Lv.02", "業務共通(WF、会計連携)",
+				"Lv.03", "ビジネスルール(WF一覧、仕訳パターン)",
+				"Lv.04", "会計連携",
+				"Lv.05", "仕訳整理/パターン作成・ビジネスルール作成",
+				"Lv.06", "(サービス（見積）)初版作成",
+				"タスクNo", "1.2.1.4.2.2.12",
+				"社/組織", "NTD",
+				"担当", ""
+		);
+
+		List<DiffItem> items = calculator.calculate(List.of(row), projectConfig, null, false);
+
+		DiffItem item = items.stream()
+				.filter(diffItem -> "1.2.1.4.2.2.12".equals(diffItem.externalKey()))
+				.findFirst()
+				.orElseThrow();
+
+		assertThat(item.parentKey()).isEqualTo("1.2.1.4.2.2");
+		assertThat(item.subject()).isEqualTo("(サービス（見積）)初版作成");
+		assertThat(item.levelPath()).isEqualTo("新eD拡張 > 業務共通(WF、会計連携) > ビジネスルール(WF一覧、仕訳パターン) > 会計連携 > 仕訳整理/パターン作成・ビジネスルール作成 > (サービス（見積）)初版作成");
+	}
 }

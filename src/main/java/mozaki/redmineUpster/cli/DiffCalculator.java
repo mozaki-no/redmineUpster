@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Set;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
@@ -72,9 +73,10 @@ public class DiffCalculator {
             projectId = projectConfig.getRedmine().getProjectId();
         }
 
-        List<String> hierarchyColumns = getHierarchyColumns(projectConfig);
+        Set<String> availableColumns = rows.isEmpty() ? Set.of() : rows.get(0).keySet();
+        List<String> hierarchyColumns = getHierarchyColumns(projectConfig, availableColumns);
         List<String> customFieldColumns = getCustomFieldColumns(projectConfig);
-        String externalKeyColumn = getExternalKeyColumn(projectConfig);
+        String externalKeyColumn = getExternalKeyColumn(projectConfig, availableColumns);
         String startDateColumn = getStartDateColumn(projectConfig);
         String dueDateColumn = getDueDateColumn(projectConfig);
         String statusColumn = getStatusColumn(projectConfig);
@@ -270,12 +272,19 @@ public class DiffCalculator {
      * @param projectConfig プロジェクト設定
      * @return 階層列のリスト
      */
-    private List<String> getHierarchyColumns(ProjectConfig projectConfig) {
+    private List<String> getHierarchyColumns(ProjectConfig projectConfig, Set<String> availableColumns) {
         if (projectConfig.getSync() != null && projectConfig.getSync().getColumns() != null) {
             ColumnsConfig columns = projectConfig.getSync().getColumns();
             if (columns.getHierarchy() != null && !columns.getHierarchy().isEmpty()) {
-                return columns.getHierarchy();
+                List<String> configured = columns.getHierarchy();
+                if (hasAnyColumn(availableColumns, configured)) {
+                    return configured;
+                }
             }
+        }
+        List<String> detected = detectHierarchyColumns(availableColumns);
+        if (!detected.isEmpty()) {
+            return detected;
         }
         return ColumnDefinitions.HIERARCHY_COLUMNS;
     }
@@ -304,15 +313,53 @@ public class DiffCalculator {
      * @param projectConfig プロジェクト設定
      * @return 外部キー列名
      */
-    private String getExternalKeyColumn(ProjectConfig projectConfig) {
+    private String getExternalKeyColumn(ProjectConfig projectConfig, Set<String> availableColumns) {
         if (projectConfig != null && projectConfig.getSync() != null
                 && projectConfig.getSync().getColumns() != null) {
             String col = projectConfig.getSync().getColumns().getExternalKeyColumn();
-            if (col != null && !col.isBlank()) {
+            if (col != null && !col.isBlank() && (availableColumns.isEmpty() || availableColumns.contains(col))) {
                 return col;
             }
         }
+        for (String candidate : ColumnDefinitions.EXTERNAL_KEY_CANDIDATES) {
+            if (availableColumns.contains(candidate)) {
+                return candidate;
+            }
+        }
         return ColumnDefinitions.COL_ID;
+    }
+
+    private boolean hasAnyColumn(Set<String> availableColumns, List<String> candidateColumns) {
+        if (availableColumns == null || availableColumns.isEmpty()) {
+            return false;
+        }
+        for (String candidate : candidateColumns) {
+            if (availableColumns.contains(candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<String> detectHierarchyColumns(Set<String> availableColumns) {
+        if (availableColumns == null || availableColumns.isEmpty()) {
+            return List.of();
+        }
+
+        List<String> defaultMatches = ColumnDefinitions.HIERARCHY_COLUMNS.stream()
+                .filter(availableColumns::contains)
+                .toList();
+        List<String> legacyMatches = ColumnDefinitions.LEGACY_HIERARCHY_COLUMNS.stream()
+                .filter(availableColumns::contains)
+                .toList();
+
+        if (legacyMatches.size() > defaultMatches.size()) {
+            return legacyMatches;
+        }
+        if (!defaultMatches.isEmpty()) {
+            return ColumnDefinitions.HIERARCHY_COLUMNS;
+        }
+        return legacyMatches;
     }
 
     /**
