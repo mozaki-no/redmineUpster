@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Collections;
+import java.util.Set;
 
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.DateUtil;
@@ -66,15 +67,28 @@ public class SpreadsheetParser {
 	 * @throws IOException 解析に失敗した場合
 	 */
 	public ParsedSheet parseFromPath(String filePath) throws IOException {
+		return parseFromPath(filePath, Set.of());
+	}
+
+	/**
+	 * ファイルパスからスプレッドシートを解析します。
+	 * fillDownColumnsに指定された列のみ、前行の値で空セルを補完します。
+	 *
+	 * @param filePath ファイルパス
+	 * @param fillDownColumns 前行値で補完する列名のセット（空の場合は補完しない）
+	 * @return 解析結果
+	 * @throws IOException 解析に失敗した場合
+	 */
+	public ParsedSheet parseFromPath(String filePath, Set<String> fillDownColumns) throws IOException {
 		Path path = Paths.get(filePath);
 		if (!Files.exists(path)) {
 			throw new IOException("File not found: " + filePath);
 		}
 		String filename = path.getFileName().toString();
 		if (filename.toLowerCase().endsWith(".csv")) {
-			return parseCsvFromPath(path);
+			return parseCsvFromPath(path, fillDownColumns);
 		}
-		return parseExcelFromPath(path);
+		return parseExcelFromPath(path, fillDownColumns);
 	}
 
 	/**
@@ -84,10 +98,10 @@ public class SpreadsheetParser {
 	 * @return 解析結果
 	 * @throws IOException 解析に失敗した場合
 	 */
-	private ParsedSheet parseCsvFromPath(Path path) throws IOException {
+	private ParsedSheet parseCsvFromPath(Path path, Set<String> fillDownColumns) throws IOException {
 		try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8);
 				CSVReader csv = new CSVReader(reader)) {
-			return parseCsvInternal(csv);
+			return parseCsvInternal(csv, fillDownColumns);
 		} catch (CsvValidationException e) {
 			throw new IOException("Failed to parse CSV", e);
 		}
@@ -100,10 +114,10 @@ public class SpreadsheetParser {
 	 * @return 解析結果
 	 * @throws IOException 解析に失敗した場合
 	 */
-	private ParsedSheet parseExcelFromPath(Path path) throws IOException {
+	private ParsedSheet parseExcelFromPath(Path path, Set<String> fillDownColumns) throws IOException {
 		try (InputStream is = new FileInputStream(path.toFile());
 				Workbook workbook = WorkbookFactory.create(is)) {
-			return parseExcelInternal(workbook);
+			return parseExcelInternal(workbook, fillDownColumns);
 		}
 	}
 
@@ -111,7 +125,7 @@ public class SpreadsheetParser {
 		try (BufferedReader reader = new BufferedReader(
 				new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8));
 				CSVReader csv = new CSVReader(reader)) {
-			return parseCsvInternal(csv);
+			return parseCsvInternal(csv, Set.of());
 		} catch (CsvValidationException e) {
 			throw new IOException("Failed to parse CSV", e);
 		}
@@ -125,7 +139,7 @@ public class SpreadsheetParser {
 	 * @throws IOException 解析に失敗した場合
 	 * @throws CsvValidationException CSV検証に失敗した場合
 	 */
-	private ParsedSheet parseCsvInternal(CSVReader csv) throws IOException, CsvValidationException {
+	private ParsedSheet parseCsvInternal(CSVReader csv, Set<String> fillDownColumns) throws IOException, CsvValidationException {
 		String[] headerRow = csv.readNext();
 		if (headerRow == null) {
 			return new ParsedSheet(List.of(), List.of());
@@ -136,7 +150,7 @@ public class SpreadsheetParser {
 		}
 		List<Map<String, String>> rows = new ArrayList<>();
 		String[] row;
-		// 前行の値で空セルを埋める（ExcelのマージセルやCSVの省略行に対応）
+		// 前行の値で空セルを埋める（fillDownColumnsに指定された列のみ）
 		String[] lastValues = new String[headers.size()];
 		for (int i = 0; i < lastValues.length; i++) {
 			lastValues[i] = "";
@@ -159,9 +173,10 @@ public class SpreadsheetParser {
 			Map<String, String> values = new LinkedHashMap<>();
 			for (int i = 0; i < headers.size(); i++) {
 				String value = normalized[i];
-				if (value.isBlank()) {
+				if (value.isBlank() && fillDownColumns.contains(headers.get(i))) {
 					value = lastValues[i];
-				} else {
+				}
+				if (!value.isBlank()) {
 					lastValues[i] = value;
 				}
 				values.put(headers.get(i), value);
@@ -175,7 +190,7 @@ public class SpreadsheetParser {
 
 	private ParsedSheet parseExcel(MultipartFile file) throws IOException {
 		try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
-			return parseExcelInternal(workbook);
+			return parseExcelInternal(workbook, Set.of());
 		}
 	}
 
@@ -185,7 +200,7 @@ public class SpreadsheetParser {
 	 * @param workbook Workbook
 	 * @return 解析結果
 	 */
-	private ParsedSheet parseExcelInternal(Workbook workbook) {
+	private ParsedSheet parseExcelInternal(Workbook workbook, Set<String> fillDownColumns) {
 		Sheet sheet = workbook.getSheetAt(0);
 		Row headerRow = sheet.getRow(sheet.getFirstRowNum());
 		if (headerRow == null) {
@@ -195,7 +210,7 @@ public class SpreadsheetParser {
 		for (int i = 0; i < headerRow.getLastCellNum(); i++) {
 			headers.add(normalize(getCellString(headerRow.getCell(i))));
 		}
-		// 前行の値で空セルを埋める（マージセル対応）
+		// 前行の値で空セルを埋める（fillDownColumnsに指定された列のみ）
 		List<Map<String, String>> rows = new ArrayList<>();
 		List<String> lastValues = new ArrayList<>(Collections.nCopies(headers.size(), ""));
 		for (int rowIndex = headerRow.getRowNum() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
@@ -222,9 +237,10 @@ public class SpreadsheetParser {
 			Map<String, String> values = new LinkedHashMap<>();
 			for (int i = 0; i < headers.size(); i++) {
 				String v = normalized[i];
-				if (v.isBlank()) {
+				if (v.isBlank() && fillDownColumns.contains(headers.get(i))) {
 					v = lastValues.get(i);
-				} else {
+				}
+				if (!v.isBlank()) {
 					lastValues.set(i, v);
 				}
 				values.put(headers.get(i), v);

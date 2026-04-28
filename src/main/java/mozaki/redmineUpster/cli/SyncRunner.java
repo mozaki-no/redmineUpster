@@ -1,9 +1,11 @@
 package mozaki.redmineUpster.cli;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.stereotype.Component;
 
@@ -78,9 +80,11 @@ public class SyncRunner {
                 logger.debug("Project ID: " + projectConfig.getRedmine().getProjectId());
             }
 
-            // 4. CSV/Excel解析
+            // 4. CSV/Excel解析（階層列のみfill-down補完する）
+            Set<String> fillDownColumns = resolveFillDownColumns(projectConfig);
             logger.info("Parsing file: " + filePath);
-            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath);
+            logger.debug("Fill-down columns: " + fillDownColumns);
+            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath, fillDownColumns);
             List<Map<String, String>> rows = parsed.rows();
             logger.info("Parsed " + rows.size() + " rows");
 
@@ -187,5 +191,19 @@ public class SyncRunner {
         }
 
         return null;
+    }
+
+    /**
+     * fill-down（前行値補完）対象の列名セットを返します。
+     * 階層列のみが対象です。
+     */
+    private Set<String> resolveFillDownColumns(ProjectConfig projectConfig) {
+        if (projectConfig.getSync() != null && projectConfig.getSync().getColumns() != null) {
+            List<String> hierarchy = projectConfig.getSync().getColumns().getHierarchy();
+            if (hierarchy != null && !hierarchy.isEmpty()) {
+                return new HashSet<>(hierarchy);
+            }
+        }
+        return new HashSet<>(mozaki.redmineUpster.util.ColumnDefinitions.HIERARCHY_COLUMNS);
     }
 }
