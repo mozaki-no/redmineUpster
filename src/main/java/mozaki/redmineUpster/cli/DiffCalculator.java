@@ -529,9 +529,7 @@ public class DiffCalculator {
                 continue;
             }
             String value = value(rowData.row, column);
-            if (!value.isBlank()) {
-                customFields.put(column, value);
-            }
+            customFields.put(column, value);
         }
         payload.put("customFields", customFields);
 

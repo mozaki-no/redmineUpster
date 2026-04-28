@@ -330,15 +330,14 @@ public class SyncExecutor {
         for (Map.Entry<String, String> entry : values.entrySet()) {
             String column = entry.getKey();
             String value = entry.getValue();
-            if (value == null || value.isBlank()) {
-                continue;
+            if (value == null) {
+                value = "";
             }
-            if (dateColumns.contains(column)) {
+            if (!value.isBlank() && dateColumns.contains(column)) {
                 String normalized = DateParser.normalizeDate(value);
-                if (normalized == null) {
-                    continue;
+                if (normalized != null) {
+                    value = normalized;
                 }
-                value = normalized;
             }
             String field = mapping.get(column);
             if (field == null || field.isBlank()) {
