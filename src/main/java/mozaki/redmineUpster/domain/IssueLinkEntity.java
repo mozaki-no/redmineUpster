@@ -6,15 +6,18 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "issue_link")
+@Table(name = "issue_link", uniqueConstraints = {
+	@UniqueConstraint(columnNames = {"external_key", "project_id"})
+})
 public class IssueLinkEntity {
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long id;
 
-	@Column(name = "external_key", nullable = false, unique = true)
+	@Column(name = "external_key", nullable = false)
 	private String externalKey;
 
 	@Column(name = "issue_id", nullable = false)
