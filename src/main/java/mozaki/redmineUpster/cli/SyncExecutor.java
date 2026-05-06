@@ -146,10 +146,10 @@ public class SyncExecutor {
                     logger.info("created issue " + issueId + " for " + item.externalKey());
                     successCount++;
                 } else {
-                    Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKey(item.externalKey());
+                    Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKeyAndProjectId(item.externalKey(), projectId);
                     if (link.isEmpty()) {
                         errorCount++;
-                        String errorMsg = "更新失敗: 外部キー=" + item.externalKey() + " (issue_linkが見つかりません)";
+                        String errorMsg = "更新失敗: 外部キー=" + item.externalKey() + " (issue_linkが見つかりません、またはプロジェクト不一致)";
                         errors.add(errorMsg);
                         logger.error(errorMsg);
                         continue;

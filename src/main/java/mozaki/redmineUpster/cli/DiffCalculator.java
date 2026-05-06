@@ -139,7 +139,7 @@ public class DiffCalculator {
                         + " hierarchyCols=" + rowData.hierarchyColumnsUsed
                         + " segments=" + segs);
             }
-            String action = resetSync ? ACTION_CREATE : resolveAction(rowData.externalKey, logger);
+            String action = resetSync ? ACTION_CREATE : resolveAction(rowData.externalKey, projectId, logger);
             String status = resolveStatus(rowData, projectConfig);
             Map<String, Object> payload = buildPayload(rowData, customFieldMap, customFieldColumns);
 
@@ -169,7 +169,7 @@ public class DiffCalculator {
             keys.sort(DiffCalculator::compareExternalKeys);
             for (String key : keys) {
                 ParentAggregate parent = virtualParents.get(key);
-                String action = resetSync ? ACTION_CREATE : resolveAction(parent.externalKey, logger);
+                String action = resetSync ? ACTION_CREATE : resolveAction(parent.externalKey, projectId, logger);
                 Integer trackerId = getVirtualParentTrackerId(projectConfig);
                 Map<String, Object> payload = buildParentPayload(parent, trackerId, externalKeyColumn);
                 payload.put("virtualParent", true);
@@ -243,8 +243,13 @@ public class DiffCalculator {
      * @param logger ファイルロガー
      * @return CREATE または UPDATE
      */
-    private String resolveAction(String externalKey, FileLogger logger) {
-        Optional<IssueLinkEntity> existing = issueLinkRepository.findByExternalKey(externalKey);
+    private String resolveAction(String externalKey, String projectId, FileLogger logger) {
+        Optional<IssueLinkEntity> existing;
+        if (projectId != null) {
+            existing = issueLinkRepository.findByExternalKeyAndProjectId(externalKey, projectId);
+        } else {
+            existing = issueLinkRepository.findByExternalKey(externalKey);
+        }
         return existing.isPresent() ? ACTION_UPDATE : ACTION_CREATE;
     }
 
