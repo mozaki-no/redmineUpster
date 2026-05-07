@@ -92,10 +92,10 @@ public class SyncExecutor {
                     successCount++;
                     continue;
                 }
-                Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKey(item.externalKey());
+                Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKeyAndProjectId(item.externalKey(), projectId);
                 if (link.isEmpty()) {
                     errorCount++;
-                    String errorMsg = "削除失敗: 外部キー=" + item.externalKey() + " (issue_linkが見つかりません)";
+                    String errorMsg = "削除失敗: 外部キー=" + item.externalKey() + " (issue_linkが見つかりません、またはプロジェクト不一致)";
                     errors.add(errorMsg);
                     logger.error(errorMsg);
                     continue;
@@ -242,7 +242,7 @@ public class SyncExecutor {
         }
 
         // 親チケット
-        Long parentIssueId = resolveParentIssueId(item.parentKey(), createdIssueIds);
+        Long parentIssueId = resolveParentIssueId(item.parentKey(), createdIssueIds, projectId);
         if (parentIssueId != null) {
             issue.put("parent_issue_id", parentIssueId);
         }
@@ -299,7 +299,7 @@ public class SyncExecutor {
      * @param createdIssueIds 今回の実行で作成されたissue ID
      * @return 親のissue ID（見つからない場合はnull）
      */
-    private Long resolveParentIssueId(String parentKey, Map<String, Long> createdIssueIds) {
+    private Long resolveParentIssueId(String parentKey, Map<String, Long> createdIssueIds, String projectId) {
         if (parentKey == null || parentKey.isBlank()) {
             return null;
         }
@@ -307,7 +307,7 @@ public class SyncExecutor {
         if (created != null) {
             return created;
         }
-        Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKey(parentKey);
+        Optional<IssueLinkEntity> link = issueLinkRepository.findByExternalKeyAndProjectId(parentKey, projectId);
         return link.map(IssueLinkEntity::getIssueId).orElse(null);
     }
 
