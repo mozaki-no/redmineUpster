@@ -38,6 +38,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
  *   <li>{@code --force-update}: 更新スキップを無効化して全件Update</li>
  *   <li>{@code --sheet} / {@code --table}: Excel の読み込み元（シート名・番号／テーブル名。設定 sync.excel より優先）</li>
+ *   <li>{@code --virtual-parents} / {@code --no-virtual-parents}: 親行がない行の祖先を仮想親チケットとして
+ *       作成する／しない（設定 sync.virtualParents.enabled より優先）</li>
  *   <li>{@code --help}: 使い方を表示</li>
  *   <li>{@code --relink-parent} / {@code --reset-sync}: 廃止（指定しても無視し、警告を出す）</li>
  * </ul>
@@ -91,8 +93,26 @@ public class SyncCommand implements CommandLineRunner {
 
         // 同期実行
         int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate,
-                excelSource);
+                excelSource, parseVirtualParents(args));
         System.exit(exitCode);
+    }
+
+    /**
+     * {@code --virtual-parents} / {@code --no-virtual-parents} を解析します。
+     *
+     * @param args 引数配列
+     * @return true / false（両方ある場合は後に書いた方）。どちらもなければnull（設定に従う）
+     */
+    static Boolean parseVirtualParents(String[] args) {
+        Boolean result = null;
+        for (String arg : args) {
+            if (arg.equals("--virtual-parents") || arg.equals("--virtual-parents=true")) {
+                result = Boolean.TRUE;
+            } else if (arg.equals("--no-virtual-parents") || arg.equals("--virtual-parents=false")) {
+                result = Boolean.FALSE;
+            }
+        }
+        return result;
     }
 
     /**
@@ -145,6 +165,8 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --force-update          Update every row even if Redmine already has the same values");
         System.out.println("  --sheet=<name|number>   Excel sheet to read (default: sync.excel.sheet, else the first sheet)");
         System.out.println("  --table=<name>          Excel table to read (default: sync.excel.table; overrides --sheet)");
+        System.out.println("  --virtual-parents       Auto-create missing ancestor rows as virtual parent tickets");
+        System.out.println("  --no-virtual-parents    Treat missing parent rows as errors (overrides sync.virtualParents)");
         System.out.println("  --help                  Show this help");
         System.out.println();
         System.out.println("Example:");

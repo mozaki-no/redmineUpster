@@ -80,6 +80,26 @@ public class SyncRunner {
      */
     public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir, boolean debug,
             boolean forceUpdate, ExcelSource cliExcelSource) {
+        return run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate, cliExcelSource, null);
+    }
+
+    /**
+     * 同期を実行します（仮想親チケットの作成有無を CLI で指定）。
+     *
+     * @param configPath 設定ファイルパス（nullの場合は既定の場所の sync-config.yml）
+     * @param projectName プロジェクト名（nullの場合はデフォルトプロジェクトを使用）
+     * @param filePath CSV/Excelファイルパス
+     * @param dryRun ドライランモードの場合はtrue
+     * @param logDir ログ出力ディレクトリ（nullの場合はカレントディレクトリの logs）
+     * @param debug デバッグモードの場合はtrue
+     * @param forceUpdate 変更なしスキップを無効化する場合はtrue
+     * @param cliExcelSource CLI の --sheet / --table（null可。設定ファイルの sync.excel より優先）
+     * @param cliVirtualParents CLI の --virtual-parents（true）/ --no-virtual-parents（false）。
+     *        null なら設定 sync.virtualParents.enabled に従う
+     * @return 成功の場合は0、失敗の場合は1
+     */
+    public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir, boolean debug,
+            boolean forceUpdate, ExcelSource cliExcelSource, Boolean cliVirtualParents) {
         FileLogger logger = null;
         try {
             // 1. ロガーの初期化
@@ -170,7 +190,11 @@ public class SyncRunner {
             Map<String, String> trackerMap = projectConfig.getSync() != null
                     ? projectConfig.getSync().getTrackerMap() : Map.of();
             TrackerResolver trackerResolver = new TrackerResolver(trackerMap, client);
-            DiffPlan plan = diffCalculator.calculate(parsed, projectConfig, trackerResolver, logger);
+            boolean virtualParents = cliVirtualParents != null ? cliVirtualParents
+                    : DiffCalculator.isVirtualParentsEnabled(projectConfig);
+            logger.info("Virtual Parents: " + virtualParents
+                    + (cliVirtualParents != null ? "（コマンドライン指定）" : "（設定 sync.virtualParents.enabled）"));
+            DiffPlan plan = diffCalculator.calculate(parsed, projectConfig, trackerResolver, logger, virtualParents);
             if (plan.hasErrors()) {
                 logger.error("入力ファイルの検証エラー: " + plan.errors().size() + "件（Redmineは更新していません）");
                 for (String error : plan.errors()) {
@@ -190,14 +214,24 @@ public class SyncRunner {
             Map<Long, Map<String, Object>> projectIssues = client.listProjectIssues();
             logger.info("Fetched " + projectIssues.size() + " issues (closed included, subprojects excluded)");
 
+            // 仮想親（ファイルに行がない祖先）を既存チケットに対応付ける（見つからなければ新規作成）
+            Integer deleteStatusId = projectConfig.getSync() != null && projectConfig.getSync().getDeletion() != null
+                    ? projectConfig.getSync().getDeletion().getStatusId() : null;
+            if (items.stream().anyMatch(DiffItem::virtual)) {
+                items = VirtualParentMatcher.match(items, projectIssues, deleteStatusId, logger);
+                long virtualTotal = items.stream().filter(DiffItem::virtual).count();
+                long virtualExisting = items.stream().filter(i -> i.virtual() && i.issueId() != null).count();
+                logger.info("  VIRTUAL_PARENT: " + virtualTotal + "（既存 " + virtualExisting + " / 新規作成 "
+                        + (virtualTotal - virtualExisting) + "。上の CREATE 件数に含まれます）");
+            }
+
+            // Excelの行と、今回も必要な仮想親のチケットは論理削除しない
             Set<Long> excelIssueIds = new HashSet<>();
             for (DiffItem item : items) {
                 if (item.issueId() != null) {
                     excelIssueIds.add(item.issueId());
                 }
             }
-            Integer deleteStatusId = projectConfig.getSync() != null && projectConfig.getSync().getDeletion() != null
-                    ? projectConfig.getSync().getDeletion().getStatusId() : null;
             List<Long> deleteCandidates = DiffCalculator.findLogicalDeleteCandidates(excelIssueIds, projectIssues,
                     deleteStatusId);
             logger.info("  LOGICAL_DELETE candidates: " + deleteCandidates.size()

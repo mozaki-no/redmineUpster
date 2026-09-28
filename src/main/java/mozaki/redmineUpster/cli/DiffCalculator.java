@@ -25,8 +25,10 @@ import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.TrackerConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.VirtualParentsConfig;
 import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.util.ColumnDefinitions;
+import mozaki.redmineUpster.util.DateParser;
 import mozaki.redmineUpster.util.StringUtils;
 
 /**
@@ -40,7 +42,9 @@ import mozaki.redmineUpster.util.StringUtils;
  *       途中の階層列の空欄は「その階層を飛ばす」ことを表す）</li>
  *   <li>トラッカーは行ごとのトラッカー列（名前 → ID）</li>
  * </ul>
- * を計算します。親行がない・階層パスの重複・チケットIDの重複や非数値・不明なトラッカーは
+ * を計算します。仮想親モード（sync.virtualParents.enabled / --virtual-parents）では、親行がない行の祖先を
+ * 仮想親チケット（ファイルに行がないチケット）として追加します。
+ * モードが無効の場合の親行がない・階層パスの重複・チケットIDの重複や非数値・不明なトラッカーは
  * 検証エラーとして返し、Redmineには一切書き込みません。
  * </p>
  */
@@ -61,6 +65,22 @@ public class DiffCalculator {
      */
     public DiffPlan calculate(ParsedSheet sheet, ProjectConfig projectConfig, TrackerResolver trackerResolver,
             FileLogger logger) {
+        return calculate(sheet, projectConfig, trackerResolver, logger, isVirtualParentsEnabled(projectConfig));
+    }
+
+    /**
+     * 差分を計算します（仮想親チケットの作成有無を指定）。
+     *
+     * @param sheet 解析済みシート（行番号付き）
+     * @param projectConfig プロジェクト設定
+     * @param trackerResolver トラッカー名 → ID の変換（null の場合は数値のみ受け付ける）
+     * @param logger ファイルロガー（null可）
+     * @param virtualParents 親行がない行の祖先を仮想親チケットとして作成する場合はtrue
+     *        （falseなら親行がないと検証エラー）
+     * @return 差分アイテムと検証エラー
+     */
+    public DiffPlan calculate(ParsedSheet sheet, ProjectConfig projectConfig, TrackerResolver trackerResolver,
+            FileLogger logger, boolean virtualParents) {
         TrackerResolver resolver = trackerResolver != null ? trackerResolver : new TrackerResolver(Map.of(), null);
         List<Map<String, String>> rows = sheet.rows();
         List<Integer> rowNumbers = sheet.rowNumbers();
@@ -134,7 +154,7 @@ public class DiffCalculator {
             }
             parsed.add(new RowData(rowNumber, row, issueId, deepest, levelPath,
                     toKey(ownCells), parentCells.isEmpty() ? null : toKey(parentCells), joinPath(parentCells),
-                    resolveSubject(row, ownCells), names));
+                    resolveSubject(row, ownCells), names, parentCells));
         }
 
         // 2. 重複チェック（階層パス・チケットID）
@@ -165,6 +185,7 @@ public class DiffCalculator {
                 ? trackerConfig.getValue().trim() : null;
 
         List<DiffItem> items = new ArrayList<>();
+        VirtualParents virtuals = new VirtualParents(byKey);
         for (RowData data : parsed) {
             if (invalid.contains(data)) {
                 continue;
@@ -172,12 +193,16 @@ public class DiffCalculator {
             Integer parentRowNumber = null;
             if (data.parentKey != null) {
                 RowData parent = byKey.get(data.parentKey);
-                if (parent == null) {
+                if (parent != null) {
+                    parentRowNumber = parent.rowNumber;
+                } else if (virtualParents) {
+                    parentRowNumber = virtuals.ensure(data.parentCells);
+                } else {
                     errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 親行 [" + data.parentPath
-                            + "] がファイルにありません");
+                            + "] がファイルにありません（祖先を仮想親チケットとして自動作成するには"
+                            + " sync.virtualParents.enabled: true または --virtual-parents）");
                     continue;
                 }
-                parentRowNumber = parent.rowNumber;
             }
 
             String action = data.issueId == null ? ACTION_CREATE : ACTION_UPDATE;
@@ -221,8 +246,151 @@ public class DiffCalculator {
             }
         }
 
+        if (!virtuals.nodes.isEmpty()) {
+            String trackerName = virtualParentTracker(projectConfig);
+            Long virtualTrackerId = resolver.resolve(trackerName);
+            if (virtualTrackerId == null) {
+                errors.add("仮想親チケットのトラッカー「" + trackerName + "」が見つかりません"
+                        + "（sync.virtualParents.trackerId にトラッカー名またはIDを設定するか、trackerMap を確認してください）");
+            } else {
+                items.addAll(buildVirtualItems(virtuals.nodes, items, virtualTrackerId));
+                if (logger != null) {
+                    logger.info("仮想親チケット: " + virtuals.nodes.size() + "件（ファイルに親行がない祖先。トラッカーID="
+                            + virtualTrackerId + "）");
+                    for (VirtualNode node : virtuals.nodes) {
+                        logger.debug("Virtual parent " + node.rowNumber + ": path=[" + node.path + "] parentRow="
+                                + node.parentRowNumber);
+                    }
+                }
+            }
+        }
+
         items.sort(Comparator.comparingInt(DiffItem::depth).thenComparingInt(DiffItem::rowNumber));
         return new DiffPlan(items, withSheetName(errors, sheet.sheetName()));
+    }
+
+    /** 仮想親の行番号（負の仮番号）の開始値 */
+    private static final int VIRTUAL_ROW_BASE = -1_000_000_000;
+
+    /** 仮想親チケットのトラッカーの既定値（名前） */
+    static final String DEFAULT_VIRTUAL_PARENT_TRACKER = "サマリ";
+
+    /**
+     * 設定で仮想親チケットの作成が有効かどうか。
+     *
+     * @param projectConfig プロジェクト設定
+     * @return 有効ならtrue
+     */
+    public static boolean isVirtualParentsEnabled(ProjectConfig projectConfig) {
+        return projectConfig != null && projectConfig.getSync() != null
+                && projectConfig.getSync().getVirtualParents() != null
+                && projectConfig.getSync().getVirtualParents().isEnabled();
+    }
+
+    private static String virtualParentTracker(ProjectConfig projectConfig) {
+        VirtualParentsConfig config = projectConfig != null && projectConfig.getSync() != null
+                ? projectConfig.getSync().getVirtualParents() : null;
+        return config != null && config.getTracker() != null && !config.getTracker().isBlank()
+                ? config.getTracker().trim() : DEFAULT_VIRTUAL_PARENT_TRACKER;
+    }
+
+    /**
+     * 仮想親の差分アイテムを作成します。
+     * <p>
+     * 着手予定は直下の子（ファイルの行・仮想親）の最小、完了予定は最大、進捗率は子の平均（切り捨て。
+     * 進捗率のある子だけで計算し、1件もなければ送らない）。深い仮想親から順に集計するため、
+     * 仮想親の下の仮想親も子として集計されます。ステータスは送りません。
+     * </p>
+     */
+    private static List<DiffItem> buildVirtualItems(List<VirtualNode> nodes, List<DiffItem> rowItems,
+            Long trackerId) {
+        Map<Integer, List<Map<String, Object>>> childPayloads = new HashMap<>();
+        for (DiffItem item : rowItems) {
+            if (item.parentRowNumber() != null && item.parentRowNumber() < 0) {
+                childPayloads.computeIfAbsent(item.parentRowNumber(), k -> new ArrayList<>()).add(item.payload());
+            }
+        }
+        List<VirtualNode> deepestFirst = new ArrayList<>(nodes);
+        deepestFirst.sort(Comparator.comparingInt((VirtualNode n) -> n.depth).reversed()
+                .thenComparingInt(n -> n.rowNumber));
+        List<DiffItem> result = new ArrayList<>();
+        for (VirtualNode node : deepestFirst) {
+            String start = null;
+            String due = null;
+            int progressSum = 0;
+            int progressCount = 0;
+            for (Map<String, Object> child : childPayloads.getOrDefault(node.rowNumber, List.of())) {
+                String childStart = DateParser.normalizeDate((String) child.get("startDate"));
+                if (childStart != null && (start == null || childStart.compareTo(start) < 0)) {
+                    start = childStart;
+                }
+                String childDue = DateParser.normalizeDate((String) child.get("dueDate"));
+                if (childDue != null && (due == null || childDue.compareTo(due) > 0)) {
+                    due = childDue;
+                }
+                if (child.get("progress") instanceof Integer progress) {
+                    progressSum += progress;
+                    progressCount++;
+                }
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("assignee", "");
+            payload.put("startDate", start);
+            payload.put("dueDate", due);
+            if (progressCount > 0) {
+                payload.put("progress", progressSum / progressCount);
+            }
+            payload.put("customFields", new LinkedHashMap<String, String>());
+            DiffItem item = new DiffItem(node.rowNumber, null, node.subject, node.path, node.depth,
+                    node.parentRowNumber, ACTION_CREATE, null, trackerId, payload, true);
+            result.add(item);
+            if (node.parentRowNumber != null && node.parentRowNumber < 0) {
+                childPayloads.computeIfAbsent(node.parentRowNumber, k -> new ArrayList<>()).add(payload);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * ファイルにない祖先（仮想親）の一覧。祖先が連続して欠けている場合は最上位まで再帰的に作ります。
+     */
+    private static final class VirtualParents {
+        private final Map<String, RowData> rowsByKey;
+        private final Map<String, VirtualNode> byKey = new HashMap<>();
+        private final List<VirtualNode> nodes = new ArrayList<>();
+
+        private VirtualParents(Map<String, RowData> rowsByKey) {
+            this.rowsByKey = rowsByKey;
+        }
+
+        /**
+         * 階層値 cells の行（ファイルの行、なければ仮想親）の行番号を返します。
+         */
+        private int ensure(List<String> cells) {
+            String key = toKey(cells);
+            RowData row = rowsByKey.get(key);
+            if (row != null) {
+                return row.rowNumber;
+            }
+            VirtualNode existing = byKey.get(key);
+            if (existing != null) {
+                return existing.rowNumber;
+            }
+            int deepest = cells.size() - 1; // 末尾の空欄は除去済み
+            List<String> parentCells = new ArrayList<>(cells);
+            parentCells.set(deepest, "");
+            trimTrailingBlanks(parentCells);
+            Integer parentRowNumber = parentCells.isEmpty() ? null : ensure(parentCells);
+            // 負の仮番号。見つけた順に大きくなる（同じ深さでは見つけた順＝ファイルの行順に作成される）
+            VirtualNode node = new VirtualNode(VIRTUAL_ROW_BASE + nodes.size(), deepest, joinPath(cells), cells.get(deepest),
+                    parentRowNumber);
+            byKey.put(key, node);
+            nodes.add(node);
+            return node.rowNumber;
+        }
+    }
+
+    private record VirtualNode(int rowNumber, int depth, String path, String subject, Integer parentRowNumber) {
     }
 
     /**
@@ -597,9 +765,12 @@ public class DiffCalculator {
         private final String dueActual;
         private final String statusValue;
         private final Integer progress;
+        private final List<String> parentCells;
 
         private RowData(int rowNumber, Map<String, String> row, Long issueId, int depth, String levelPath,
-                String key, String parentKey, String parentPath, String subject, ColumnNames names) {
+                String key, String parentKey, String parentPath, String subject, ColumnNames names,
+                List<String> parentCells) {
+            this.parentCells = parentCells;
             this.rowNumber = rowNumber;
             this.row = row;
             this.issueId = issueId;

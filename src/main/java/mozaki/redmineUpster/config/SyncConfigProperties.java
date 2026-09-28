@@ -143,6 +143,34 @@ public class SyncConfigProperties {
 		 * Excel の読み込み元（シート・テーブル）。
 		 */
 		private ExcelConfig excel;
+
+		/**
+		 * 仮想親チケットの自動作成（Excelに親行がない場合）の設定。
+		 */
+		private VirtualParentsConfig virtualParents;
+	}
+
+	/**
+	 * 仮想親チケットの設定クラス。
+	 * <p>
+	 * 有効にすると、親行がファイルにない行（例: 大分類の行がないタスク）の祖先を
+	 * 「仮想親チケット」として自動作成・更新します。無効（既定）の場合は親行がないと検証エラーです。
+	 * 仮想親はExcelに行がないため、次回以降は Redmine の同期先プロジェクトから
+	 * （親チケット・件名・トラッカーが同じチケットとして）見つけ直します。
+	 * </p>
+	 */
+	@Data
+	public static class VirtualParentsConfig {
+		/**
+		 * 仮想親チケットを作成するかどうか（既定: false。CLI の --virtual-parents / --no-virtual-parents が優先）。
+		 */
+		private boolean enabled;
+
+		/**
+		 * 仮想親チケットのトラッカー（名前またはID。名前は trackerMap → Redmine のトラッカー名で解決）。
+		 * 未設定の場合は「サマリ」。
+		 */
+		private String tracker;
 	}
 
 	/**
