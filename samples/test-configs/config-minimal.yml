@@ -17,8 +17,7 @@ projects:
         hierarchy:
           - "タスク名"
         required:
-          - "id"
+          - "チケットID"
+          - "トラッカー"
           - "タスク名"
           - "担当"
-        customFieldColumns:
-          - "id"

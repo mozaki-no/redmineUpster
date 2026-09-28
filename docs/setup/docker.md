@@ -347,17 +347,17 @@ docker compose up -d
 docker compose exec postgres psql -U postgres -d redmine_upster << 'EOF'
 SELECT
     id,
-    external_key,
     issue_id,
-    created_at
+    project_id,
+    payload_hash
 FROM issue_link
 ORDER BY id DESC
 LIMIT 10;
 EOF
 
-# 特定のexternal_keyを検索
+# 特定のチケットIDを検索
 docker compose exec postgres psql -U postgres -d redmine_upster \
-    -c "SELECT * FROM issue_link WHERE external_key = 'T-001';"
+    -c "SELECT * FROM issue_link WHERE issue_id = 123;"
 ```
 
 ---

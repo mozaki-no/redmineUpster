@@ -6,9 +6,18 @@ projects:
       apiKey: "${REDMINE_API_KEY}"  # 環境変数展開対応
       projectId: "project-a"
     sync:
+      # トラッカー列が空欄の行に使う既定トラッカー（名前またはID）
       tracker:
         enabled: true
         value: "タスク"
+      # トラッカー列の名前 → トラッカーID（ここにない名前は Redmine の /trackers.json から解決）
+      trackerMap:
+        "タスク": 2
+        "サマリ": 6
+      # Excelから消えたチケットの論理削除（statusIdのステータスへ変更。物理削除はしない）
+      # statusId を省略すると、削除候補をログに警告として出すだけで何も変更しません
+      deletion:
+        statusId: 6  # 例: Redmine標準の「却下」
       status:
         enabled: true
         mode: "BY_DATES"  # BY_DATES | FIXED
@@ -17,7 +26,6 @@ projects:
           "未着手": "1"
           "進行中": "2"
           "完了": "5"
-      virtualParentTrackerId: 6
       customFieldMap:
         チーム: "12"
         工程: "13"
@@ -31,9 +39,11 @@ projects:
         - "完了実績"
       # 列設定（省略時はデフォルト値を使用）
       columns:
-        # 外部キー列（Redmineチケットと紐付けるためのID列）
-        externalKeyColumn: "id"  # デフォルト。"WBS番号"などに変更可能
-        # 階層列（親子関係推定に使用、順番が重要）
+        # チケットID列（空欄=新規作成、値あり=そのチケットを更新。新規作成したIDはここへ書き戻す）
+        ticketIdColumn: "チケットID"
+        # トラッカー列（行ごとのトラッカー名またはID）
+        trackerColumn: "トラッカー"
+        # 階層列（浅い順。一番深い値の列がその行のレベルになり、1つ浅いレベルの行が親になる）
         hierarchy:
           - "大分類"
           - "中分類"
@@ -47,7 +57,8 @@ projects:
         progressColumn: "進捗率"
         # 必須列（CSVに必ず含める列）
         required:
-          - "id"
+          - "チケットID"
+          - "トラッカー"
           - "チーム"
           - "工程"
           - "大分類"
@@ -63,7 +74,6 @@ projects:
           - "完了実績"
         # カスタムフィールドマッピング対象列
         customFieldColumns:
-          - "id"
           - "チーム"
           - "工程"
           - "社/組織"
