@@ -138,6 +138,30 @@ public class SyncConfigProperties {
 		 * 列設定。
 		 */
 		private ColumnsConfig columns;
+
+		/**
+		 * Excel の読み込み元（シート・テーブル）。
+		 */
+		private ExcelConfig excel;
+	}
+
+	/**
+	 * Excel の読み込み元の設定クラス（.xlsx / .xlsm。CSV では無視）。
+	 * <p>
+	 * 優先順位は table ＞ sheet ＞ 先頭シート。CLI の --table / --sheet で上書きできます。
+	 * </p>
+	 */
+	@Data
+	public static class ExcelConfig {
+		/**
+		 * シート名、または1始まりのシート番号。値のある最初の行をヘッダとして読みます。
+		 */
+		private String sheet;
+
+		/**
+		 * Excel のテーブル（挿入 → テーブル）の名前。テーブルの見出し行・範囲だけを読みます。
+		 */
+		private String table;
 	}
 
 	/**

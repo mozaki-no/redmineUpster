@@ -18,6 +18,7 @@ import org.yaml.snakeyaml.Yaml;
 
 import jakarta.annotation.PostConstruct;
 import mozaki.redmineUpster.config.SyncConfigProperties;
+import mozaki.redmineUpster.config.SyncConfigProperties.ExcelConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.DeletionConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
@@ -231,6 +232,18 @@ public class SyncConfigService {
 		Map<String, Object> deletionMap = (Map<String, Object>) map.get("deletion");
 		if (deletionMap != null) {
 			config.setDeletion(parseDeletionConfig(deletionMap));
+		}
+
+		Map<String, Object> excelMap = (Map<String, Object>) map.get("excel");
+		if (excelMap != null) {
+			ExcelConfig excel = new ExcelConfig();
+			if (excelMap.get("sheet") != null) {
+				excel.setSheet(expandEnvVars(String.valueOf(excelMap.get("sheet"))).trim());
+			}
+			if (excelMap.get("table") != null) {
+				excel.setTable(expandEnvVars(String.valueOf(excelMap.get("table"))).trim());
+			}
+			config.setExcel(excel);
 		}
 
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");

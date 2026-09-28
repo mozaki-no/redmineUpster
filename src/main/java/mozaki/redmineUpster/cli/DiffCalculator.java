@@ -222,7 +222,7 @@ public class DiffCalculator {
         }
 
         items.sort(Comparator.comparingInt(DiffItem::depth).thenComparingInt(DiffItem::rowNumber));
-        return new DiffPlan(items, errors);
+        return new DiffPlan(items, withSheetName(errors, sheet.sheetName()));
     }
 
     /**
@@ -406,6 +406,20 @@ public class DiffCalculator {
         }
         long id = Long.parseLong(value);
         return id > 0 ? id : null;
+    }
+
+    /**
+     * Excel の場合、行番号で始まるメッセージにシート名を付けます（例: シート「取込」行12 ...）。
+     */
+    private static List<String> withSheetName(List<String> errors, String sheetName) {
+        if (sheetName == null) {
+            return errors;
+        }
+        List<String> result = new ArrayList<>();
+        for (String error : errors) {
+            result.add(error.startsWith("行") ? "シート「" + sheetName + "」" + error : error);
+        }
+        return result;
     }
 
     private static void trimTrailingBlanks(List<String> cells) {

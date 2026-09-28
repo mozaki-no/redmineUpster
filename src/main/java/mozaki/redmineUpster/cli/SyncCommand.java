@@ -6,6 +6,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
+import mozaki.redmineUpster.service.ExcelSource;
 
 /**
  * CLI実行クラス。
@@ -36,6 +37,7 @@ import lombok.RequiredArgsConstructor;
  *   <li>{@code --log-dir}: ログ出力ディレクトリ（省略時はカレントディレクトリの logs フォルダ）</li>
  *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
  *   <li>{@code --force-update}: 更新スキップを無効化して全件Update</li>
+ *   <li>{@code --sheet} / {@code --table}: Excel の読み込み元（シート名・番号／テーブル名。設定 sync.excel より優先）</li>
  *   <li>{@code --help}: 使い方を表示</li>
  *   <li>{@code --relink-parent} / {@code --reset-sync}: 廃止（指定しても無視し、警告を出す）</li>
  * </ul>
@@ -71,6 +73,7 @@ public class SyncCommand implements CommandLineRunner {
         String logDir = getArgValue(args, "--log-dir");
         boolean debug = hasArg(args, "--debug");
         boolean forceUpdate = hasArg(args, "--force-update");
+        ExcelSource excelSource = new ExcelSource(getArgValue(args, "--sheet"), getArgValue(args, "--table"));
         for (String removed : REMOVED_OPTIONS) {
             if (hasArg(args, removed)) {
                 System.err.println("WARN: " + removed + " は廃止されました（チケットID列方式では不要のため無視します）");
@@ -87,7 +90,8 @@ public class SyncCommand implements CommandLineRunner {
         }
 
         // 同期実行
-        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate);
+        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate,
+                excelSource);
         System.exit(exitCode);
     }
 
@@ -139,6 +143,8 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --log-dir=<path>        Log output directory (default: ./logs)");
         System.out.println("  --debug                 Output detailed logs");
         System.out.println("  --force-update          Update every row even if Redmine already has the same values");
+        System.out.println("  --sheet=<name|number>   Excel sheet to read (default: sync.excel.sheet, else the first sheet)");
+        System.out.println("  --table=<name>          Excel table to read (default: sync.excel.table; overrides --sheet)");
         System.out.println("  --help                  Show this help");
         System.out.println();
         System.out.println("Example:");

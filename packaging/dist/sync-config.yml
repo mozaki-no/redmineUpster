@@ -27,6 +27,10 @@ projects:
           "未着手": "1"
           "進行中": "2"
           "完了": "5"
+      # Excel の読み込み元（省略時は先頭シート。優先順位は table ＞ sheet。CLI の --table= / --sheet= が優先）
+      # excel:
+      #   table: "取込表"   # テーブル名（見出し行と範囲だけを読む。数式は計算済みの値を読む）
+      #   sheet: "取込"     # シート名 または 1始まりの番号（値のある最初の行がヘッダ）
       columns:
         ticketIdColumn: "チケットID"   # 空欄=新規作成（作成したIDが書き戻される）、値あり=更新
         trackerColumn: "トラッカー"

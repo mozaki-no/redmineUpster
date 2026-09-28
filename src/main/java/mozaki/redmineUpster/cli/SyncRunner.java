@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
+import mozaki.redmineUpster.service.ExcelSource;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.service.RedmineClientFactory;
 import mozaki.redmineUpster.service.SpreadsheetParser;
@@ -61,6 +62,24 @@ public class SyncRunner {
      */
     public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir, boolean debug,
             boolean forceUpdate) {
+        return run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate, null);
+    }
+
+    /**
+     * 同期を実行します（Excel の読み込み元を CLI で指定）。
+     *
+     * @param configPath 設定ファイルパス（nullの場合は既定の場所の sync-config.yml）
+     * @param projectName プロジェクト名（nullの場合はデフォルトプロジェクトを使用）
+     * @param filePath CSV/Excelファイルパス
+     * @param dryRun ドライランモードの場合はtrue
+     * @param logDir ログ出力ディレクトリ（nullの場合はカレントディレクトリの logs）
+     * @param debug デバッグモードの場合はtrue
+     * @param forceUpdate 変更なしスキップを無効化する場合はtrue
+     * @param cliExcelSource CLI の --sheet / --table（null可。設定ファイルの sync.excel より優先）
+     * @return 成功の場合は0、失敗の場合は1
+     */
+    public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir, boolean debug,
+            boolean forceUpdate, ExcelSource cliExcelSource) {
         FileLogger logger = null;
         try {
             // 1. ロガーの初期化
@@ -104,11 +123,26 @@ public class SyncRunner {
             }
 
             // 4. CSV/Excel解析（階層列の決定・fillDownHierarchy の補完は差分計算で行う）
-            logger.info("Parsing file: " + filePath);
-            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath);
+            ExcelSource excelSource = resolveExcelSource(projectConfig, cliExcelSource);
+            boolean isCsv = filePath.toLowerCase().endsWith(".csv");
+            if (isCsv && !excelSource.isDefault()) {
+                logger.warn("CSVファイルのため、シート・テーブルの指定（" + excelSource.describe() + "）は無視します");
+                excelSource = ExcelSource.DEFAULT;
+            }
+            logger.info("Parsing file: " + filePath + (isCsv ? "" : "（" + excelSource.describe() + "）"));
+            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath, excelSource);
+            if (parsed.sheetName() != null) {
+                logger.info("Sheet: " + parsed.sheetName() + "（メッセージの行番号はこのシートの行番号です）");
+            }
             List<Map<String, String>> rows = parsed.rows();
             logger.info("Parsed " + rows.size() + " rows");
             String ticketIdColumn = DiffCalculator.getTicketIdColumn(projectConfig);
+            if (excelSource.table() != null && !parsed.headers().contains(ticketIdColumn)) {
+                // テーブルへの列の追加は行わない。Redmine に書き込む前に止める
+                logger.error("テーブル「" + excelSource.table() + "」にチケットID列「" + ticketIdColumn
+                        + "」がありません。テーブルに列を追加してから実行してください（Redmineは更新していません）");
+                return 1;
+            }
             if (!parsed.headers().contains(ticketIdColumn)) {
                 logger.warn("チケットID列「" + ticketIdColumn + "」がファイルにありません。全行を新規作成として扱い、"
                         + "書き戻し時に列を末尾へ追加します");
@@ -172,15 +206,30 @@ public class SyncRunner {
             boolean writeBackFailed = false;
             if (!dryRun && !result.createdIssueIds().isEmpty()) {
                 try {
-                    Path backup = ticketIdWriter.writeBack(filePath, ticketIdColumn, result.createdIssueIds());
-                    logger.info("Wrote " + result.createdIssueIds().size() + " ticket IDs back to " + filePath
-                            + " (backup: " + backup + ")");
+                    TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeBack(filePath, ticketIdColumn,
+                            result.createdIssueIds(), excelSource);
+                    for (String note : writeBack.notes()) {
+                        logger.info(note);
+                    }
+                    if (writeBack.backup() != null) {
+                        logger.info("Wrote " + (result.createdIssueIds().size() - writeBack.failures().size())
+                                + " ticket IDs back to " + filePath + " (backup: " + writeBack.backup() + ")");
+                    }
+                    if (!writeBack.failures().isEmpty()) {
+                        writeBackFailed = true;
+                        logger.error("チケットIDを書き戻せなかった行があります。次回実行で重複作成しないよう、"
+                                + "以下のチケット番号を手で「" + ticketIdColumn + "」列（または数式の参照先）に入力してください:");
+                        for (String failure : writeBack.failures()) {
+                            logger.error("  - " + failure);
+                        }
+                    }
                 } catch (IOException | RuntimeException e) {
                     writeBackFailed = true;
                     logger.error("チケットIDの書き戻しに失敗しました: " + e.getMessage());
                     logger.error("次回実行で重複作成しないよう、以下のIDを手動で「" + ticketIdColumn + "」列に入力してください:");
+                    String sheetLabel = parsed.sheetName() != null ? "シート「" + parsed.sheetName() + "」" : "";
                     for (Map.Entry<Integer, Long> entry : result.createdIssueIds().entrySet()) {
-                        logger.error("  行" + entry.getKey() + " -> " + entry.getValue());
+                        logger.error("  " + sheetLabel + "行" + entry.getKey() + " -> " + entry.getValue());
                     }
                 }
             }
@@ -309,5 +358,17 @@ public class SyncRunner {
         } catch (RuntimeException | java.net.URISyntaxException e) {
             return null;
         }
+    }
+
+    /**
+     * Excel の読み込み元を決定します（CLI ＞ 設定ファイル ＞ 先頭シート）。
+     */
+    static ExcelSource resolveExcelSource(ProjectConfig projectConfig, ExcelSource cli) {
+        ExcelSource config = ExcelSource.DEFAULT;
+        if (projectConfig != null && projectConfig.getSync() != null && projectConfig.getSync().getExcel() != null) {
+            config = new ExcelSource(projectConfig.getSync().getExcel().getSheet(),
+                    projectConfig.getSync().getExcel().getTable());
+        }
+        return ExcelSource.merge(config, cli);
     }
 }
