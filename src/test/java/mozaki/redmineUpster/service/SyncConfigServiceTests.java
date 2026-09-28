@@ -654,6 +654,7 @@ class SyncConfigServiceTests {
 			assertThat(config.getProgressColumn()).isEqualTo("進捗率");
 			assertThat(config.getTicketIdColumn()).isEqualTo("チケットID");
 			assertThat(config.getTrackerColumn()).isEqualTo("トラッカー");
+			assertThat(config.isFillDownHierarchy()).isFalse();
 		}
 
 		@Test
@@ -693,6 +694,7 @@ class SyncConfigServiceTests {
 			assertThat(columns.getProgressColumn()).isEqualTo("進捗率");
 			assertThat(columns.getTicketIdColumn()).isEqualTo("Redmine番号");
 			assertThat(columns.getTrackerColumn()).isEqualTo("種別");
+			assertThat(columns.isFillDownHierarchy()).isTrue();
 			assertThat(project.getSync().getTrackerMap()).containsEntry("タスク", "2").containsEntry("サマリ", "6");
 			assertThat(project.getSync().getDeletion().getStatusId()).isEqualTo(6);
 			assertThat(columns.getRequired()).containsExactly("チケットID", "チーム", "工程");

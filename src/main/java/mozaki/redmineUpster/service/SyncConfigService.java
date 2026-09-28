@@ -296,6 +296,11 @@ public class SyncConfigService {
 			config.setProgressColumn(progressColumn);
 		}
 
+		Object fillDownHierarchy = map.get("fillDownHierarchy");
+		if (fillDownHierarchy != null) {
+			config.setFillDownHierarchy(Boolean.parseBoolean(fillDownHierarchy.toString().trim()));
+		}
+
 		return config;
 	}
 

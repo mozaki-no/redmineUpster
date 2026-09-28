@@ -97,6 +97,14 @@ public class DiffCalculator {
                 errors.add("行" + rowNumber + ": 階層列（" + String.join("/", hierarchyColumns) + "）がすべて空です");
                 continue;
             }
+            if (cells.get(0).isBlank()) {
+                // 一番浅い階層列が空欄の行は、前行の値を引き継ぐ前提のシート（セル結合なし）の可能性が高いため、
+                // 最上位として作成せずエラーにする
+                errors.add("行" + rowNumber + " [" + joinPath(cells) + "]: " + hierarchyColumns.get(0)
+                        + "が空欄です（同じ値が続く場合は各行に入力するかセル結合してください。"
+                        + "空欄を前行の値で補うには sync.columns.fillDownHierarchy: true）");
+                continue;
+            }
             List<String> ownCells = cells.subList(0, deepest + 1);
             List<String> parentCells = new ArrayList<>(ownCells);
             parentCells.set(deepest, "");

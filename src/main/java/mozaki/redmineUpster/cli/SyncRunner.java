@@ -104,11 +104,14 @@ public class SyncRunner {
                 logger.debug("Project ID: " + projectConfig.getRedmine().getProjectId());
             }
 
-            // 4. CSV/Excel解析（階層列のみ前行値で補完する）
+            // 4. CSV/Excel解析（階層列の空欄=階層を飛ばす。fillDownHierarchy: true のときのみ前行値で補完）
             List<String> hierarchyColumns = resolveHierarchyColumns(projectConfig);
+            boolean fillDownHierarchy = projectConfig.getSync() != null
+                    && projectConfig.getSync().getColumns() != null
+                    && projectConfig.getSync().getColumns().isFillDownHierarchy();
             logger.info("Parsing file: " + filePath);
-            logger.debug("Hierarchy columns: " + hierarchyColumns);
-            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath, hierarchyColumns);
+            logger.debug("Hierarchy columns: " + hierarchyColumns + " fillDownHierarchy=" + fillDownHierarchy);
+            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath, hierarchyColumns, fillDownHierarchy);
             List<Map<String, String>> rows = parsed.rows();
             logger.info("Parsed " + rows.size() + " rows");
             String ticketIdColumn = DiffCalculator.getTicketIdColumn(projectConfig);

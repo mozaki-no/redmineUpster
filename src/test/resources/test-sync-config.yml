@@ -34,6 +34,7 @@ projects:
         progressColumn: "進捗率"
         ticketIdColumn: "Redmine番号"
         trackerColumn: "種別"
+        fillDownHierarchy: true
         required:
           - "チケットID"
           - "チーム"

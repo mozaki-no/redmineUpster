@@ -22,6 +22,7 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -60,7 +61,7 @@ public class SpreadsheetParser {
 	}
 
 	/**
-	 * ファイルパスからスプレッドシートを解析します（階層列の補完なし）。
+	 * ファイルパスからスプレッドシートを解析します（階層列の前行値補完なし）。
 	 *
 	 * @param filePath ファイルパス
 	 * @return 解析結果
@@ -71,29 +72,48 @@ public class SpreadsheetParser {
 	}
 
 	/**
-	 * ファイルパスからスプレッドシートを解析します。
+	 * ファイルパスからスプレッドシートを解析します（階層列の前行値補完なし）。
 	 * <p>
-	 * hierarchyColumns（浅い順）に指定された階層列は、セル結合などで空欄になっている場合に
-	 * 前行の値で補完します。ただし補完するのは「その行でより深い階層列に値がある」空欄だけです。
-	 * 一番深い値より右側の空欄は、その行の階層レベルを表すため補完しません。
-	 * また、ある階層列に前行と異なる値が入った場合、それより深い列の前行値は引き継ぎません。
+	 * 階層列の空欄は「その階層を飛ばした」ことを表すため、前行の値では補完しません。
+	 * xlsx/xls のセル結合（縦方向）は、結合範囲の先頭セルの値として読み取ります。
 	 * </p>
 	 *
 	 * @param filePath ファイルパス
-	 * @param hierarchyColumns 階層列（浅い順）。空の場合は補完しない
+	 * @param hierarchyColumns 階層列（浅い順）
 	 * @return 解析結果
 	 * @throws IOException 解析に失敗した場合
 	 */
 	public ParsedSheet parseFromPath(String filePath, List<String> hierarchyColumns) throws IOException {
+		return parseFromPath(filePath, hierarchyColumns, false);
+	}
+
+	/**
+	 * ファイルパスからスプレッドシートを解析します。
+	 * <p>
+	 * xlsx/xls のセル結合（縦方向）は、結合範囲の先頭セルの値として読み取ります（全列）。
+	 * fillDownHierarchy が true の場合のみ、hierarchyColumns（浅い順）の空欄を前行の値で補完します
+	 * （旧来の動作）。補完するのは「その行でより深い階層列に値がある」空欄だけで、ある階層列に前行と
+	 * 異なる値が入った場合、それより深い列の前行値は引き継ぎません。この場合、階層を飛ばした行は作れません。
+	 * </p>
+	 *
+	 * @param filePath ファイルパス
+	 * @param hierarchyColumns 階層列（浅い順）
+	 * @param fillDownHierarchy 階層列の空欄を前行の値で補完する場合 true
+	 * @return 解析結果
+	 * @throws IOException 解析に失敗した場合
+	 */
+	public ParsedSheet parseFromPath(String filePath, List<String> hierarchyColumns, boolean fillDownHierarchy)
+			throws IOException {
 		Path path = Paths.get(filePath);
 		if (!Files.exists(path)) {
 			throw new IOException("File not found: " + filePath);
 		}
+		List<String> fillColumns = fillDownHierarchy && hierarchyColumns != null ? hierarchyColumns : List.of();
 		String filename = path.getFileName().toString();
 		if (filename.toLowerCase().endsWith(".csv")) {
-			return parseCsvFromPath(path, hierarchyColumns);
+			return parseCsvFromPath(path, fillColumns);
 		}
-		return parseExcelFromPath(path, hierarchyColumns);
+		return parseExcelFromPath(path, fillColumns);
 	}
 
 	/**
@@ -190,6 +210,12 @@ public class SpreadsheetParser {
 			headers.add(normalize(getCellString(headerRow.getCell(i))));
 		}
 		HierarchyFiller filler = new HierarchyFiller(headers, hierarchyColumns);
+		List<CellRangeAddress> verticalMerges = new ArrayList<>();
+		for (CellRangeAddress region : sheet.getMergedRegions()) {
+			if (region.getLastRow() > region.getFirstRow()) {
+				verticalMerges.add(region);
+			}
+		}
 		List<Map<String, String>> rows = new ArrayList<>();
 		List<Integer> rowNumbers = new ArrayList<>();
 		for (int rowIndex = headerRow.getRowNum() + 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
@@ -200,11 +226,11 @@ public class SpreadsheetParser {
 			boolean allBlank = true;
 			String[] normalized = new String[headers.size()];
 			for (int i = 0; i < headers.size(); i++) {
-				String v = normalize(getCellString(row.getCell(i)));
-				normalized[i] = v;
-				if (!v.isBlank()) {
+				// 空行の判定は結合を考慮しない実セルで行う（結合範囲の末尾だけが残った行を拾わない）
+				if (!normalize(getCellString(row.getCell(i))).isBlank()) {
 					allBlank = false;
 				}
+				normalized[i] = normalize(getCellString(resolveMergedCell(sheet, verticalMerges, row, i)));
 			}
 			if (allBlank) {
 				continue;
@@ -213,6 +239,24 @@ public class SpreadsheetParser {
 			rowNumbers.add(rowIndex + 1);
 		}
 		return new ParsedSheet(headers, rows, rowNumbers);
+	}
+
+	/**
+	 * 縦方向のセル結合範囲に含まれるセルは、結合範囲の先頭行のセルを返します。
+	 * <p>
+	 * 結合範囲の先頭列だけが対象です（横方向に結合された右側の列は空欄のまま＝階層を飛ばした扱い）。
+	 * </p>
+	 */
+	private static Cell resolveMergedCell(Sheet sheet, List<CellRangeAddress> verticalMerges, Row row, int column) {
+		int rowIndex = row.getRowNum();
+		for (CellRangeAddress region : verticalMerges) {
+			if (region.getFirstColumn() == column && region.getFirstRow() < rowIndex
+					&& rowIndex <= region.getLastRow()) {
+				Row top = sheet.getRow(region.getFirstRow());
+				return top == null ? null : top.getCell(column);
+			}
+		}
+		return row.getCell(column);
 	}
 
 	private Map<String, String> toRowMap(List<String> headers, String[] values) {
@@ -281,7 +325,7 @@ public class SpreadsheetParser {
 	}
 
 	/**
-	 * 階層列の前行値補完を行うヘルパー。
+	 * 階層列の前行値補完を行うヘルパー（sync.columns.fillDownHierarchy: true のときのみ使用）。
 	 */
 	private static final class HierarchyFiller {
 		private final int[] indexes;

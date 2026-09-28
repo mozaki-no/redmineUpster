@@ -36,6 +36,9 @@ projects:
           - "小分類"
           - "成果物"
           - "タスク"
+        # 階層列の空欄は「その階層を飛ばす」（例: 大分類の直下のタスク）。同じ値が続く行は各行に書くかセル結合する。
+        # true にすると空欄を前の行の値で補う（旧来の動作。この場合は階層を飛ばせない）
+        # fillDownHierarchy: false
         startDateColumn: "着手予定"
         dueDateColumn: "完了予定"
         statusColumn: "ステータス"

@@ -204,6 +204,16 @@ public class SyncConfigProperties {
 		 * デフォルト値は "進捗率"。
 		 */
 		private String progressColumn = "進捗率";
+
+		/**
+		 * 階層列の空欄を前行の値で補完するか（旧来の動作）。デフォルト false。
+		 * <p>
+		 * false: 階層列の空欄は「その階層を飛ばした」ことを表します（例: 大分類の直下のタスク）。
+		 * 同じ値が縦に続く箇所はセル結合するか、各行に値を入れてください。
+		 * true: 一番深い値より左の空欄を前行の値で補完します。この場合、階層を飛ばした行は作れません。
+		 * </p>
+		 */
+		private boolean fillDownHierarchy = false;
 	}
 
 	/**
