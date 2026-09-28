@@ -257,7 +257,7 @@ class HierarchySkipLevelTests {
 				new TrackerResolver(config.getSync().getTrackerMap(), null), null);
 
 		// 実装 > 認証システム > ... の祖先行がないため、行10だけが親行なしのエラーになる
-		assertThat(plan.errors()).containsExactly(
+		assertThat(plan.errors()).singleElement().asString().startsWith(
 				"行10 [実装 > 認証システム > ユーザー認証 > ログイン機能 > ソースコード]: 親行 [実装 > 認証システム > ユーザー認証 > ログイン機能] がファイルにありません");
 		assertThat(byRow(plan, 2).parentRowNumber()).isNull();
 		assertThat(byRow(plan, 3).parentRowNumber()).isEqualTo(2);

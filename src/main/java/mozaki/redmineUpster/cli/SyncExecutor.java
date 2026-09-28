@@ -35,6 +35,8 @@ import mozaki.redmineUpster.util.DateParser;
  *   <li>UPDATE: 同期開始時に取得したプロジェクトのチケットに含まれることを確認し、
  *       送信内容と現在の値に違いがあれば更新（親も階層から再設定）</li>
  *   <li>論理削除: Excelにないプロジェクト内のチケットのステータスを変更（物理削除はしない）</li>
+ *   <li>仮想親（ファイルに行がない祖先）: CREATE/UPDATE は行と同じ。作成時だけ説明に目印を入れ、
+ *       ステータスは送らず、チケットIDの書き戻し対象にしない</li>
  * </ul>
  * DBは使わず、Redmineの現在の状態を正とします。
  * </p>
@@ -78,6 +80,13 @@ public class SyncExecutor {
             throw new IllegalStateException("redmine.project-id is not configured");
         }
 
+        Map<Integer, String> virtualPaths = new HashMap<>();
+        for (DiffItem item : items) {
+            if (item.virtual()) {
+                virtualPaths.put(item.rowNumber(), item.levelPath());
+            }
+        }
+
         List<DiffItem> ordered = new ArrayList<>(items);
         ordered.sort(Comparator.comparingInt(DiffItem::depth).thenComparingInt(DiffItem::rowNumber));
 
@@ -96,15 +105,15 @@ public class SyncExecutor {
                 if (item.parentRowNumber() != null) {
                     if (failedRows.contains(item.parentRowNumber())) {
                         failedRows.add(item.rowNumber());
-                        addError(errors, logger, "同期失敗: " + item.label() + " 理由=親行(行" + item.parentRowNumber()
-                                + ")の同期に失敗したためスキップしました");
+                        addError(errors, logger, "同期失敗: " + item.label() + " 理由=親" + parentName(item, virtualPaths)
+                                + "の同期に失敗したためスキップしました");
                         continue;
                     }
                     parentIssueId = rowIssueIds.get(item.parentRowNumber());
                     if (parentIssueId == null && !(dryRun && plannedCreates.contains(item.parentRowNumber()))) {
                         failedRows.add(item.rowNumber());
-                        addError(errors, logger, "同期失敗: " + item.label() + " 理由=親行(行" + item.parentRowNumber()
-                                + ")のチケットIDが確定していません");
+                        addError(errors, logger, "同期失敗: " + item.label() + " 理由=親" + parentName(item, virtualPaths)
+                                + "のチケットIDが確定していません");
                         continue;
                     }
                 } else {
@@ -120,10 +129,13 @@ public class SyncExecutor {
                     if (dryRun) {
                         plannedCreates.add(item.rowNumber());
                         logger.info("DRY_RUN CREATE " + item.label() + " subject=" + item.subject()
-                                + " tracker_id=" + item.trackerId()
-                                + (item.parentRowNumber() != null ? " parent=行" + item.parentRowNumber() : ""));
+                                + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths));
                         successCount++;
                         continue;
+                    }
+                    if (item.virtual()) {
+                        // 仮想親の目印（次回以降の再識別で優先する）。説明は作成時だけ設定し、更新・比較はしない
+                        issuePayload.put("description", VirtualParentMatcher.MARKER);
                     }
                     logger.debug("API Request: POST " + client.getBaseUrl() + "/issues.json");
                     logger.debug("Request body: " + formatPayloadForLog(issuePayload));
@@ -134,7 +146,9 @@ public class SyncExecutor {
                         continue;
                     }
                     rowIssueIds.put(item.rowNumber(), issueId);
-                    createdIssueIds.put(item.rowNumber(), issueId);
+                    if (!item.virtual()) {
+                        createdIssueIds.put(item.rowNumber(), issueId);
+                    }
                     logger.info("created issue " + issueId + " for " + item.label());
                     successCount++;
                     continue;
@@ -160,8 +174,7 @@ public class SyncExecutor {
                 String changes = forceUpdate && changed.isEmpty() ? "(force-update)" : String.join(",", changed);
                 if (dryRun) {
                     logger.info("DRY_RUN UPDATE " + item.label() + " subject=" + item.subject()
-                            + " tracker_id=" + item.trackerId()
-                            + (item.parentRowNumber() != null ? " parent=行" + item.parentRowNumber() : "")
+                            + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths)
                             + " changes=" + changes);
                     successCount++;
                     continue;
@@ -198,6 +211,23 @@ public class SyncExecutor {
         }
 
         return new SyncResult(totalCount, successCount, errors.size(), errors, createdIssueIds);
+    }
+
+    /**
+     * ログ表示用の親の表記（" parent=行12" / " parent=(仮想親)[大分類 > 中分類]"）。
+     */
+    private static String parentName(DiffItem item, Map<Integer, String> virtualPaths) {
+        Integer parent = item.parentRowNumber();
+        return parent != null && parent < 0 ? "(仮想親 [" + virtualPaths.getOrDefault(parent, "?") + "])"
+                : "行(行" + parent + ")";
+    }
+
+    private static String parentLabel(DiffItem item, Map<Integer, String> virtualPaths) {
+        Integer parent = item.parentRowNumber();
+        if (parent == null) {
+            return "";
+        }
+        return parent < 0 ? " parent=(仮想親)[" + virtualPaths.getOrDefault(parent, "?") + "]" : " parent=行" + parent;
     }
 
     /**
@@ -293,7 +323,8 @@ public class SyncExecutor {
         }
 
         StatusConfig statusConfig = projectConfig.getSync() != null ? projectConfig.getSync().getStatus() : null;
-        if (statusConfig != null && statusConfig.isEnabled()) {
+        // 仮想親はステータスを送らない（作成時は Redmine の既定、以後は変更しない）
+        if (statusConfig != null && statusConfig.isEnabled() && !item.virtual()) {
             String statusValue = resolveStatus(item, payload, statusConfig);
             statusValue = mapStatusValue(statusValue, statusConfig);
             statusValue = mapByDatesDefaultStatusId(statusValue, statusConfig);

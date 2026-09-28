@@ -26,6 +26,7 @@ import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.TrackerConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.VirtualParentsConfig;
 
 /**
  * 同期設定サービスクラス。
@@ -249,6 +250,22 @@ public class SyncConfigService {
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
 		if (columnsMap != null) {
 			config.setColumns(parseColumnsConfig(columnsMap));
+		}
+
+		Map<String, Object> virtualParentsMap = (Map<String, Object>) map.get("virtualParents");
+		if (virtualParentsMap != null) {
+			VirtualParentsConfig virtualParents = new VirtualParentsConfig();
+			Object enabled = virtualParentsMap.get("enabled");
+			if (enabled != null) {
+				virtualParents.setEnabled(Boolean.parseBoolean(expandEnvVars(enabled.toString()).trim()));
+			}
+			// trackerId / tracker のどちらでも指定できる（名前またはID）
+			Object tracker = virtualParentsMap.get("trackerId") != null ? virtualParentsMap.get("trackerId")
+					: virtualParentsMap.get("tracker");
+			if (tracker != null && !expandEnvVars(tracker.toString()).isBlank()) {
+				virtualParents.setTracker(expandEnvVars(tracker.toString()).trim());
+			}
+			config.setVirtualParents(virtualParents);
 		}
 
 		return config;
