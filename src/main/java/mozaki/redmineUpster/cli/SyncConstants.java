@@ -17,8 +17,11 @@ public final class SyncConstants {
     public static final String ACTION_CREATE = "CREATE";
     /** アクション: 更新 */
     public static final String ACTION_UPDATE = "UPDATE";
-    /** アクション: 削除 */
-    public static final String ACTION_DELETE = "DELETE";
+    /** アクション: 論理削除（ステータス変更） */
+    public static final String ACTION_LOGICAL_DELETE = "LOGICAL_DELETE";
+
+    /** issue_link.payload_hash に記録する論理削除済みマーカーの接頭辞 */
+    public static final String LOGICAL_DELETE_HASH_PREFIX = "logical-delete:";
 
     // ステータス
     /** ステータス: 新規 */

@@ -3,7 +3,10 @@ package mozaki.redmineUpster.util;
 import java.util.List;
 
 public final class ColumnDefinitions {
-	public static final String COL_ID = "id";
+	/** Redmineのチケット番号列（空欄なら新規作成、値があれば更新） */
+	public static final String COL_TICKET_ID = "チケットID";
+	/** トラッカー名（またはID）列 */
+	public static final String COL_TRACKER = "トラッカー";
 	public static final String COL_TEAM = "チーム";
 	public static final String COL_PROCESS = "工程";
 	public static final String COL_MAJOR = "大分類";
@@ -30,14 +33,7 @@ public final class ColumnDefinitions {
 			"Lv.05",
 			"Lv.06");
 
-	public static final List<String> EXTERNAL_KEY_CANDIDATES = List.of(
-			COL_ID,
-			COL_TASK_NO,
-			"WBS_ID",
-			"#");
-
 	public static final List<String> REQUIRED_HEADERS = List.of(
-			COL_ID,
 			COL_TEAM,
 			COL_PROCESS,
 			COL_MAJOR,
@@ -60,7 +56,6 @@ public final class ColumnDefinitions {
 			COL_TASK);
 
 	public static final List<String> CUSTOM_FIELD_COLUMNS = List.of(
-			COL_ID,
 			COL_TEAM,
 			COL_PROCESS,
 			COL_ORG,

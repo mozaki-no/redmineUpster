@@ -19,6 +19,7 @@ import org.yaml.snakeyaml.Yaml;
 import jakarta.annotation.PostConstruct;
 import mozaki.redmineUpster.config.SyncConfigProperties;
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.DeletionConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
@@ -213,14 +214,23 @@ public class SyncConfigService {
 			config.setCustomFieldDateColumns(new ArrayList<>(customFieldDateColumns));
 		}
 
-		Object virtualParentTrackerId = map.get("virtualParentTrackerId");
-		if (virtualParentTrackerId != null) {
-			String rawValue = String.valueOf(virtualParentTrackerId).trim();
-			try {
-				config.setVirtualParentTrackerId(Integer.parseInt(rawValue));
-			} catch (NumberFormatException ex) {
-				throw new IllegalArgumentException("virtualParentTrackerId must be numeric: " + rawValue, ex);
+		Map<String, Object> trackerIdMap = (Map<String, Object>) map.get("trackerMap");
+		if (trackerIdMap != null) {
+			Map<String, String> expandedMap = new HashMap<>();
+			for (Map.Entry<String, Object> entry : trackerIdMap.entrySet()) {
+				String key = expandEnvVars(String.valueOf(entry.getKey())).trim();
+				String value = expandEnvVars(String.valueOf(entry.getValue())).trim();
+				if (!value.chars().allMatch(Character::isDigit) || value.isEmpty()) {
+					throw new IllegalArgumentException("trackerMap value must be numeric: " + key + "=" + value);
+				}
+				expandedMap.put(key, value);
 			}
+			config.setTrackerMap(expandedMap);
+		}
+
+		Map<String, Object> deletionMap = (Map<String, Object>) map.get("deletion");
+		if (deletionMap != null) {
+			config.setDeletion(parseDeletionConfig(deletionMap));
 		}
 
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
@@ -256,9 +266,14 @@ public class SyncConfigService {
 			config.setCustomFieldColumns(new ArrayList<>(customFieldColumns));
 		}
 
-		String externalKeyColumn = (String) map.get("externalKeyColumn");
-		if (externalKeyColumn != null && !externalKeyColumn.isBlank()) {
-			config.setExternalKeyColumn(externalKeyColumn);
+		String ticketIdColumn = (String) map.get("ticketIdColumn");
+		if (ticketIdColumn != null && !ticketIdColumn.isBlank()) {
+			config.setTicketIdColumn(ticketIdColumn);
+		}
+
+		String trackerColumn = (String) map.get("trackerColumn");
+		if (trackerColumn != null && !trackerColumn.isBlank()) {
+			config.setTrackerColumn(trackerColumn);
 		}
 
 		String startDateColumn = (String) map.get("startDateColumn");
@@ -281,6 +296,28 @@ public class SyncConfigService {
 			config.setProgressColumn(progressColumn);
 		}
 
+		return config;
+	}
+
+	/**
+	 * MapからDeletionConfigを解析します。
+	 *
+	 * @param map 論理削除設定のMap
+	 * @return 解析されたDeletionConfig
+	 */
+	private DeletionConfig parseDeletionConfig(Map<String, Object> map) {
+		DeletionConfig config = new DeletionConfig();
+		Object statusId = map.get("statusId");
+		if (statusId != null) {
+			String rawValue = expandEnvVars(String.valueOf(statusId)).trim();
+			if (!rawValue.isEmpty()) {
+				try {
+					config.setStatusId(Integer.parseInt(rawValue));
+				} catch (NumberFormatException ex) {
+					throw new IllegalArgumentException("deletion.statusId must be numeric: " + rawValue, ex);
+				}
+			}
+		}
 		return config;
 	}
 

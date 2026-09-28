@@ -8,16 +8,24 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+/**
+ * このツールが作成・更新したRedmineチケットの管理テーブル。
+ * <p>
+ * (issue_id, project_id) で一意です。payload_hash は前回送信内容のハッシュで、
+ * 変更がない場合の更新スキップと、論理削除済みの判定に使用します。
+ * external_key は旧方式（CSVのid列で紐付け）の名残で、新方式では使用しません（NULL可）。
+ * </p>
+ */
 @Entity
 @Table(name = "issue_link", uniqueConstraints = {
-	@UniqueConstraint(columnNames = {"external_key", "project_id"})
+	@UniqueConstraint(columnNames = {"issue_id", "project_id"})
 })
 public class IssueLinkEntity {
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long id;
 
-	@Column(name = "external_key", nullable = false)
+	@Column(name = "external_key")
 	private String externalKey;
 
 	@Column(name = "issue_id", nullable = false)
@@ -32,9 +40,9 @@ public class IssueLinkEntity {
 	public IssueLinkEntity() {
 	}
 
-	public IssueLinkEntity(String externalKey, Long issueId) {
-		this.externalKey = externalKey;
+	public IssueLinkEntity(Long issueId, String projectId) {
 		this.issueId = issueId;
+		this.projectId = projectId;
 	}
 
 	public Long getId() {
