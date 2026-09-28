@@ -34,14 +34,16 @@ import lombok.RequiredArgsConstructor;
  *   <li>{@code --dry-run}: ドライランモード（省略時はfalse）</li>
  *   <li>{@code --log-dir}: ログ出力ディレクトリ（省略時はカレントディレクトリ）</li>
  *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
- *   <li>{@code --relink-parent}: 親子関係の再計算を強制（削除は実行しない）</li>
  *   <li>{@code --force-update}: 更新スキップを無効化して全件Update</li>
- *   <li>{@code --reset-sync}: 既存チケットを全削除してからCSV/Excelを全件再作成</li>
+ *   <li>{@code --relink-parent} / {@code --reset-sync}: 廃止（指定しても無視し、警告を出す）</li>
  * </ul>
  */
 @Component
 @RequiredArgsConstructor
 public class SyncCommand implements CommandLineRunner {
+
+    /** 廃止されたオプション（親子は毎回階層から再設定、物理削除は行わないため不要） */
+    private static final String[] REMOVED_OPTIONS = { "--relink-parent", "--reset-sync" };
 
     private final SyncRunner syncRunner;
 
@@ -64,9 +66,12 @@ public class SyncCommand implements CommandLineRunner {
         boolean dryRun = hasArg(args, "--dry-run");
         String logDir = getArgValue(args, "--log-dir");
         boolean debug = hasArg(args, "--debug");
-        boolean relinkOnly = hasArg(args, "--relink-parent");
         boolean forceUpdate = hasArg(args, "--force-update");
-        boolean resetSync = hasArg(args, "--reset-sync");
+        for (String removed : REMOVED_OPTIONS) {
+            if (hasArg(args, removed)) {
+                System.err.println("WARN: " + removed + " は廃止されました（チケットID列方式では不要のため無視します）");
+            }
+        }
 
         // --fileは必須
         if (filePath == null || filePath.isBlank()) {
@@ -78,8 +83,7 @@ public class SyncCommand implements CommandLineRunner {
         }
 
         // 同期実行
-        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, relinkOnly, forceUpdate,
-            resetSync);
+        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate);
         System.exit(exitCode);
     }
 
@@ -128,9 +132,7 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --dry-run               Dry run mode (optional)");
         System.out.println("  --log-dir=<path>        Log output directory (optional, defaults to current directory)");
         System.out.println("  --debug                 Debug mode (output detailed logs, optional)");
-        System.out.println("  --relink-parent         Recalculate parent links (skips deletion)");
         System.out.println("  --force-update          Disable update skipping (force all updates)");
-        System.out.println("  --reset-sync           Delete existing issues first, then recreate all rows");
         System.out.println();
         System.out.println("Example:");
         System.out.println("  java -jar redmineUpster.jar --sync --file=input.csv --dry-run");

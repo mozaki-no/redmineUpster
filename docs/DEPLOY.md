@@ -543,11 +543,16 @@ export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
 
 #### 5.2.1 テーブル構造
 
+V1〜V4 のマイグレーション適用後の構造:
+
 ```sql
-CREATE TABLE IF NOT EXISTS issue_link (
+CREATE TABLE issue_link (
   id BIGSERIAL PRIMARY KEY,
-  external_key TEXT NOT NULL UNIQUE,
-  issue_id BIGINT NOT NULL
+  external_key TEXT,            -- 旧方式の名残（新方式では未使用、NULL可）
+  issue_id BIGINT NOT NULL,
+  payload_hash TEXT,
+  project_id TEXT,
+  CONSTRAINT issue_link_issue_id_project_id_key UNIQUE (issue_id, project_id)
 );
 ```
 
@@ -556,16 +561,21 @@ CREATE TABLE IF NOT EXISTS issue_link (
 | カラム名 | 型 | 説明 |
 |---------|-----|------|
 | `id` | BIGSERIAL | 自動採番の主キー |
-| `external_key` | TEXT | CSVファイルの`id`列の値（ユニーク制約） |
-| `issue_id` | BIGINT | 対応するRedmineチケットのID |
+| `external_key` | TEXT | 旧方式（CSVの`id`列で紐付け）の値。新方式では使用しない |
+| `issue_id` | BIGINT | このツールが作成・更新したRedmineチケットのID |
+| `payload_hash` | TEXT | 前回送信内容のハッシュ（変更なしスキップ用）。論理削除済みは `logical-delete:<statusId>` |
+| `project_id` | TEXT | 同期先のRedmineプロジェクトID（設定の`projectId`） |
 
 #### 5.2.3 用途
 
-このテーブルは、CSVファイルの行とRedmineチケットの紐付けを管理します。
+Excel/CSVの行とRedmineチケットの紐付けは、ファイルの「チケットID」列で行います。
+このテーブルは「このツールが管理しているチケット」の記録です。
 
-- **新規作成時**: CSVの`id`列の値と、作成されたRedmineチケットIDが記録される
-- **更新時**: `external_key`でチケットを検索し、既存チケットを更新する
-- これにより、同じCSVを再実行しても重複チケットが作成されない
+- **新規作成・更新時**: `(issue_id, project_id)` と送信内容のハッシュを記録
+- **更新時**: 前回と同じ内容なら更新をスキップ（`--force-update` で無効化）
+- **論理削除**: 記録されているチケットのうちExcelにないものを削除候補とし、
+  `sync.deletion.statusId` が設定されていればそのステータスへ変更する（物理削除はしない）
+- V4 マイグレーションで、同じ `(issue_id, project_id)` の重複行は id が最大の1行だけ残る
 
 ### 5.3 データベースの手動作成（必要な場合）
 
@@ -1301,12 +1311,15 @@ APIキーが空でRedmine接続に失敗
 
 **症状:**
 ```
-Required column 'id' not found
+[ERROR] 入力ファイルの検証エラー: N件（Redmineは更新していません）
 ```
 
 **対処:**
-CSVファイルに以下の列が含まれているか確認:
-- `id` - 必須（external_keyとして使用）
+続けて出力される各エラー（行番号と階層パス付き）を確認し、ファイルを修正する:
+- 親行がない（階層の上位の行をファイルに追加する）
+- 同じ階層パスの行が重複している
+- `チケットID` が数値でない、または重複している
+- `トラッカー` の名前が `trackerMap` / Redmine に存在しない
 
 ### 9.5 Redmine API エラー
 
@@ -1409,11 +1422,15 @@ java -jar redmineUpster.jar --sync --file=input.csv --dry-run
 ### A. CSVファイルフォーマット例
 
 ```csv
-id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績
-T-001,基盤,設計,UI,画面,ログイン,画面設計書,ログイン画面作成,開発1課,山田,2026-01-10,2026-01-11,2026-01-20,2026-01-19
-T-002,基盤,実装,API,認証,トークン,API仕様書,認証API実装,開発1課,佐藤,2026-01-12,,2026-01-25,
-T-003,基盤,試験,API,認証,トークン,試験仕様書,認証API試験,開発1課,鈴木,2026-01-26,,2026-02-05,
+チケットID,トラッカー,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績
+120,サマリ,基盤,設計,UI,,,,,開発1課,,,,,
+121,サマリ,基盤,設計,UI,画面,,,,開発1課,,,,,
+,サマリ,基盤,設計,UI,画面,ログイン,,,開発1課,,,,,
+,サマリ,基盤,設計,UI,画面,ログイン,画面設計書,,開発1課,,,,,
+,タスク,基盤,設計,UI,画面,ログイン,画面設計書,ログイン画面作成,開発1課,山田,2026-01-10,2026-01-11,2026-01-20,2026-01-19
 ```
+
+チケットIDが空欄の行は新規作成され、作成されたIDがファイルへ書き戻されます（元ファイルは `.bak`）。
 
 ### B. クイックスタート
 

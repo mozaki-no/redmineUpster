@@ -122,9 +122,17 @@ public class SyncConfigProperties {
 		private List<String> customFieldDateColumns = new ArrayList<>();
 
 		/**
-		 * 仮想親チケットに使用するトラッカーID。
+		 * トラッカー名 → トラッカーIDの対応表。
+		 * Excelの「トラッカー」列の値を変換します。
+		 * ここにない名前は Redmine の /trackers.json から解決します。
+		 * 例: {"タスク": "2", "サマリ": "6"}
 		 */
-		private Integer virtualParentTrackerId = 6;
+		private Map<String, String> trackerMap = new HashMap<>();
+
+		/**
+		 * 論理削除（Excelから消えたチケットのステータス変更）設定。
+		 */
+		private DeletionConfig deletion;
 
 		/**
 		 * 列設定。
@@ -149,22 +157,29 @@ public class SyncConfigProperties {
 
 		/**
 		 * 必須列のリスト（CSVに必ず含める列）。
-		 * 例: ["id", "チーム", "工程", ...]
+		 * 例: ["チケットID", "トラッカー", "チーム", "工程", ...]
 		 */
 		private List<String> required = new ArrayList<>();
 
 		/**
 		 * カスタムフィールドマッピング対象列のリスト。
-		 * 例: ["id", "チーム", "工程", ...]
+		 * 例: ["チーム", "工程", ...]
 		 */
 		private List<String> customFieldColumns = new ArrayList<>();
 
 		/**
-		 * 外部キー列名（Redmineチケットと紐付けるためのID列）。
-		 * デフォルト値は "id"。
-		 * 例: "WBS番号" などに変更可能。
+		 * チケットID列名（Redmineのチケット番号）。
+		 * 空欄なら新規作成、値があればそのチケットを更新します。
+		 * 新規作成したチケットのIDはこの列へ書き戻されます。
+		 * デフォルト値は "チケットID"。
 		 */
-		private String externalKeyColumn = "id";
+		private String ticketIdColumn = "チケットID";
+
+		/**
+		 * トラッカー列名（行ごとのトラッカー名またはID）。
+		 * デフォルト値は "トラッカー"。
+		 */
+		private String trackerColumn = "トラッカー";
 
 		/**
 		 * 開始日列名（Redmineのstart_dateに反映）。
@@ -192,9 +207,25 @@ public class SyncConfigProperties {
 	}
 
 	/**
+	 * 論理削除設定クラス。
+	 * <p>
+	 * このツールが作成・更新したチケット（issue_link に記録されたもの）のうち、
+	 * 今回のExcelに存在しないものを、指定ステータスへ変更して論理削除します。
+	 * statusId を設定しない場合は、候補をログに警告として出すだけで何も変更しません。
+	 * </p>
+	 */
+	@Data
+	public static class DeletionConfig {
+		/**
+		 * 論理削除時に設定するステータスID（未設定の場合は変更しない）。
+		 */
+		private Integer statusId;
+	}
+
+	/**
 	 * トラッカー設定クラス。
 	 * <p>
-	 * チケット作成時に使用するトラッカーの設定を保持します。
+	 * トラッカー列が空欄の行に使用する既定トラッカーの設定を保持します。
 	 * </p>
 	 */
 	@Data

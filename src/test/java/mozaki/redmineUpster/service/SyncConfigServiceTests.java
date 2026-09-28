@@ -436,6 +436,14 @@ class SyncConfigServiceTests {
 					.isInstanceOf(IllegalArgumentException.class)
 					.hasMessageContaining("Redmine projectId is required");
 		}
+
+		@Test
+		@DisplayName("trackerMapの値が数値でない設定ファイルを読み込むと例外がスローされる")
+		void loadConfig_nonNumericTrackerMap_throwsException() {
+			assertThatThrownBy(() -> service.loadConfig("test-invalid-tracker-map.yml"))
+					.isInstanceOf(IllegalArgumentException.class)
+					.hasMessageContaining("trackerMap value must be numeric");
+		}
 	}
 
 	@Nested
@@ -556,13 +564,17 @@ class SyncConfigServiceTests {
 			customFieldMap.put("key", "value");
 			config.setCustomFieldMap(customFieldMap);
 			config.setCustomFieldDateColumns(List.of("開始日", "期限"));
-			config.setVirtualParentTrackerId(7);
+			config.setTrackerMap(Map.of("タスク", "2"));
+			SyncConfigProperties.DeletionConfig deletion = new SyncConfigProperties.DeletionConfig();
+			deletion.setStatusId(6);
+			config.setDeletion(deletion);
 
 			assertThat(config.getTracker()).isEqualTo(tracker);
 			assertThat(config.getStatus()).isEqualTo(status);
 			assertThat(config.getCustomFieldMap()).containsEntry("key", "value");
 			assertThat(config.getCustomFieldDateColumns()).containsExactly("開始日", "期限");
-			assertThat(config.getVirtualParentTrackerId()).isEqualTo(7);
+			assertThat(config.getTrackerMap()).containsEntry("タスク", "2");
+			assertThat(config.getDeletion().getStatusId()).isEqualTo(6);
 		}
 
 		@Test
@@ -574,7 +586,8 @@ class SyncConfigServiceTests {
 			assertThat(config.getCustomFieldMap()).isEmpty();
 			assertThat(config.getCustomFieldDateColumns()).isNotNull();
 			assertThat(config.getCustomFieldDateColumns()).isEmpty();
-			assertThat(config.getVirtualParentTrackerId()).isEqualTo(6);
+			assertThat(config.getTrackerMap()).isNotNull().isEmpty();
+			assertThat(config.getDeletion()).isNull();
 		}
 
 		@Test
@@ -639,6 +652,8 @@ class SyncConfigServiceTests {
 			assertThat(config.getDueDateColumn()).isEqualTo("完了予定");
 			assertThat(config.getStatusColumn()).isEqualTo("ステータス");
 			assertThat(config.getProgressColumn()).isEqualTo("進捗率");
+			assertThat(config.getTicketIdColumn()).isEqualTo("チケットID");
+			assertThat(config.getTrackerColumn()).isEqualTo("トラッカー");
 		}
 
 		@Test
@@ -676,9 +691,12 @@ class SyncConfigServiceTests {
 			assertThat(columns.getDueDateColumn()).isEqualTo("期限");
 			assertThat(columns.getStatusColumn()).isEqualTo("状態");
 			assertThat(columns.getProgressColumn()).isEqualTo("進捗率");
-			assertThat(project.getSync().getVirtualParentTrackerId()).isEqualTo(6);
-			assertThat(columns.getRequired()).containsExactly("id", "チーム", "工程");
-			assertThat(columns.getCustomFieldColumns()).containsExactly("id", "チーム", "工程");
+			assertThat(columns.getTicketIdColumn()).isEqualTo("Redmine番号");
+			assertThat(columns.getTrackerColumn()).isEqualTo("種別");
+			assertThat(project.getSync().getTrackerMap()).containsEntry("タスク", "2").containsEntry("サマリ", "6");
+			assertThat(project.getSync().getDeletion().getStatusId()).isEqualTo(6);
+			assertThat(columns.getRequired()).containsExactly("チケットID", "チーム", "工程");
+			assertThat(columns.getCustomFieldColumns()).containsExactly("チーム", "工程");
 		}
 
 		@Test
@@ -691,6 +709,8 @@ class SyncConfigServiceTests {
 
 			// columns設定がない場合はnull
 			assertThat(project.getSync().getColumns()).isNull();
+			// deletion設定がない場合はnull（論理削除は候補のログ出力のみ）
+			assertThat(project.getSync().getDeletion()).isNull();
 		}
 	}
 }
