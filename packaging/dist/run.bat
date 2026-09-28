@@ -1,5 +1,5 @@
 @echo off
-rem Sync: drag and drop a WBS file (.xlsx / .csv) onto this file.
+rem Sync: drag and drop a WBS file (.xlsx / .xlsm / .csv) onto this file.
 rem Close the file in Excel first (new ticket IDs are written back to it).
 setlocal
 cd /d "%~dp0"

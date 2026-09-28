@@ -35,6 +35,7 @@ cp packaging/dist/sync-config.yml "${APP_DIR}/"
 cp docs/USER_GUIDE.md "${APP_DIR}/"
 cp LICENSE "${APP_DIR}/"
 cp samples/wbs_hierarchy.csv "${APP_DIR}/sample-wbs.csv"
+cp samples/sample-wbs.xlsx "${APP_DIR}/sample-wbs.xlsx"
 
 (cd "${OUT}" && tar czf "${APP_NAME}-linux.tar.gz" "${APP_NAME}")
 echo "Created: ${APP_DIR} and ${OUT}/${APP_NAME}-linux.tar.gz"

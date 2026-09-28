@@ -53,7 +53,7 @@ RedmineのチケットをCSV/Excelから同期するCLIツールです。Excel/C
 | `bash packaging/package-linux.sh`（Linux + JDK + Maven、動作確認用） | `target/package/redmineUpster/bin/redmineUpster` と `redmineUpster-linux.tar.gz` |
 
 - 同梱する Java モジュールは `packaging/modules.txt`（Windows は `jdk.crypto.mscapi` を追加）。Shift_JIS の CSV に `jdk.charsets`、HTTPS に `jdk.crypto.ec` が必要です。
-- 配布フォルダには `sync-config.yml`（サンプル）、`run-dry-run.bat` / `run.bat`（WBS ファイルをドラッグ＆ドロップして実行）、`USER_GUIDE.md`、`sample-wbs.csv` を同梱します（`packaging/dist/`）。
+- 配布フォルダには `sync-config.yml`（サンプル）、`run-dry-run.bat` / `run.bat`（WBS ファイルをドラッグ＆ドロップして実行）、`USER_GUIDE.md`、`sample-wbs.xlsx` / `sample-wbs.csv` を同梱します（`packaging/dist/`）。配布版の `sync-config.yml` は `excel.table: "取込表"` が有効で、`sample-wbs.xlsx` をそのまま読めます（CSV では無視）。
 
 ## CLI実行
 
@@ -193,7 +193,7 @@ WBS 本体のシートが複雑な場合は、取込用のシート（例: 2枚�
         # sheet: "取込"   # シート名 または 1始まりの番号（値のある最初の行がヘッダ）
 ```
 
-- 優先順位は **テーブル ＞ シート ＞ 先頭シート**。CLI の `--table=` / `--sheet=` は設定より優先します（CLI で `--sheet` だけを指定すると設定の `table` は使いません）。.xlsx / .xlsm のみ（テーブルは .xlsx / .xlsm、CSV では警告を出して無視）。
+- 優先順位は **テーブル ＞ シート ＞ 先頭シート**。CLI の `--table=` / `--sheet=` は設定より優先します（CLI で `--sheet` だけを指定すると設定の `table` は使いません）。.xlsx / .xlsm のみ（テーブルは .xlsx / .xlsm、CSV では無視。CLI で指定した場合だけ警告）。
 - テーブルが見つからない場合は、ファイル内のテーブル名を表示してエラーにします。
 - 数式のセルは、Excel が保存時に計算した値を読みます（**Excel で保存してから**実行してください）。単一セル参照（`='WBS 本体'!C12` など）の参照先が空欄なら空欄として読みます（Excel は 0 を保存するため）。日付の書式が付いていない数式セルの日付（シリアル値。例: `46032`）も日付として扱います。
 - メッセージの行番号は、読み込んだシートの行番号です（検証エラーには `シート「取込」行12` のようにシート名が付きます）。
@@ -201,6 +201,25 @@ WBS 本体のシートが複雑な場合は、取込用のシート（例: 2枚�
   - チケットID列のセルが **単一セル参照の数式**（`=WBS!C12`、`='WBS 本体'!$C$12` など）なら、**参照先のセル**（WBS 本体側）へ書き込み、ログに出します（数式はそのまま）。
   - それ以外の数式（`=IF(...)` など）は上書きせず、行とチケット番号をエラーとしてログに出します（終了コード1）。ログの番号を手で入力してください（**入力せずに再実行すると二重作成になります**）。
   - テーブルにチケットID列がない場合は、Redmine に書き込む前にエラーで終了します（テーブルに列を追加してください）。シート指定・先頭シートの場合は従来どおりヘッダの末尾に列を追加します。
+
+### サンプル（Excel）
+
+`samples/sample-wbs.xlsx`（とマクロ有効形式の `samples/sample-wbs.xlsm`。マクロは入っていません）は、取込用テーブルを使う WBS の例です。
+
+| シート | 内容 |
+|--------|------|
+| 1枚目「WBS」 | 人が見る・編集する表。タイトル行、大分類・中分類の縦のセル結合、色、ツールが使わない列（No・担当・工数・備考）、区切り行あり。4行目が見出し |
+| 2枚目「取込」 | テーブル **`取込表`**（3行目が見出し、1行目は注意書き）。列は チケットID・トラッカー・大分類〜タスク・着手予定・完了予定・ステータス・進捗率。各セルは `=WBS!$B$5` のような「WBS」シートへの参照（結合セルは結合範囲の先頭セルを参照、進捗率は `=IF(WBS!$M$5="","",ROUND(WBS!$M$5*100,0))` で 50% → 50） |
+
+- 大分類の直下のタスク（例: 要件定義書レビュー）、中分類の直下のタスク（例: 画面一覧作成）を含みます。
+- `チケットID` 列は単純な参照なので、新規作成したチケット番号は「WBS」シートの `チケットID` 列に書き込まれます。
+- 試し方: 配布版の `sync-config.yml`（`excel.table: "取込表"` が有効）の Redmine 接続先を設定して、`--dry-run` で確認してから本実行します。
+
+```bash
+java -jar target/redmineUpster.jar --sync --config=packaging/dist/sync-config.yml --file=samples/sample-wbs.xlsx --dry-run
+```
+
+- サンプルは `src/test/java/mozaki/redmineUpster/samples/SampleWorkbookGenerator.java`（Apache POI）で作成しています。数式の計算結果を保存し、Excel で開いたときにも再計算されるようにしています。作り直す場合は `mvn -q test-compile` の後、テストのクラスパスで `java mozaki.redmineUpster.samples.SampleWorkbookGenerator samples` を実行します。
 
 ## 旧方式（id列）からの移行
 

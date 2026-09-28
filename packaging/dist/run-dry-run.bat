@@ -1,5 +1,5 @@
 @echo off
-rem Preview only: drag and drop a WBS file (.xlsx / .csv) onto this file.
+rem Preview only: drag and drop a WBS file (.xlsx / .xlsm / .csv) onto this file.
 rem Redmine is NOT changed. The log is saved in the "logs" folder.
 setlocal
 cd /d "%~dp0"

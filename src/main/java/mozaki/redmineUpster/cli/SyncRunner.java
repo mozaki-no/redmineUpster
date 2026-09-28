@@ -126,7 +126,13 @@ public class SyncRunner {
             ExcelSource excelSource = resolveExcelSource(projectConfig, cliExcelSource);
             boolean isCsv = filePath.toLowerCase().endsWith(".csv");
             if (isCsv && !excelSource.isDefault()) {
-                logger.warn("CSVファイルのため、シート・テーブルの指定（" + excelSource.describe() + "）は無視します");
+                String message = "CSVファイルのため、シート・テーブルの指定（" + excelSource.describe() + "）は無視します";
+                if (cliExcelSource != null && !cliExcelSource.isDefault()) {
+                    logger.warn(message);
+                } else {
+                    // 設定ファイルの sync.excel（配布版の既定は table: 取込表）は CSV では使わないだけなので警告にしない
+                    logger.info(message);
+                }
                 excelSource = ExcelSource.DEFAULT;
             }
             logger.info("Parsing file: " + filePath + (isCsv ? "" : "（" + excelSource.describe() + "）"));
