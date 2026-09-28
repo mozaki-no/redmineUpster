@@ -25,7 +25,7 @@ import mozaki.redmineUpster.util.ColumnDefinitions;
  * <p>
  * CLI同期モードの統合フローを実装します。
  * 設定ファイル読み込み、CSV/Excel解析、差分計算・検証、同期実行、チケットIDの書き戻しを行います。
- * DBには差分/履歴を保存せず、インメモリで処理します。
+ * DBは使わず、同期開始時にRedmineから取得したプロジェクトのチケットを正として処理します。
  * </p>
  */
 @Component
@@ -127,22 +127,30 @@ public class SyncRunner {
             logger.info("  CREATE: " + createCount);
             logger.info("  UPDATE: " + updateCount);
 
+            // 7. 同期先プロジェクトのチケットを全件取得（DBの代わりにRedmineの現在の状態を正とする）
+            logger.info("Fetching issues of project " + client.getProjectId() + " from Redmine...");
+            Map<Long, Map<String, Object>> projectIssues = client.listProjectIssues();
+            logger.info("Fetched " + projectIssues.size() + " issues (closed included, subprojects excluded)");
+
             Set<Long> excelIssueIds = new HashSet<>();
             for (DiffItem item : items) {
                 if (item.issueId() != null) {
                     excelIssueIds.add(item.issueId());
                 }
             }
-            List<Long> deleteCandidates = diffCalculator.findLogicalDeleteCandidates(excelIssueIds,
-                    client.getProjectId());
-            logger.info("  LOGICAL_DELETE candidates: " + deleteCandidates.size());
+            Integer deleteStatusId = projectConfig.getSync() != null && projectConfig.getSync().getDeletion() != null
+                    ? projectConfig.getSync().getDeletion().getStatusId() : null;
+            List<Long> deleteCandidates = DiffCalculator.findLogicalDeleteCandidates(excelIssueIds, projectIssues,
+                    deleteStatusId);
+            logger.info("  LOGICAL_DELETE candidates: " + deleteCandidates.size()
+                    + "（Excelにないプロジェクト内のチケット。Redmineで手動作成したチケットも含みます）");
 
-            // 7. 同期実行
+            // 8. 同期実行
             logger.info("Executing sync...");
-            SyncResult result = syncExecutor.execute(items, deleteCandidates, projectConfig, client, dryRun, logger,
-                    forceUpdate);
+            SyncResult result = syncExecutor.execute(items, projectIssues, deleteCandidates, projectConfig, client,
+                    dryRun, logger, forceUpdate);
 
-            // 8. 新規作成したチケットIDを入力ファイルへ書き戻す
+            // 9. 新規作成したチケットIDを入力ファイルへ書き戻す
             boolean writeBackFailed = false;
             if (!dryRun && !result.createdIssueIds().isEmpty()) {
                 try {
@@ -159,7 +167,7 @@ public class SyncRunner {
                 }
             }
 
-            // 9. 結果出力
+            // 10. 結果出力
             logger.info("=== Sync Complete ===");
             logger.info("Total: " + result.totalCount());
             logger.info("Success: " + result.successCount());

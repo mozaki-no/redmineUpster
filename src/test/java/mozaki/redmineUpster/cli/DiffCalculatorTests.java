@@ -22,8 +22,6 @@ import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.TrackerConfig;
-import mozaki.redmineUpster.domain.IssueLinkEntity;
-import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 
@@ -32,8 +30,7 @@ class DiffCalculatorTests {
 	private static final List<String> HEADERS = List.of(
 			"チケットID", "トラッカー", "L1", "L2", "L3", "開始日", "期限", "状態", "進捗率");
 
-	private final IssueLinkRepository repository = Mockito.mock(IssueLinkRepository.class);
-	private final DiffCalculator calculator = new DiffCalculator(repository);
+	private final DiffCalculator calculator = new DiffCalculator();
 
 	private static ProjectConfig projectConfig() {
 		ColumnsConfig columns = new ColumnsConfig();
@@ -250,16 +247,25 @@ class DiffCalculatorTests {
 		assertThat(item.payload().get("progress")).isEqualTo(40);
 	}
 
-	@Test
-	@DisplayName("論理削除候補は同じプロジェクトのissue_linkのうちExcelにないチケット")
-	void findLogicalDeleteCandidates_selectsMissingIssues() {
-		when(repository.findAllByProjectId("proj")).thenReturn(List.of(
-				new IssueLinkEntity(10L, "proj"),
-				new IssueLinkEntity(30L, "proj"),
-				new IssueLinkEntity(20L, "proj")));
+	private static Map<String, Object> redmineIssue(long id, long statusId) {
+		return Map.of("id", id, "subject", "S" + id, "status", Map.of("id", statusId));
+	}
 
-		assertThat(calculator.findLogicalDeleteCandidates(Set.of(10L, 99L), "proj")).containsExactly(20L, 30L);
-		assertThat(calculator.findLogicalDeleteCandidates(Set.of(), " ")).isEmpty();
+	@Test
+	@DisplayName("論理削除候補はRedmineのプロジェクト内でExcelにないチケット（手動作成分も含み、削除済みステータスは除く）")
+	void findLogicalDeleteCandidates_selectsMissingIssues() {
+		Map<Long, Map<String, Object>> projectIssues = new LinkedHashMap<>();
+		projectIssues.put(30L, redmineIssue(30, 1)); // Excelにない（手動作成を含む）
+		projectIssues.put(10L, redmineIssue(10, 1)); // Excelにある
+		projectIssues.put(20L, redmineIssue(20, 2)); // Excelにない
+		projectIssues.put(40L, redmineIssue(40, 6)); // 既に論理削除ステータス
+
+		assertThat(DiffCalculator.findLogicalDeleteCandidates(Set.of(10L, 99L), projectIssues, 6))
+				.containsExactly(20L, 30L);
+		// ステータス未設定なら既に何のステータスでも候補（警告ログ用）
+		assertThat(DiffCalculator.findLogicalDeleteCandidates(Set.of(10L), projectIssues, null))
+				.containsExactly(20L, 30L, 40L);
+		assertThat(DiffCalculator.findLogicalDeleteCandidates(Set.of(), Map.of(), 6)).isEmpty();
 	}
 
 	@Test

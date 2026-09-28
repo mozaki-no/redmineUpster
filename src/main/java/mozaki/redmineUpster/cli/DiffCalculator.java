@@ -21,13 +21,10 @@ import java.util.TreeSet;
 
 import org.springframework.stereotype.Component;
 
-import lombok.RequiredArgsConstructor;
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.TrackerConfig;
-import mozaki.redmineUpster.domain.IssueLinkEntity;
-import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.util.ColumnDefinitions;
 import mozaki.redmineUpster.util.StringUtils;
@@ -47,13 +44,10 @@ import mozaki.redmineUpster.util.StringUtils;
  * </p>
  */
 @Component
-@RequiredArgsConstructor
 public class DiffCalculator {
 
     private static final String KEY_SEPARATOR = "\u001F";
     private static final String PATH_DELIMITER = " > ";
-
-    private final IssueLinkRepository issueLinkRepository;
 
     /**
      * 差分を計算します。
@@ -214,24 +208,33 @@ public class DiffCalculator {
     /**
      * 論理削除の候補を求めます。
      * <p>
-     * issue_link に記録された（このツールが作成・更新した）同じプロジェクトのチケットのうち、
-     * 今回のExcelに存在しないチケットIDを返します。
+     * 同期開始時にRedmineから取得した同期先プロジェクトのチケット（手動作成したものも含む）のうち、
+     * 今回のExcelに存在しないチケットIDを返します。論理削除ステータスが指定されている場合、
+     * 既にそのステータスのチケットは除外します。
      * </p>
      *
-     * @param excelIssueIds Excelに記載されたチケットID（今回新規作成したものも含める）
-     * @param projectId RedmineプロジェクトID
+     * @param excelIssueIds Excelに記載されたチケットID
+     * @param projectIssues 同期先プロジェクトのチケット（チケットID → チケット情報）
+     * @param deleteStatusId 論理削除ステータスID（未設定ならnull）
      * @return 論理削除候補のチケットID（昇順）
      */
-    public List<Long> findLogicalDeleteCandidates(Collection<Long> excelIssueIds, String projectId) {
-        if (projectId == null || projectId.isBlank()) {
+    public static List<Long> findLogicalDeleteCandidates(Collection<Long> excelIssueIds,
+            Map<Long, Map<String, Object>> projectIssues, Integer deleteStatusId) {
+        if (projectIssues == null || projectIssues.isEmpty()) {
             return List.of();
         }
         Set<Long> present = new HashSet<>(excelIssueIds);
         Set<Long> candidates = new TreeSet<>();
-        for (IssueLinkEntity link : issueLinkRepository.findAllByProjectId(projectId)) {
-            if (link.getIssueId() != null && !present.contains(link.getIssueId())) {
-                candidates.add(link.getIssueId());
+        for (Map.Entry<Long, Map<String, Object>> entry : projectIssues.entrySet()) {
+            Long issueId = entry.getKey();
+            if (present.contains(issueId)) {
+                continue;
             }
+            Long statusId = IssueComparator.nestedId(entry.getValue(), "status");
+            if (deleteStatusId != null && statusId != null && statusId.longValue() == deleteStatusId.longValue()) {
+                continue;
+            }
+            candidates.add(issueId);
         }
         return new ArrayList<>(candidates);
     }

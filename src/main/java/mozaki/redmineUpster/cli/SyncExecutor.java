@@ -1,7 +1,6 @@
 package mozaki.redmineUpster.cli;
 
 import static mozaki.redmineUpster.cli.SyncConstants.ACTION_CREATE;
-import static mozaki.redmineUpster.cli.SyncConstants.LOGICAL_DELETE_HASH_PREFIX;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_CLOSED;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_IN_PROGRESS;
 import static mozaki.redmineUpster.cli.SyncConstants.STATUS_MODE_BY_DATES;
@@ -17,20 +16,15 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
 
-import lombok.RequiredArgsConstructor;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
-import mozaki.redmineUpster.domain.IssueLinkEntity;
-import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.util.DateParser;
-import mozaki.redmineUpster.util.PayloadHashUtils;
 
 /**
  * 同期実行クラス。
@@ -38,32 +32,32 @@ import mozaki.redmineUpster.util.PayloadHashUtils;
  * 差分アイテムを親→子の順にRedmineへ反映します。
  * <ul>
  *   <li>CREATE: チケットを作成し、同じ実行内で子の parent_issue_id に作成したIDを渡す</li>
- *   <li>UPDATE: チケットの存在・プロジェクトを確認してから更新（親も階層から再設定）</li>
- *   <li>論理削除: Excelから消えた管理対象チケットのステータスを変更（物理削除はしない）</li>
+ *   <li>UPDATE: 同期開始時に取得したプロジェクトのチケットに含まれることを確認し、
+ *       送信内容と現在の値に違いがあれば更新（親も階層から再設定）</li>
+ *   <li>論理削除: Excelにないプロジェクト内のチケットのステータスを変更（物理削除はしない）</li>
  * </ul>
- * 成功時は issue_link（issue_id, project_id, payload_hash）を保存します。
+ * DBは使わず、Redmineの現在の状態を正とします。
  * </p>
  */
 @Component
-@RequiredArgsConstructor
 public class SyncExecutor {
-
-    private final IssueLinkRepository issueLinkRepository;
 
     /**
      * 同期を実行します。
      *
      * @param items 差分アイテム
+     * @param projectIssues 同期開始時に取得した同期先プロジェクトのチケット（チケットID → チケット情報）
      * @param logicalDeleteCandidates 論理削除候補のチケットID
      * @param projectConfig プロジェクト設定
      * @param client Redmineクライアント
-     * @param dryRun ドライランの場合はtrue（Redmineへの書き込みとissue_linkの保存を行わない）
+     * @param dryRun ドライランの場合はtrue（Redmineへの書き込みを行わない）
      * @param logger ファイルロガー
      * @param forceUpdate 変更なしスキップを無効化する場合はtrue
      * @return 同期結果
      */
     public SyncResult execute(
             List<DiffItem> items,
+            Map<Long, Map<String, Object>> projectIssues,
             List<Long> logicalDeleteCandidates,
             ProjectConfig projectConfig,
             RedmineClient client,
@@ -76,6 +70,7 @@ public class SyncExecutor {
         List<String> errors = new ArrayList<>();
         Map<Integer, Long> createdIssueIds = new LinkedHashMap<>();
 
+        Map<Long, Map<String, Object>> currentIssues = projectIssues == null ? Map.of() : projectIssues;
         Map<String, String> customFieldMap = getCustomFieldMap(projectConfig);
         List<String> customFieldDateColumns = getCustomFieldDateColumns(projectConfig);
         String projectId = client.getProjectId();
@@ -114,13 +109,12 @@ public class SyncExecutor {
                     }
                 } else {
                     // 最上位の行は親を空にする（Excelで最上位に移動した場合に親子関係を解除する。
-                    // 作成時も同じ値にして、次回更新時のハッシュ比較で差分が出ないようにする）
+                    // Redmineの現在値と比較するときは「親なし」と同じ扱いになる）
                     parentIssueId = "";
                 }
 
                 Map<String, Object> issuePayload = buildIssuePayload(item, projectId, parentIssueId, projectConfig,
                         customFieldMap, customFieldDateColumns);
-                String payloadHash = PayloadHashUtils.hashPayload(issuePayload);
 
                 if (ACTION_CREATE.equalsIgnoreCase(item.action())) {
                     if (dryRun) {
@@ -141,39 +135,41 @@ public class SyncExecutor {
                     }
                     rowIssueIds.put(item.rowNumber(), issueId);
                     createdIssueIds.put(item.rowNumber(), issueId);
-                    saveLink(issueId, projectId, payloadHash);
                     logger.info("created issue " + issueId + " for " + item.label());
                     successCount++;
                     continue;
                 }
 
                 Long issueId = item.issueId();
-                Optional<IssueLinkEntity> link = issueLinkRepository.findByIssueIdAndProjectId(issueId, projectId);
-                if (!forceUpdate && link.isPresent() && payloadHash.equals(link.get().getPayloadHash())) {
+                Map<String, Object> current = currentIssues.get(issueId);
+                if (current == null) {
+                    failedRows.add(item.rowNumber());
+                    addError(errors, logger, "更新失敗: " + item.label() + " 理由=" + describeMissing(client, issueId));
+                    continue;
+                }
+                List<String> changed = new ArrayList<>(IssueComparator.changedFields(issuePayload, current));
+                if (parentIssueId == null) {
+                    // dry-runで親が新規作成予定の場合（親IDは本実行で確定する）
+                    changed.add("parent_issue_id");
+                }
+                if (!forceUpdate && changed.isEmpty()) {
                     logger.info("skipped update for " + item.label() + " (no changes)");
                     successCount++;
                     continue;
                 }
-                String problem = verifyIssue(client, issueId);
-                if (problem != null) {
-                    failedRows.add(item.rowNumber());
-                    addError(errors, logger, "更新失敗: " + item.label() + " 理由=" + problem);
-                    continue;
-                }
+                String changes = forceUpdate && changed.isEmpty() ? "(force-update)" : String.join(",", changed);
                 if (dryRun) {
                     logger.info("DRY_RUN UPDATE " + item.label() + " subject=" + item.subject()
                             + " tracker_id=" + item.trackerId()
-                            + (item.parentRowNumber() != null ? " parent=行" + item.parentRowNumber() : ""));
+                            + (item.parentRowNumber() != null ? " parent=行" + item.parentRowNumber() : "")
+                            + " changes=" + changes);
                     successCount++;
                     continue;
                 }
                 logger.debug("API Request: PUT " + client.getBaseUrl() + "/issues/" + issueId + ".json");
                 logger.debug("Request body: " + formatPayloadForLog(issuePayload));
                 client.updateIssue(issueId, issuePayload);
-                IssueLinkEntity entity = link.orElseGet(() -> new IssueLinkEntity(issueId, projectId));
-                entity.setPayloadHash(payloadHash);
-                issueLinkRepository.save(entity);
-                logger.info("updated issue " + issueId + " for " + item.label());
+                logger.info("updated issue " + issueId + " for " + item.label() + " changes=" + changes);
                 successCount++;
             } catch (RuntimeException ex) {
                 failedRows.add(item.rowNumber());
@@ -181,21 +177,20 @@ public class SyncExecutor {
             }
         }
 
-        // 論理削除（Excelから消えた管理対象チケット）
+        // 論理削除（Excelにないプロジェクト内のチケット。Redmineで手動作成したチケットも含む）
         Integer deleteStatusId = getLogicalDeleteStatusId(projectConfig);
         List<Long> candidates = logicalDeleteCandidates == null ? List.of() : logicalDeleteCandidates;
         if (!candidates.isEmpty() && deleteStatusId == null) {
             for (Long issueId : candidates) {
-                logger.warn("論理削除候補: #" + issueId
+                logger.warn("論理削除候補: " + describeIssue(issueId, currentIssues)
                         + "（Excelに存在しません。sync.deletion.statusId が未設定のため変更しません）");
             }
         } else if (deleteStatusId != null) {
             for (Long issueId : candidates) {
                 totalCount++;
                 try {
-                    if (logicallyDelete(issueId, deleteStatusId, projectId, client, dryRun, logger)) {
-                        successCount++;
-                    }
+                    logicallyDelete(issueId, deleteStatusId, currentIssues, client, dryRun, logger);
+                    successCount++;
                 } catch (RuntimeException ex) {
                     addError(errors, logger, formatError("論理削除 #" + issueId, ex));
                 }
@@ -207,77 +202,46 @@ public class SyncExecutor {
 
     /**
      * 1件の論理削除（ステータス変更）を行います。
-     *
-     * @return 成功（スキップを含む）の場合はtrue
      */
-    private boolean logicallyDelete(Long issueId, Integer statusId, String projectId, RedmineClient client,
-            boolean dryRun, FileLogger logger) {
-        String marker = LOGICAL_DELETE_HASH_PREFIX + statusId;
-        Optional<IssueLinkEntity> link = issueLinkRepository.findByIssueIdAndProjectId(issueId, projectId);
-        if (link.isPresent() && marker.equals(link.get().getPayloadHash())) {
-            logger.debug("skip logical delete #" + issueId + " (already logically deleted)");
-            return true;
+    private void logicallyDelete(Long issueId, Integer statusId, Map<Long, Map<String, Object>> currentIssues,
+            RedmineClient client, boolean dryRun, FileLogger logger) {
+        String label = describeIssue(issueId, currentIssues);
+        Long currentStatus = IssueComparator.nestedId(currentIssues.get(issueId), "status");
+        if (currentStatus != null && currentStatus.longValue() == statusId.longValue()) {
+            logger.debug("skip logical delete " + label + " (already status_id=" + statusId + ")");
+            return;
         }
         if (dryRun) {
-            logger.info("DRY_RUN LOGICAL_DELETE #" + issueId + " status_id=" + statusId);
-            return true;
+            logger.info("DRY_RUN LOGICAL_DELETE " + label + " status_id=" + statusId);
+            return;
         }
-        Map<String, Object> issue = client.getIssue(issueId);
-        if (issue == null) {
-            logger.warn("論理削除対象 #" + issueId + " はRedmineに存在しないため、issue_linkから除外します");
-            link.ifPresent(issueLinkRepository::delete);
-            return true;
-        }
-        Long currentStatus = nestedId(issue, "status");
-        if (currentStatus == null || currentStatus.longValue() != statusId.longValue()) {
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("status_id", statusId.longValue());
-            logger.debug("API Request: PUT " + client.getBaseUrl() + "/issues/" + issueId + ".json (logical delete)");
-            client.updateIssue(issueId, payload);
-            logger.info("logically deleted issue " + issueId + " (status_id=" + statusId + ")");
-        } else {
-            logger.info("skipped logical delete for issue " + issueId + " (already status_id=" + statusId + ")");
-        }
-        IssueLinkEntity entity = link.orElseGet(() -> new IssueLinkEntity(issueId, projectId));
-        entity.setPayloadHash(marker);
-        issueLinkRepository.save(entity);
-        return true;
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("status_id", statusId.longValue());
+        logger.debug("API Request: PUT " + client.getBaseUrl() + "/issues/" + issueId + ".json (logical delete)");
+        client.updateIssue(issueId, payload);
+        logger.info("logically deleted " + label + " (status_id=" + statusId + ")");
+    }
+
+    private static String describeIssue(Long issueId, Map<Long, Map<String, Object>> currentIssues) {
+        Map<String, Object> issue = currentIssues.get(issueId);
+        Object subject = issue == null ? null : issue.get("subject");
+        return "#" + issueId + (subject != null ? " 「" + subject + "」" : "");
     }
 
     /**
-     * 更新対象のチケットが存在し、同期先プロジェクトのものであるかを確認します。
+     * 更新対象のチケットが同期先プロジェクトのチケット一覧に無い理由を調べます。
      *
-     * @return 問題がある場合はその理由、問題なければnull
+     * @return 理由
      */
-    private String verifyIssue(RedmineClient client, Long issueId) {
+    private String describeMissing(RedmineClient client, Long issueId) {
         Map<String, Object> issue = client.getIssue(issueId);
         if (issue == null) {
             return "チケット#" + issueId + " がRedmineに存在しません";
         }
-        Long actualProject = nestedId(issue, "project");
-        Long expectedProject = client.getProjectNumericId();
-        if (actualProject != null && expectedProject != null && !actualProject.equals(expectedProject)) {
-            Object project = issue.get("project");
-            String name = project instanceof Map<?, ?> map && map.get("name") != null
-                    ? String.valueOf(map.get("name")) : String.valueOf(actualProject);
-            return "チケット#" + issueId + " は別プロジェクト（" + name + "）のチケットです";
-        }
-        return null;
-    }
-
-    private static Long nestedId(Map<String, Object> issue, String key) {
-        Object value = issue.get(key);
-        if (value instanceof Map<?, ?> map && map.get("id") instanceof Number number) {
-            return number.longValue();
-        }
-        return null;
-    }
-
-    private void saveLink(Long issueId, String projectId, String payloadHash) {
-        IssueLinkEntity entity = issueLinkRepository.findByIssueIdAndProjectId(issueId, projectId)
-                .orElseGet(() -> new IssueLinkEntity(issueId, projectId));
-        entity.setPayloadHash(payloadHash);
-        issueLinkRepository.save(entity);
+        Object project = issue.get("project");
+        String name = project instanceof Map<?, ?> map && map.get("name") != null
+                ? String.valueOf(map.get("name")) : String.valueOf(IssueComparator.nestedId(issue, "project"));
+        return "チケット#" + issueId + " は別プロジェクト（" + name + "）のチケットです";
     }
 
     /**
