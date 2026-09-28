@@ -1,6 +1,7 @@
 package mozaki.redmineUpster.service;
 
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.http.client.BufferingClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -26,7 +27,10 @@ public class RedmineClientFactory {
 	 * @param defaultProperties デフォルトのRedmine設定
 	 */
 	public RedmineClientFactory(RestTemplateBuilder builder, RedmineProperties defaultProperties) {
-		this.restTemplate = builder.requestFactory(SimpleClientHttpRequestFactory::new).build();
+		// リクエストボディをバッファして Content-Length 付きで送る（chunked 送信を受け付けないサーバー・プロキシ対策）
+		this.restTemplate = builder
+				.requestFactory(() -> new BufferingClientHttpRequestFactory(new SimpleClientHttpRequestFactory()))
+				.build();
 		this.defaultProperties = defaultProperties;
 	}
 
