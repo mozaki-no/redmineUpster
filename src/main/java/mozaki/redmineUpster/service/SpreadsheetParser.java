@@ -61,70 +61,38 @@ public class SpreadsheetParser {
 	}
 
 	/**
-	 * ファイルパスからスプレッドシートを解析します（階層列の前行値補完なし）。
+	 * ファイルパスからスプレッドシートを解析します。
+	 * <p>
+	 * 値はファイルのまま読み取り、階層列の空欄を前行の値で補完することはしません
+	 * （補完は {@code sync.columns.fillDownHierarchy: true} のとき DiffCalculator が行います）。
+	 * xlsx/xls の縦方向のセル結合は、結合範囲の先頭セルの値として読み取ります（全列）。
+	 * </p>
 	 *
 	 * @param filePath ファイルパス
 	 * @return 解析結果
 	 * @throws IOException 解析に失敗した場合
 	 */
 	public ParsedSheet parseFromPath(String filePath) throws IOException {
-		return parseFromPath(filePath, List.of());
-	}
-
-	/**
-	 * ファイルパスからスプレッドシートを解析します（階層列の前行値補完なし）。
-	 * <p>
-	 * 階層列の空欄は「その階層を飛ばした」ことを表すため、前行の値では補完しません。
-	 * xlsx/xls のセル結合（縦方向）は、結合範囲の先頭セルの値として読み取ります。
-	 * </p>
-	 *
-	 * @param filePath ファイルパス
-	 * @param hierarchyColumns 階層列（浅い順）
-	 * @return 解析結果
-	 * @throws IOException 解析に失敗した場合
-	 */
-	public ParsedSheet parseFromPath(String filePath, List<String> hierarchyColumns) throws IOException {
-		return parseFromPath(filePath, hierarchyColumns, false);
-	}
-
-	/**
-	 * ファイルパスからスプレッドシートを解析します。
-	 * <p>
-	 * xlsx/xls のセル結合（縦方向）は、結合範囲の先頭セルの値として読み取ります（全列）。
-	 * fillDownHierarchy が true の場合のみ、hierarchyColumns（浅い順）の空欄を前行の値で補完します
-	 * （旧来の動作）。補完するのは「その行でより深い階層列に値がある」空欄だけで、ある階層列に前行と
-	 * 異なる値が入った場合、それより深い列の前行値は引き継ぎません。この場合、階層を飛ばした行は作れません。
-	 * </p>
-	 *
-	 * @param filePath ファイルパス
-	 * @param hierarchyColumns 階層列（浅い順）
-	 * @param fillDownHierarchy 階層列の空欄を前行の値で補完する場合 true
-	 * @return 解析結果
-	 * @throws IOException 解析に失敗した場合
-	 */
-	public ParsedSheet parseFromPath(String filePath, List<String> hierarchyColumns, boolean fillDownHierarchy)
-			throws IOException {
 		Path path = Paths.get(filePath);
 		if (!Files.exists(path)) {
 			throw new IOException("File not found: " + filePath);
 		}
-		List<String> fillColumns = fillDownHierarchy && hierarchyColumns != null ? hierarchyColumns : List.of();
 		String filename = path.getFileName().toString();
 		if (filename.toLowerCase().endsWith(".csv")) {
-			return parseCsvFromPath(path, fillColumns);
+			return parseCsvFromPath(path);
 		}
-		return parseExcelFromPath(path, fillColumns);
+		return parseExcelFromPath(path);
 	}
 
 	/**
 	 * CSVファイルをパスから解析します。
 	 * 文字コード（UTF-8 / BOM付きUTF-8 / Windows-31J）は自動判定します。
 	 */
-	private ParsedSheet parseCsvFromPath(Path path, List<String> hierarchyColumns) throws IOException {
+	private ParsedSheet parseCsvFromPath(Path path) throws IOException {
 		byte[] bytes = Files.readAllBytes(path);
 		CsvFileFormat format = CsvFileFormat.detect(bytes);
 		try (CSVReader csv = newCsvReader(format.decode(bytes))) {
-			return parseCsvInternal(csv, hierarchyColumns);
+			return parseCsvInternal(csv);
 		} catch (CsvValidationException e) {
 			throw new IOException("Failed to parse CSV", e);
 		}
@@ -133,10 +101,10 @@ public class SpreadsheetParser {
 	/**
 	 * Excelファイルをパスから解析します（先頭シートのみ）。
 	 */
-	private ParsedSheet parseExcelFromPath(Path path, List<String> hierarchyColumns) throws IOException {
+	private ParsedSheet parseExcelFromPath(Path path) throws IOException {
 		try (InputStream is = new FileInputStream(path.toFile());
 				Workbook workbook = WorkbookFactory.create(is)) {
-			return parseExcelInternal(workbook, hierarchyColumns);
+			return parseExcelInternal(workbook);
 		}
 	}
 
@@ -144,7 +112,7 @@ public class SpreadsheetParser {
 		byte[] bytes = file.getBytes();
 		CsvFileFormat format = CsvFileFormat.detect(bytes);
 		try (CSVReader csv = newCsvReader(format.decode(bytes))) {
-			return parseCsvInternal(csv, List.of());
+			return parseCsvInternal(csv);
 		} catch (CsvValidationException e) {
 			throw new IOException("Failed to parse CSV", e);
 		}
@@ -154,7 +122,7 @@ public class SpreadsheetParser {
 	 * CSVReaderからデータを解析する内部メソッド。
 	 * 行番号はCSVのレコード番号（ヘッダ=1、最初のデータ行=2）です。
 	 */
-	private ParsedSheet parseCsvInternal(CSVReader csv, List<String> hierarchyColumns)
+	private ParsedSheet parseCsvInternal(CSVReader csv)
 			throws IOException, CsvValidationException {
 		String[] headerRow = csv.readNext();
 		if (headerRow == null) {
@@ -164,7 +132,6 @@ public class SpreadsheetParser {
 		for (String header : headerRow) {
 			headers.add(normalize(header));
 		}
-		HierarchyFiller filler = new HierarchyFiller(headers, hierarchyColumns);
 		List<Map<String, String>> rows = new ArrayList<>();
 		List<Integer> rowNumbers = new ArrayList<>();
 		String[] row;
@@ -183,7 +150,7 @@ public class SpreadsheetParser {
 			if (allBlank) {
 				continue;
 			}
-			rows.add(toRowMap(headers, filler.fill(normalized)));
+			rows.add(toRowMap(headers, normalized));
 			rowNumbers.add(recordNumber);
 		}
 		return new ParsedSheet(headers, rows, rowNumbers);
@@ -191,7 +158,7 @@ public class SpreadsheetParser {
 
 	private ParsedSheet parseExcel(MultipartFile file) throws IOException {
 		try (Workbook workbook = WorkbookFactory.create(file.getInputStream())) {
-			return parseExcelInternal(workbook, List.of());
+			return parseExcelInternal(workbook);
 		}
 	}
 
@@ -199,7 +166,7 @@ public class SpreadsheetParser {
 	 * Workbookからデータを解析する内部メソッド。
 	 * 行番号はExcelの表示行番号（1始まり）です。
 	 */
-	private ParsedSheet parseExcelInternal(Workbook workbook, List<String> hierarchyColumns) {
+	private ParsedSheet parseExcelInternal(Workbook workbook) {
 		Sheet sheet = workbook.getSheetAt(0);
 		Row headerRow = sheet.getRow(sheet.getFirstRowNum());
 		if (headerRow == null) {
@@ -209,7 +176,6 @@ public class SpreadsheetParser {
 		for (int i = 0; i < headerRow.getLastCellNum(); i++) {
 			headers.add(normalize(getCellString(headerRow.getCell(i))));
 		}
-		HierarchyFiller filler = new HierarchyFiller(headers, hierarchyColumns);
 		List<CellRangeAddress> verticalMerges = new ArrayList<>();
 		for (CellRangeAddress region : sheet.getMergedRegions()) {
 			if (region.getLastRow() > region.getFirstRow()) {
@@ -235,7 +201,7 @@ public class SpreadsheetParser {
 			if (allBlank) {
 				continue;
 			}
-			rows.add(toRowMap(headers, filler.fill(normalized)));
+			rows.add(toRowMap(headers, normalized));
 			rowNumbers.add(rowIndex + 1);
 		}
 		return new ParsedSheet(headers, rows, rowNumbers);
@@ -322,50 +288,6 @@ public class SpreadsheetParser {
 			v = v.substring(1);
 		}
 		return v.trim();
-	}
-
-	/**
-	 * 階層列の前行値補完を行うヘルパー（sync.columns.fillDownHierarchy: true のときのみ使用）。
-	 */
-	private static final class HierarchyFiller {
-		private final int[] indexes;
-		private final String[] lastValues;
-
-		private HierarchyFiller(List<String> headers, List<String> hierarchyColumns) {
-			List<Integer> found = new ArrayList<>();
-			for (String column : hierarchyColumns == null ? List.<String>of() : hierarchyColumns) {
-				int idx = headers.indexOf(column);
-				if (idx >= 0) {
-					found.add(idx);
-				}
-			}
-			this.indexes = found.stream().mapToInt(Integer::intValue).toArray();
-			this.lastValues = new String[indexes.length];
-			java.util.Arrays.fill(lastValues, "");
-		}
-
-		private String[] fill(String[] values) {
-			int deepest = -1;
-			for (int k = 0; k < indexes.length; k++) {
-				if (!values[indexes[k]].isBlank()) {
-					deepest = k;
-				}
-			}
-			for (int k = 0; k < indexes.length; k++) {
-				String v = values[indexes[k]];
-				if (!v.isBlank()) {
-					if (!v.equals(lastValues[k])) {
-						for (int j = k + 1; j < indexes.length; j++) {
-							lastValues[j] = "";
-						}
-					}
-					lastValues[k] = v;
-				} else if (k < deepest) {
-					values[indexes[k]] = lastValues[k];
-				}
-			}
-			return values;
-		}
 	}
 
 	/**

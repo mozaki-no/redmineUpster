@@ -36,7 +36,8 @@ import mozaki.redmineUpster.util.StringUtils;
  * <ul>
  *   <li>チケットID列が空欄なら CREATE、値があれば UPDATE</li>
  *   <li>親子関係は階層列だけから決定（値が入っている一番深い階層列がその行のレベル。
- *       それより浅い階層列の値がすべて同じで、1つ浅いレベルの行が親）</li>
+ *       その行の値から一番深い値を除いたものと、階層列・値がまったく同じ行が親。
+ *       途中の階層列の空欄は「その階層を飛ばす」ことを表す）</li>
  *   <li>トラッカーは行ごとのトラッカー列（名前 → ID）</li>
  * </ul>
  * を計算します。親行がない・階層パスの重複・チケットIDの重複や非数値・不明なトラッカーは
@@ -69,10 +70,21 @@ public class DiffCalculator {
         if (availableColumns.isEmpty() && !rows.isEmpty()) {
             availableColumns.addAll(rows.get(0).keySet());
         }
-        List<String> hierarchyColumns = getHierarchyColumns(projectConfig, availableColumns);
-        if (!rows.isEmpty() && !hasAnyColumn(availableColumns, hierarchyColumns)) {
-            errors.add("階層列がファイルに見つかりません: " + hierarchyColumns);
+        HierarchyColumns hierarchy = resolveHierarchyColumns(projectConfig, sheet.headers().isEmpty()
+                ? availableColumns : sheet.headers());
+        if (!rows.isEmpty() && hierarchy.columns().isEmpty()) {
+            errors.add(hierarchy.message());
             return new DiffPlan(List.of(), errors);
+        }
+        if (logger != null) {
+            if (hierarchy.message() != null) {
+                logger.warn(hierarchy.message());
+            }
+            logger.info("階層列: " + String.join(" > ", hierarchy.columns()));
+        }
+        List<String> hierarchyColumns = hierarchy.columns();
+        if (isFillDownHierarchy(projectConfig)) {
+            rows = fillDownHierarchy(rows, hierarchyColumns);
         }
         ColumnNames names = new ColumnNames(projectConfig);
         List<String> customFieldColumns = getCustomFieldColumns(projectConfig);
@@ -262,23 +274,126 @@ public class DiffCalculator {
      *
      * @param projectConfig プロジェクト設定
      * @param availableColumns ファイルのヘッダ
-     * @return 階層列（浅い順）
+     * @return 階層列（浅い順。ファイルにある列だけ）
      */
-    public static List<String> getHierarchyColumns(ProjectConfig projectConfig, Set<String> availableColumns) {
-        if (projectConfig != null && projectConfig.getSync() != null && projectConfig.getSync().getColumns() != null) {
-            ColumnsConfig columns = projectConfig.getSync().getColumns();
-            if (columns.getHierarchy() != null && !columns.getHierarchy().isEmpty()) {
-                List<String> configured = columns.getHierarchy();
-                if (availableColumns.isEmpty() || hasAnyColumn(availableColumns, configured)) {
-                    return configured;
-                }
+    public static List<String> getHierarchyColumns(ProjectConfig projectConfig, Collection<String> availableColumns) {
+        return resolveHierarchyColumns(projectConfig, availableColumns).columns();
+    }
+
+    /**
+     * 階層列の決定結果。
+     *
+     * @param columns 使用する階層列（浅い順。ファイルにある列だけ。見つからなければ空）
+     * @param message 警告（設定と異なる列を使う場合）またはエラー（columns が空の場合）。問題なければ null
+     */
+    public record HierarchyColumns(List<String> columns, String message) {
+    }
+
+    /**
+     * 階層列を決定します。
+     * <p>
+     * 候補は「設定の hierarchy」「既定（大分類〜タスク）」「旧形式（Lv.01〜Lv.06 ＋ タスク）」で、
+     * ファイルのヘッダに存在する列が最も多い候補を使います（同数なら設定 → 既定 → 旧形式の順）。
+     * 使うのは候補のうちファイルに存在する列だけです。以前は設定の列が1つでもファイルにあれば
+     * （例: 共通の「タスク」列だけ）設定をそのまま使っていたため、Lv.* 形式のファイルで
+     * 「階層列がすべて空」になっていました。
+     * </p>
+     *
+     * @param projectConfig プロジェクト設定
+     * @param headers ファイルのヘッダ（空の場合は設定または既定をそのまま返す）
+     * @return 決定結果
+     */
+    public static HierarchyColumns resolveHierarchyColumns(ProjectConfig projectConfig, Collection<String> headers) {
+        List<String> configured = null;
+        if (projectConfig != null && projectConfig.getSync() != null && projectConfig.getSync().getColumns() != null
+                && projectConfig.getSync().getColumns().getHierarchy() != null
+                && !projectConfig.getSync().getColumns().getHierarchy().isEmpty()) {
+            configured = projectConfig.getSync().getColumns().getHierarchy();
+        }
+        if (headers == null || headers.isEmpty()) {
+            return new HierarchyColumns(configured != null ? configured : ColumnDefinitions.HIERARCHY_COLUMNS, null);
+        }
+        Set<String> available = new HashSet<>(headers);
+        List<String> legacy = new ArrayList<>(ColumnDefinitions.LEGACY_HIERARCHY_COLUMNS);
+        legacy.add(ColumnDefinitions.COL_TASK);
+        List<List<String>> candidates = new ArrayList<>();
+        if (configured != null) {
+            candidates.add(configured);
+        }
+        candidates.add(ColumnDefinitions.HIERARCHY_COLUMNS);
+        candidates.add(legacy);
+
+        List<String> best = candidates.get(0);
+        List<String> bestPresent = List.of();
+        for (List<String> candidate : candidates) {
+            List<String> present = candidate.stream().filter(available::contains).toList();
+            if (present.size() > bestPresent.size()) {
+                best = candidate;
+                bestPresent = present;
             }
         }
-        List<String> detected = detectHierarchyColumns(availableColumns);
-        if (!detected.isEmpty()) {
-            return detected;
+        List<String> expected = configured != null ? configured : ColumnDefinitions.HIERARCHY_COLUMNS;
+        if (bestPresent.isEmpty()) {
+            return new HierarchyColumns(List.of(), "階層列がファイルに見つかりません（設定: " + expected
+                    + "、ファイルのヘッダ: " + headers + "）。sync.columns.hierarchy をファイルの列名に合わせてください");
         }
-        return ColumnDefinitions.HIERARCHY_COLUMNS;
+        String message = null;
+        if (!bestPresent.equals(expected)) {
+            List<String> missing = expected.stream().filter(c -> !available.contains(c)).toList();
+            message = (configured != null ? "設定の階層列 " : "既定の階層列 ") + expected
+                    + (missing.isEmpty() ? "" : " のうち " + missing + " がファイルにありません")
+                    + "。ファイルの列 " + bestPresent + " を階層列として使います"
+                    + (best == configured ? "" : "（sync.columns.hierarchy をファイルの列名に合わせてください）");
+        }
+        return new HierarchyColumns(bestPresent, message);
+    }
+
+    private static boolean isFillDownHierarchy(ProjectConfig projectConfig) {
+        return projectConfig != null && projectConfig.getSync() != null && projectConfig.getSync().getColumns() != null
+                && projectConfig.getSync().getColumns().isFillDownHierarchy();
+    }
+
+    /**
+     * 階層列の空欄を前行の値で補完します（sync.columns.fillDownHierarchy: true の場合のみ。旧来の動作）。
+     * <p>
+     * 補完するのは「その行でより深い階層列に値がある」空欄だけです。一番深い値より右側の空欄は、
+     * その行の階層レベルを表すため補完しません。また、ある階層列に前行と異なる値が入った場合、
+     * それより深い列の前行値は引き継ぎません。この場合、階層を飛ばした行は作れません。
+     * </p>
+     *
+     * @param rows 行データ（変更しない）
+     * @param hierarchyColumns 階層列（浅い順）
+     * @return 補完後の行データ（コピー）
+     */
+    static List<Map<String, String>> fillDownHierarchy(List<Map<String, String>> rows, List<String> hierarchyColumns) {
+        String[] lastValues = new String[hierarchyColumns.size()];
+        java.util.Arrays.fill(lastValues, "");
+        List<Map<String, String>> result = new ArrayList<>();
+        for (Map<String, String> original : rows) {
+            Map<String, String> row = new LinkedHashMap<>(original);
+            int deepest = -1;
+            for (int k = 0; k < hierarchyColumns.size(); k++) {
+                if (!value(row, hierarchyColumns.get(k)).isBlank()) {
+                    deepest = k;
+                }
+            }
+            for (int k = 0; k < hierarchyColumns.size(); k++) {
+                String column = hierarchyColumns.get(k);
+                String v = value(row, column);
+                if (!v.isBlank()) {
+                    if (!v.equals(lastValues[k])) {
+                        for (int j = k + 1; j < lastValues.length; j++) {
+                            lastValues[j] = "";
+                        }
+                    }
+                    lastValues[k] = v;
+                } else if (k < deepest) {
+                    row.put(column, lastValues[k]);
+                }
+            }
+            result.add(row);
+        }
+        return result;
     }
 
     private static Long parseTicketId(String raw) {
@@ -321,37 +436,6 @@ public class DiffCalculator {
             }
         }
         return ColumnDefinitions.CUSTOM_FIELD_COLUMNS;
-    }
-
-    private static boolean hasAnyColumn(Set<String> availableColumns, List<String> candidateColumns) {
-        if (availableColumns == null || availableColumns.isEmpty()) {
-            return false;
-        }
-        for (String candidate : candidateColumns) {
-            if (availableColumns.contains(candidate)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static List<String> detectHierarchyColumns(Set<String> availableColumns) {
-        if (availableColumns == null || availableColumns.isEmpty()) {
-            return List.of();
-        }
-        List<String> defaultMatches = ColumnDefinitions.HIERARCHY_COLUMNS.stream()
-                .filter(availableColumns::contains)
-                .toList();
-        List<String> legacyMatches = ColumnDefinitions.LEGACY_HIERARCHY_COLUMNS.stream()
-                .filter(availableColumns::contains)
-                .toList();
-        if (legacyMatches.size() > defaultMatches.size()) {
-            return legacyMatches;
-        }
-        if (!defaultMatches.isEmpty()) {
-            return ColumnDefinitions.HIERARCHY_COLUMNS;
-        }
-        return legacyMatches;
     }
 
     /**

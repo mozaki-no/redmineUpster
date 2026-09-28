@@ -22,7 +22,6 @@ import mozaki.redmineUpster.service.SpreadsheetParser;
 import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.service.SyncConfigService;
 import mozaki.redmineUpster.service.TicketIdWriter;
-import mozaki.redmineUpster.util.ColumnDefinitions;
 
 /**
  * 同期実行サービス。
@@ -104,14 +103,9 @@ public class SyncRunner {
                 logger.debug("Project ID: " + projectConfig.getRedmine().getProjectId());
             }
 
-            // 4. CSV/Excel解析（階層列の空欄=階層を飛ばす。fillDownHierarchy: true のときのみ前行値で補完）
-            List<String> hierarchyColumns = resolveHierarchyColumns(projectConfig);
-            boolean fillDownHierarchy = projectConfig.getSync() != null
-                    && projectConfig.getSync().getColumns() != null
-                    && projectConfig.getSync().getColumns().isFillDownHierarchy();
+            // 4. CSV/Excel解析（階層列の決定・fillDownHierarchy の補完は差分計算で行う）
             logger.info("Parsing file: " + filePath);
-            logger.debug("Hierarchy columns: " + hierarchyColumns + " fillDownHierarchy=" + fillDownHierarchy);
-            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath, hierarchyColumns, fillDownHierarchy);
+            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath);
             List<Map<String, String>> rows = parsed.rows();
             logger.info("Parsed " + rows.size() + " rows");
             String ticketIdColumn = DiffCalculator.getTicketIdColumn(projectConfig);
@@ -315,18 +309,5 @@ public class SyncRunner {
         } catch (RuntimeException | java.net.URISyntaxException e) {
             return null;
         }
-    }
-
-    /**
-     * 前行値補完の対象とする階層列（浅い順）を返します。
-     */
-    private List<String> resolveHierarchyColumns(ProjectConfig projectConfig) {
-        if (projectConfig.getSync() != null && projectConfig.getSync().getColumns() != null) {
-            List<String> hierarchy = projectConfig.getSync().getColumns().getHierarchy();
-            if (hierarchy != null && !hierarchy.isEmpty()) {
-                return hierarchy;
-            }
-        }
-        return ColumnDefinitions.HIERARCHY_COLUMNS;
     }
 }

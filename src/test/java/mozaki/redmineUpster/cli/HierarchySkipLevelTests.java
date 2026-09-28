@@ -18,11 +18,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import mozaki.redmineUpster.config.SyncConfigProperties;
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
 import mozaki.redmineUpster.service.SpreadsheetParser;
+import mozaki.redmineUpster.service.SyncConfigService;
 import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 
 /**
@@ -61,7 +63,7 @@ class HierarchySkipLevelTests {
 
 	private DiffPlan plan(Path file, boolean fillDown) throws Exception {
 		ProjectConfig config = config(fillDown);
-		ParsedSheet sheet = parser.parseFromPath(file.toString(), HIERARCHY, fillDown);
+		ParsedSheet sheet = parser.parseFromPath(file.toString());
 		return calculator.calculate(sheet, config, new TrackerResolver(config.getSync().getTrackerMap(), null), null);
 	}
 
@@ -163,7 +165,7 @@ class HierarchySkipLevelTests {
 				{ "", "", "", "", "", "", "" },
 		};
 		Path file = writeXlsx(dir, rows, new CellRangeAddress(1, 3, 2, 2));
-		ParsedSheet sheet = parser.parseFromPath(file.toString(), HIERARCHY, false);
+		ParsedSheet sheet = parser.parseFromPath(file.toString());
 		assertThat(sheet.rowNumbers()).containsExactly(2, 3);
 		assertThat(sheet.rows().get(1).get("大分類")).isEqualTo("A");
 	}
@@ -217,5 +219,76 @@ class HierarchySkipLevelTests {
 		assertThat(plan.errors()).anySatisfy(e -> assertThat(e).contains("行4").contains("行3と重複"));
 		// 同じ値でも列（階層）が違えば別の行として扱う
 		assertThat(byRow(plan, 5).parentRowNumber()).isEqualTo(2);
+	}
+
+	@Test
+	@DisplayName("fillDownHierarchy: 一番深い値より左の空欄だけを前行の値で補完する")
+	void fillDownFillsOnlyBlankCellsLeftOfDeepestValue() {
+		List<String> columns = List.of("大分類", "中分類", "小分類");
+		List<Map<String, String>> rows = List.of(
+				Map.of("大分類", "A", "中分類", "", "小分類", ""),
+				Map.of("大分類", "", "中分類", "B", "小分類", ""),
+				Map.of("大分類", "", "中分類", "", "小分類", "C"),
+				Map.of("大分類", "", "中分類", "D", "小分類", ""),
+				Map.of("大分類", "E", "中分類", "", "小分類", ""),
+				Map.of("大分類", "", "中分類", "F", "小分類", ""));
+		List<String> paths = DiffCalculator.fillDownHierarchy(rows, columns).stream()
+				.map(r -> r.get("大分類") + "/" + r.get("中分類") + "/" + r.get("小分類"))
+				.toList();
+		assertThat(paths).containsExactly("A//", "A/B/", "A/B/C", "A/D/", "E//", "E/F/");
+	}
+
+	@Test
+	@DisplayName("回帰: 配布版の設定（大分類〜タスク）で Lv.01〜Lv.05＋タスク のCSVを読むと Lv.* を階層列として使う")
+	void lvFormatCsvWithDistributedConfig() throws Exception {
+		SyncConfigService service = new SyncConfigService(new SyncConfigProperties());
+		service.loadConfig(Path.of("packaging/dist/sync-config.yml").toAbsolutePath().toString());
+		ProjectConfig config = service.getDefaultProject().orElseThrow();
+		assertThat(config.getSync().getColumns().getHierarchy()).contains("大分類", "タスク");
+
+		Path file = Path.of(getClass().getClassLoader().getResource("lv-format-wbs.csv").toURI());
+		ParsedSheet sheet = parser.parseFromPath(file.toString());
+		assertThat(DiffCalculator.resolveHierarchyColumns(config, sheet.headers()).columns())
+				.containsExactly("Lv.01", "Lv.02", "Lv.03", "Lv.04", "Lv.05", "タスク");
+		assertThat(DiffCalculator.resolveHierarchyColumns(config, sheet.headers()).message())
+				.contains("[Lv.01, Lv.02, Lv.03, Lv.04, Lv.05, タスク]");
+
+		DiffPlan plan = calculator.calculate(sheet, config,
+				new TrackerResolver(config.getSync().getTrackerMap(), null), null);
+
+		// 実装 > 認証システム > ... の祖先行がないため、行10だけが親行なしのエラーになる
+		assertThat(plan.errors()).containsExactly(
+				"行10 [実装 > 認証システム > ユーザー認証 > ログイン機能 > ソースコード]: 親行 [実装 > 認証システム > ユーザー認証 > ログイン機能] がファイルにありません");
+		assertThat(byRow(plan, 2).parentRowNumber()).isNull();
+		assertThat(byRow(plan, 3).parentRowNumber()).isEqualTo(2);
+		assertThat(byRow(plan, 4).parentRowNumber()).isEqualTo(3);
+		assertThat(byRow(plan, 5).parentRowNumber()).isEqualTo(4);
+		assertThat(byRow(plan, 6).parentRowNumber()).isEqualTo(5);
+		assertThat(byRow(plan, 7).parentRowNumber()).isEqualTo(6);
+		assertThat(byRow(plan, 7).subject()).isEqualTo("ログイン画面設計");
+		assertThat(byRow(plan, 8).parentRowNumber()).isEqualTo(5);
+		assertThat(byRow(plan, 9).parentRowNumber()).isEqualTo(8);
+		assertThat(byRow(plan, 11).parentRowNumber()).isEqualTo(10);
+		assertThat(byRow(plan, 12).parentRowNumber()).isEqualTo(10);
+	}
+
+	@Test
+	@DisplayName("階層列が1つも見つからない場合は、設定とファイルのヘッダを示してエラーにする")
+	void noHierarchyColumnIsClearError() {
+		ProjectConfig config = config(false);
+		DiffPlan plan = calculator.calculate(new ParsedSheet(List.of("チケットID", "件名"),
+				List.of(Map.of("チケットID", "", "件名", "x"))), config, null, null);
+		assertThat(plan.errors()).singleElement().satisfies(e -> assertThat(e)
+				.contains("階層列がファイルに見つかりません").contains("大分類").contains("件名"));
+	}
+
+	@Test
+	@DisplayName("設定の階層列の一部だけがファイルにある場合は、ある列だけを使う")
+	void partialConfiguredColumnsUsesPresentOnes() {
+		DiffCalculator.HierarchyColumns resolved = DiffCalculator.resolveHierarchyColumns(config(false),
+				List.of("チケットID", "大分類", "中分類", "タスク"));
+		assertThat(resolved.columns()).containsExactly("大分類", "中分類", "タスク");
+		assertThat(resolved.message()).contains("[小分類, 成果物]");
+		assertThat(DiffCalculator.resolveHierarchyColumns(config(false), List.of(HEADERS)).message()).isNull();
 	}
 }

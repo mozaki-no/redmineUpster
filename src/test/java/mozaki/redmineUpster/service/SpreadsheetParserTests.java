@@ -87,30 +87,6 @@ class SpreadsheetParserTests {
 	}
 
 	@Test
-	void parseFromPathWithFillDownFillsOnlyBlankHierarchyCellsLeftOfDeepestValue(@TempDir Path tempDir) throws Exception {
-		Path file = tempDir.resolve("wbs.csv");
-		String csv = String.join("\n",
-				"\uFEFFチケットID,大分類,中分類,小分類,担当",
-				",A,,,",
-				",,B,,",
-				",,,C,",
-				",,D,,",
-				",E,,,",
-				",,F,,");
-		Files.write(file, csv.getBytes(StandardCharsets.UTF_8));
-
-		SpreadsheetParser.ParsedSheet sheet = new SpreadsheetParser()
-				.parseFromPath(file.toString(), List.of("大分類", "中分類", "小分類"), true);
-
-		assertEquals("チケットID", sheet.headers().get(0));
-		assertEquals(List.of(2, 3, 4, 5, 6, 7), sheet.rowNumbers());
-		List<String> paths = sheet.rows().stream()
-				.map(r -> r.get("大分類") + "/" + r.get("中分類") + "/" + r.get("小分類"))
-				.toList();
-		assertEquals(List.of("A//", "A/B/", "A/B/C", "A/D/", "E//", "E/F/"), paths);
-	}
-
-	@Test
 	void parseFromPathKeepsBlankHierarchyCellsByDefault(@TempDir Path tempDir) throws Exception {
 		Path file = tempDir.resolve("wbs.csv");
 		String csv = String.join("\n",
@@ -121,7 +97,7 @@ class SpreadsheetParserTests {
 		Files.write(file, csv.getBytes(StandardCharsets.UTF_8));
 
 		SpreadsheetParser.ParsedSheet sheet = new SpreadsheetParser()
-				.parseFromPath(file.toString(), List.of("大分類", "中分類", "小分類"));
+				.parseFromPath(file.toString());
 
 		List<String> paths = sheet.rows().stream()
 				.map(r -> r.get("大分類") + "/" + r.get("中分類") + "/" + r.get("小分類"))
