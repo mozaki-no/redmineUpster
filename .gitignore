@@ -48,3 +48,6 @@ sync-config.yml
 issues.csv
 20260428_001.log
 wbs_planb_J0 (2).xlsm
+
+# 配布版に同梱する設定サンプル
+!packaging/dist/sync-config.yml

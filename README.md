@@ -1,5 +1,7 @@
 # redmineUpster
 
+> **使うだけの方（Windows）は [利用者ガイド（docs/USER_GUIDE.md）](./docs/USER_GUIDE.md) を参照してください。** Java・データベースのインストールは不要です（GitHub Actions の `redmineUpster-windows` をダウンロードして展開するだけ）。
+
 RedmineのチケットをCSV/Excelから同期するCLIツールです。Excel/CSVの1行がRedmineのチケット1件に対応し、**Excelのチケット一覧とRedmineのチケットを同じ状態に保つ**ことを目的にしています。
 
 ## 同期の仕組み
@@ -28,6 +30,18 @@ RedmineのチケットをCSV/Excelから同期するCLIツールです。Excel/C
 ```
 
 成果物: `target/redmineUpster-0.0.1-SNAPSHOT.jar`
+
+## 配布版（Java同梱・インストール不要）のビルド
+
+`jpackage`（JDK 17以上に同梱）で Java ランタイムを同梱したアプリフォルダ（app-image）を作ります。jpackage は実行したOS向けしか作れないため、Windows 版は GitHub Actions（`.github/workflows/package.yml`）の `windows-latest` で作成し、artifact **`redmineUpster-windows`** としてアップロードします（全ブランチの push と手動実行で動作。先に ubuntu で `mvn -B test`）。
+
+| コマンド | 出力 |
+|----------|------|
+| `powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1`（Windows + JDK + Maven） | `target\package\redmineUpster\redmineUpster.exe` と `redmineUpster-windows.zip` |
+| `bash packaging/package-linux.sh`（Linux + JDK + Maven、動作確認用） | `target/package/redmineUpster/bin/redmineUpster` と `redmineUpster-linux.tar.gz` |
+
+- 同梱する Java モジュールは `packaging/modules.txt`（Windows は `jdk.crypto.mscapi` を追加）。Shift_JIS の CSV に `jdk.charsets`、HTTPS に `jdk.crypto.ec` が必要です。
+- 配布フォルダには `sync-config.yml`（サンプル）、`run-dry-run.bat` / `run.bat`（WBS ファイルをドラッグ＆ドロップして実行）、`USER_GUIDE.md`、`sample-wbs.csv` を同梱します（`packaging/dist/`）。
 
 ## CLI実行
 
