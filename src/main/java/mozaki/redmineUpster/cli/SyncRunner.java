@@ -1,8 +1,12 @@
 package mozaki.redmineUpster.cli;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,6 +36,11 @@ import mozaki.redmineUpster.util.ColumnDefinitions;
 @RequiredArgsConstructor
 public class SyncRunner {
 
+    /** 既定の設定ファイル名 */
+    static final String DEFAULT_CONFIG_FILE = "sync-config.yml";
+    /** 既定のログ出力先（カレントディレクトリからの相対パス） */
+    static final String DEFAULT_LOG_DIR = "logs";
+
     private final SyncConfigService syncConfigService;
     private final SpreadsheetParser spreadsheetParser;
     private final DiffCalculator diffCalculator;
@@ -42,11 +51,11 @@ public class SyncRunner {
     /**
      * 同期を実行します。
      *
-     * @param configPath 設定ファイルパス（nullの場合はデフォルト設定を使用）
+     * @param configPath 設定ファイルパス（nullの場合は既定の場所の sync-config.yml）
      * @param projectName プロジェクト名（nullの場合はデフォルトプロジェクトを使用）
      * @param filePath CSV/Excelファイルパス
      * @param dryRun ドライランモードの場合はtrue
-     * @param logDir ログ出力ディレクトリ
+     * @param logDir ログ出力ディレクトリ（nullの場合はカレントディレクトリの logs）
      * @param debug デバッグモードの場合はtrue
      * @param forceUpdate 変更なしスキップを無効化する場合はtrue
      * @return 成功の場合は0、失敗の場合は1
@@ -56,7 +65,7 @@ public class SyncRunner {
         FileLogger logger = null;
         try {
             // 1. ロガーの初期化
-            logger = new FileLogger(logDir);
+            logger = new FileLogger(logDir == null || logDir.isBlank() ? DEFAULT_LOG_DIR : logDir);
             logger.setDebugEnabled(debug);
             logger.info("=== Redmine Sync Started ===");
             logger.info("File: " + filePath);
@@ -66,9 +75,21 @@ public class SyncRunner {
             logger.info("Log File: " + logger.getLogFile());
 
             // 2. 設定ファイル読み込み
+            //    --config 指定 → そのファイル。未指定で SYNC_CONFIG_PATH から読み込み済み → それを使う。
+            //    どちらもなければカレントディレクトリ → 実行ファイルと同じフォルダの sync-config.yml
             if (configPath != null && !configPath.isBlank()) {
                 logger.info("Loading config from: " + configPath);
                 syncConfigService.loadConfig(configPath);
+            } else if (syncConfigService.getAllProjects().isEmpty()) {
+                List<Path> candidates = defaultConfigCandidates();
+                Optional<Path> found = candidates.stream().filter(Files::isRegularFile).findFirst();
+                if (found.isEmpty()) {
+                    logger.error("設定ファイルが見つかりません。--config=<パス> で指定するか、次のいずれかに "
+                            + DEFAULT_CONFIG_FILE + " を置いてください: " + candidates);
+                    return 1;
+                }
+                logger.info("Loading config from: " + found.get());
+                syncConfigService.loadConfig(found.get().toString());
             }
 
             // 3. プロジェクト設定を取得
@@ -230,6 +251,67 @@ public class SyncRunner {
         }
 
         return null;
+    }
+
+    /**
+     * 設定ファイルの既定の置き場所（優先順）を返します。
+     * <ol>
+     *   <li>カレントディレクトリの sync-config.yml</li>
+     *   <li>実行ファイル（jpackageのランチャー。なければjar）と同じフォルダの sync-config.yml</li>
+     * </ol>
+     *
+     * @return 候補のパス（重複なし）
+     */
+    static List<Path> defaultConfigCandidates() {
+        Set<Path> candidates = new LinkedHashSet<>();
+        candidates.add(Paths.get(DEFAULT_CONFIG_FILE).toAbsolutePath().normalize());
+        Path appDir = applicationDirectory();
+        if (appDir != null) {
+            candidates.add(appDir.resolve(DEFAULT_CONFIG_FILE).toAbsolutePath().normalize());
+        }
+        return new ArrayList<>(candidates);
+    }
+
+    /**
+     * 実行ファイルのあるフォルダを返します。
+     * <p>
+     * jpackageで作ったランチャーから起動した場合はシステムプロパティ {@code jpackage.app-path}
+     * （Windowsは redmineUpster.exe、Linuxは bin/redmineUpster）のフォルダ。
+     * Linuxの bin フォルダの場合はその1つ上。jarで起動した場合はjarのあるフォルダ。
+     * </p>
+     */
+    private static Path applicationDirectory() {
+        try {
+            String launcher = System.getProperty("jpackage.app-path");
+            if (launcher != null && !launcher.isBlank()) {
+                Path dir = Paths.get(launcher).toAbsolutePath().getParent();
+                if (dir != null && dir.getFileName() != null && "bin".equals(dir.getFileName().toString())
+                        && dir.getParent() != null) {
+                    dir = dir.getParent();
+                }
+                return dir;
+            }
+            java.security.CodeSource source = SyncRunner.class.getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) {
+                return null;
+            }
+            String location = source.getLocation().toString();
+            // Spring Boot の fat jar では "jar:nested:/path/app.jar/!BOOT-INF/classes/!/" の形式になる
+            int nested = location.indexOf("nested:");
+            if (nested >= 0) {
+                String path = location.substring(nested + "nested:".length());
+                int end = path.indexOf("!");
+                path = end >= 0 ? path.substring(0, end) : path;
+                if (path.endsWith("/")) {
+                    path = path.substring(0, path.length() - 1);
+                }
+                return Paths.get(java.net.URI.create("file:" + path)).getParent();
+            }
+            Path path = Paths.get(source.getLocation().toURI());
+            return Files.isRegularFile(path) ? path.getParent() : null;
+        } catch (RuntimeException | java.net.URISyntaxException e) {
+            return null;
+        }
     }
 
     /**
