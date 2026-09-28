@@ -1,5 +1,7 @@
 package mozaki.redmineUpster.service;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.HttpEntity;
@@ -7,6 +9,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import mozaki.redmineUpster.cli.FileLogger;
@@ -14,7 +17,7 @@ import mozaki.redmineUpster.cli.FileLogger;
 /**
  * Redmine APIクライアント。
  * <p>
- * RedmineサーバーとのHTTP通信を行い、チケットの作成・更新を実行します。
+ * RedmineサーバーとのHTTP通信を行い、チケットの取得・作成・更新を実行します。
  * </p>
  */
 public class RedmineClient {
@@ -31,6 +34,7 @@ public class RedmineClient {
 	private final String projectId;
 	private final RestTemplate restTemplate;
 	private FileLogger logger;
+	private Long projectNumericId;
 
 	/**
 	 * RedmineClientを構築します。
@@ -112,6 +116,85 @@ public class RedmineClient {
 		restTemplate.exchange(url, HttpMethod.DELETE, entity, Void.class);
 
 		debugLog("Response status: 204 NO_CONTENT (DELETE success)");
+	}
+
+	/**
+	 * チケットを取得します。
+	 *
+	 * @param issueId チケットID
+	 * @return チケット情報（レスポンスの "issue" 部分）。存在しない場合（404）はnull
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public Map<String, Object> getIssue(Long issueId) {
+		String url = baseUrl + "/issues/" + issueId + ".json";
+		debugLog("Request URL: GET " + url);
+		try {
+			ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, buildEntity(null), Map.class);
+			Map body = response.getBody();
+			if (body == null || !(body.get(RESPONSE_ISSUE_KEY) instanceof Map)) {
+				return null;
+			}
+			return (Map<String, Object>) body.get(RESPONSE_ISSUE_KEY);
+		} catch (HttpClientErrorException.NotFound ex) {
+			debugLog("Response status: 404 NOT_FOUND");
+			return null;
+		}
+	}
+
+	/**
+	 * トラッカー一覧を取得します（GET /trackers.json）。
+	 *
+	 * @return トラッカー名 → トラッカーID
+	 */
+	@SuppressWarnings("rawtypes")
+	public Map<String, Long> listTrackers() {
+		String url = baseUrl + "/trackers.json";
+		debugLog("Request URL: GET " + url);
+		ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, buildEntity(null), Map.class);
+		Map<String, Long> trackers = new LinkedHashMap<>();
+		Map body = response.getBody();
+		if (body == null || !(body.get("trackers") instanceof List<?> list)) {
+			return trackers;
+		}
+		for (Object element : list) {
+			if (element instanceof Map tracker && tracker.get("id") instanceof Number id
+					&& tracker.get("name") != null) {
+				trackers.put(String.valueOf(tracker.get("name")), id.longValue());
+			}
+		}
+		debugLog("Trackers: " + trackers);
+		return trackers;
+	}
+
+	/**
+	 * 同期先プロジェクトの数値IDを取得します。
+	 * <p>
+	 * 設定のprojectIdが数値ならそのまま、識別子（文字列）なら
+	 * GET /projects/{identifier}.json で解決します（結果はキャッシュ）。
+	 * </p>
+	 *
+	 * @return プロジェクトの数値ID（解決できない場合はnull）
+	 */
+	@SuppressWarnings("rawtypes")
+	public Long getProjectNumericId() {
+		if (projectNumericId != null) {
+			return projectNumericId;
+		}
+		if (projectId == null || projectId.isBlank()) {
+			return null;
+		}
+		if (projectId.chars().allMatch(Character::isDigit)) {
+			projectNumericId = Long.parseLong(projectId);
+			return projectNumericId;
+		}
+		String url = baseUrl + "/projects/" + projectId + ".json";
+		debugLog("Request URL: GET " + url);
+		ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, buildEntity(null), Map.class);
+		Map body = response.getBody();
+		if (body != null && body.get("project") instanceof Map project && project.get("id") instanceof Number id) {
+			projectNumericId = id.longValue();
+		}
+		return projectNumericId;
 	}
 
 	/**

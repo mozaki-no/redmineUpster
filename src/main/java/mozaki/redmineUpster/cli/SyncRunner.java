@@ -84,7 +84,7 @@ public class SyncRunner {
             Set<String> fillDownColumns = resolveFillDownColumns(projectConfig);
             logger.info("Parsing file: " + filePath);
             logger.debug("Fill-down columns: " + fillDownColumns);
-            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath, fillDownColumns);
+            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath, new java.util.ArrayList<>(fillDownColumns));
             List<Map<String, String>> rows = parsed.rows();
             logger.info("Parsed " + rows.size() + " rows");
 
