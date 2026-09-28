@@ -5,6 +5,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 タスクは超細分化し、PDCAサイクルを構築すること。
 codexスキルを有効に使用し、Claudeのトークン消費をなるべく控えること。
 
+## 実行計画（DB廃止とWindows配布版：属人化の解消）
+背景: むさしさんの指示。Java + PostgreSQL + Docker + Jenkins は他の人には重く、ツールが1人に依存している。Windowsの非開発者が Java もDBも入れずに使えるようにする。
+方針（リード推奨の既定案。DB廃止は独立したコミットに分離し、むさしさんの確認待ち）: DBを廃止し、Redmineの現在の状態を正とする。
+1. DB廃止: Spring Data JPA・Flyway・PostgreSQL・H2・issue_link（エンティティ／リポジトリ／V1〜V4）を削除。DataSource なしで起動する。
+2. 取得: 差分の前に同期先プロジェクトのチケットを1回のページング取得で全件取得（`GET /issues.json?project_id=...&subproject_id=!*&status_id=*&limit=100&offset=...`）。
+3. 更新確認: 更新対象の存在・プロジェクト確認は取得済み一覧で行う（一覧にない場合のみ個別GETで「存在しない／別プロジェクト」を判別）。
+4. 変更なしスキップ: ハッシュではなく、送信する項目（件名・トラッカー・ステータス・親・日付・進捗率・担当者・カスタムフィールド）をRedmineの現在値と比較（IssueComparator）。`--force-update` は維持。
+5. 論理削除: プロジェクト内でExcelのチケットIDに無いチケット（手動作成分も含む。既に `deletion.statusId` のものは除外）。statusId 未設定なら警告ログのみ。
+6. CLI専用化: spring-boot-starter-web を外し `web-application-type: none`。`--config` 省略時は SYNC_CONFIG_PATH → カレント → exe/jar と同じフォルダの sync-config.yml。ログ既定は `./logs`。`--help`。
+7. 配布: jpackage の app-image（Java同梱、`--win-console`）。`packaging/package-windows.ps1`・`package-linux.sh`・`modules.txt`・`dist/`（設定サンプル・bat）。GitHub Actions `package.yml` で ubuntu テスト → windows-latest でビルドし artifact `redmineUpster-windows`。
+8. 文書: `docs/USER_GUIDE.md`（日本語1ページ）、README・DEPLOY・setup から PostgreSQL/Docker 手順を削除。
+
+### 進捗
+- 2026-09-28: DB廃止・Redmine全件取得・比較によるスキップ・手動作成分を含む論理削除を実装。テスト更新・追加（比較、候補選定、ページング、一覧にない更新対象）。`mvn -B test` 91件成功。
+- 2026-09-28: CLI既定値（設定ファイル自動検出・logs・--help）、DB関連設定/文書の削除、配布スクリプト・ワークフロー・利用者ガイドを追加。
+- 2026-09-28: Linux で jpackage app-image（jlink ランタイム）を作成し、疑似Redmineで通し確認（dry-run → 作成・書き戻し → 再実行で全件スキップ → 件名/日付/親の変更と行削除で更新・論理削除 → 別PJ/存在しないIDはその行だけエラー → 検証エラーで未更新、Shift_JIS CSV・xlsx も確認）。起動〜完了 約1.3秒。
+- 未実施: Windows ジョブの実行（GitHub Actions 上でのみ確認可能）、Windows 実機での exe・bat の動作確認、実Redmineでの確認。
+
 ## 実行計画（Excel側にRedmineチケットIDを持つ方式への変更）
 背景: むさしさんの指示。Excel側に独自ID（`id`/`WBS_ID`）を持たず、階層・トラッカー・RedmineチケットIDを持つ。ExcelとRedmineのチケットを完全に一致させる。
 1. 仕様確定: チケットIDあり=更新／空欄=新規。親子は階層列のみで決定（一番深い値の列=レベル、浅い列が同じで1つ浅いレベルの行が親）。
@@ -70,14 +88,11 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 
 ## プロジェクト概要
 
-RedmineのチケットをCSV/Excelファイルから同期するSpring Bootサービス。Excelの「チケットID」列（空欄=新規作成、値あり=更新）でRedmineのチケットと対応させ、階層列（大分類→中分類→小分類→成果物→タスク）から親子関係を決める。新規作成したIDは入力ファイルへ書き戻す。
+RedmineのチケットをCSV/Excelファイルから同期するSpring BootのCLI（Webサーバー・DBなし）。Excelの「チケットID」列（空欄=新規作成、値あり=更新）でRedmineのチケットと対応させ、階層列（大分類→中分類→小分類→成果物→タスク）から親子関係を決める。新規作成したIDは入力ファイルへ書き戻す。
 
 ## 開発コマンド
 
 ```bash
-# 依存サービス起動（PostgreSQL）
-docker compose up -d
-
 # ビルド
 ./mvnw clean package
 
@@ -95,14 +110,18 @@ java -jar target/redmineUpster.jar --sync --config=sync-config.yml --project="�
 
 # 単一テストメソッド実行
 ./mvnw test -Dtest=SpreadsheetParserTests#testMethodName
+
+# Windows 配布版（Java同梱 exe）の作成（Windows上）／Linux版（動作確認用）
+powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1
+bash packaging/package-linux.sh
 ```
 
 ## アーキテクチャ
 
 ### 技術スタック
 - Java 17 / Spring Boot 3.5
-- PostgreSQL 16（本番）/ H2（テスト）
-- Flyway（DBマイグレーション）
+- DBなし（Redmineの現在の状態を正とする）
+- jpackage（Java同梱のWindows配布版）
 - OpenCSV / Apache POI（CSV/Excel解析）
 - Lombok
 
@@ -119,17 +138,17 @@ java -jar target/redmineUpster.jar --sync --config=sync-config.yml --project="�
 2. `SyncRunner`が設定・ファイルを読み込み
 3. `SpreadsheetParser`でCSV/Excel解析
 4. `DiffCalculator`で差分計算・検証（インメモリ。エラーがあればRedmineに書き込まず終了）
-5. `SyncExecutor`でRedmine同期実行（親→子の順に作成・更新、Excelにない管理対象は論理削除）
-6. `TicketIdWriter`で新規作成したチケットIDを入力ファイルへ書き戻し（`.bak`を保存）
-7. `FileLogger`でログ出力
-8. `issue_link`テーブルに (issue_id, project_id) と送信内容のハッシュを記録（変更なしスキップ・論理削除候補の判定に使用）
+5. `RedmineClient.listProjectIssues`で同期先プロジェクトのチケットを全件取得（ページング）
+6. `SyncExecutor`でRedmine同期実行（親→子の順に作成・更新。取得した現在値と同じならスキップ、Excelにないプロジェクト内のチケットは論理削除）
+7. `TicketIdWriter`で新規作成したチケットIDを入力ファイルへ書き戻し（`.bak`を保存）
+8. `FileLogger`でログ出力（既定: `./logs`）
 
 ### テスト環境
-テストは`@ActiveProfiles("test")`を使用し、`application-test.yml`でH2インメモリDBを使用（Flyway無効、Hibernateでスキーマ自動生成）。
+テストは`@ActiveProfiles("test")`を使用（`application-test.yml`はテスト用設定ファイルのパスのみ。DBは不要）。
 
 ## 環境変数
 
-- `DB_URL` / `DB_USER` / `DB_PASSWORD`: PostgreSQL接続情報
+- `SYNC_CONFIG_PATH`: `--config` 省略時の設定ファイル（任意）
 - `REDMINE_BASE_URL`: RedmineベースURL
 - `REDMINE_API_KEY`: Redmine APIキー
 - `REDMINE_PROJECT_ID`: 同期先プロジェクトID
@@ -148,17 +167,7 @@ Web API方式から**設定ファイル + Jar + Jenkins**によるCLI実行方�
 - `cli/FileLogger.java` - ファイルログ出力
 
 ### DBスキーマ
-```sql
--- V1〜V4 適用後
-create table issue_link (
-  id bigserial primary key,
-  external_key text,          -- 旧方式の名残（未使用）
-  issue_id bigint not null,
-  payload_hash text,
-  project_id text,
-  unique (issue_id, project_id)
-);
-```
+DBは廃止（2026-09）。旧 `issue_link` テーブルは使用しない。
 
 ---
 
@@ -182,15 +191,17 @@ redmineUpster/
 ├── .env.example          # 環境変数テンプレート
 ├── CLAUDE.md
 ├── README.md
+├── .github/workflows/package.yml  # テスト → Windows配布版ビルド（artifact）
 ├── docs/
+│   ├── USER_GUIDE.md     # 利用者ガイド（Windows配布版）
 │   ├── DEPLOY.md         # デプロイ手順書
 │   ├── ops/              # 運用関連
 │   └── setup/            # セットアップガイド
 │       ├── README.md
-│       ├── docker.md
 │       ├── java17.md
 │       ├── jenkins.md
 │       └── redmine-apache-passenger.md
+├── packaging/            # jpackage 配布スクリプト・同梱ファイル
 ├── samples/
 │   ├── sync-config.example.yml  # 設定ファイルサンプル
 │   └── wbs_*.csv         # WBSサンプル

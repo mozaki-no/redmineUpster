@@ -12,8 +12,9 @@ AI エージェント向けのプロジェクト概要。
 - 階層列（大分類→中分類→小分類→成果物→タスク）から親子関係を決定（親行がなければ検証エラー）
 - Excelの「チケットID」列でRedmineチケットと対応（空欄=新規作成、作成したIDはファイルへ書き戻し）
 - 行ごとの「トラッカー」列でトラッカーを指定
-- Excelから消えた管理対象チケットはステータス変更で論理削除（物理削除はしない）
-- Jenkinsから定期実行を想定
+- Excelにないプロジェクト内のチケット（手動作成分も含む）はステータス変更で論理削除（物理削除はしない）
+- DBなし。毎回Redmineからプロジェクトのチケットを取得して比較（Redmineの現在の状態が正）
+- Windows向けにJava同梱の exe（jpackage）を配布。Jenkinsから jar を定期実行することも可能
 
 ## ClaudeCodeと作業中
 
@@ -32,12 +33,31 @@ AI エージェント向けのプロジェクト概要。
 - 階層列・チケットID列・トラッカー列のカスタマイズ
 - 新規作成したチケットIDの入力ファイルへの書き戻し（xlsx/CSV）
 - 環境変数展開（`${VAR_NAME}`形式）
+- Windows 配布版（Java同梱、GitHub Actions の artifact `redmineUpster-windows`）
 
 ### 未実装・課題
 - テストカバレッジ100%未達成
 - 本番環境でRedmine更新されない問題を調査中（`--debug`で原因特定予定）
 
 ---
+
+## 実行計画（DB廃止とWindows配布版：属人化の解消）
+背景: むさしさんの指示。Java + PostgreSQL + Docker + Jenkins は他の人には重く、ツールが1人に依存している。Windowsの非開発者が Java もDBも入れずに使えるようにする。
+方針（リード推奨の既定案。DB廃止は独立したコミットに分離し、むさしさんの確認待ち）: DBを廃止し、Redmineの現在の状態を正とする。
+1. DB廃止: Spring Data JPA・Flyway・PostgreSQL・H2・issue_link（エンティティ／リポジトリ／V1〜V4）を削除。DataSource なしで起動する。
+2. 取得: 差分の前に同期先プロジェクトのチケットを1回のページング取得で全件取得（`GET /issues.json?project_id=...&subproject_id=!*&status_id=*&limit=100&offset=...`）。
+3. 更新確認: 更新対象の存在・プロジェクト確認は取得済み一覧で行う（一覧にない場合のみ個別GETで「存在しない／別プロジェクト」を判別）。
+4. 変更なしスキップ: ハッシュではなく、送信する項目（件名・トラッカー・ステータス・親・日付・進捗率・担当者・カスタムフィールド）をRedmineの現在値と比較（IssueComparator）。`--force-update` は維持。
+5. 論理削除: プロジェクト内でExcelのチケットIDに無いチケット（手動作成分も含む。既に `deletion.statusId` のものは除外）。statusId 未設定なら警告ログのみ。
+6. CLI専用化: spring-boot-starter-web を外し `web-application-type: none`。`--config` 省略時は SYNC_CONFIG_PATH → カレント → exe/jar と同じフォルダの sync-config.yml。ログ既定は `./logs`。`--help`。
+7. 配布: jpackage の app-image（Java同梱、`--win-console`）。`packaging/package-windows.ps1`・`package-linux.sh`・`modules.txt`・`dist/`（設定サンプル・bat）。GitHub Actions `package.yml` で ubuntu テスト → windows-latest でビルドし artifact `redmineUpster-windows`。
+8. 文書: `docs/USER_GUIDE.md`（日本語1ページ）、README・DEPLOY・setup から PostgreSQL/Docker 手順を削除。
+
+### 進捗
+- 2026-09-28: DB廃止・Redmine全件取得・比較によるスキップ・手動作成分を含む論理削除を実装。テスト更新・追加（比較、候補選定、ページング、一覧にない更新対象）。`mvn -B test` 91件成功。
+- 2026-09-28: CLI既定値（設定ファイル自動検出・logs・--help）、DB関連設定/文書の削除、配布スクリプト・ワークフロー・利用者ガイドを追加。
+- 2026-09-28: Linux で jpackage app-image（jlink ランタイム）を作成し、疑似Redmineで通し確認（dry-run → 作成・書き戻し → 再実行で全件スキップ → 件名/日付/親の変更と行削除で更新・論理削除 → 別PJ/存在しないIDはその行だけエラー → 検証エラーで未更新、Shift_JIS CSV・xlsx も確認）。起動〜完了 約1.3秒。
+- 未実施: Windows ジョブの実行（GitHub Actions 上でのみ確認可能）、Windows 実機での exe・bat の動作確認、実Redmineでの確認。
 
 ## 実行計画（Excel側にRedmineチケットIDを持つ方式への変更）
 背景: むさしさんの指示。Excel側に独自ID（`id`/`WBS_ID`）を持たず、階層・トラッカー・RedmineチケットIDを持つ。ExcelとRedmineのチケットを完全に一致させる。
@@ -113,7 +133,8 @@ AI エージェント向けのプロジェクト概要。
 | Web UI（admin.html）を廃止 | Jenkins実行に移行、UIは不要 |
 | 設定をYAMLファイルに統一 | DB管理からファイル管理へ、Git管理可能に |
 | 差分/履歴をDBに保存しない | ログファイルで十分、DBスキーマを簡素化 |
-| `issue_link`テーブルのみ維持 | 変更なしスキップと論理削除候補の判定に使用 |
+| ~~`issue_link`テーブルのみ維持~~ → DB廃止（2026-09） | 他の人が動かせるよう依存を減らす。スキップ・論理削除はRedmineの現在の状態から判定 |
+| Windows 配布は jpackage app-image の zip（2026-09） | インストーラ・管理者権限不要。jpackage はホストOS向けのみのため GitHub Actions の windows-latest で作成 |
 | Excelに「チケットID」列を持つ（2026-09） | 独自IDを廃止し、ExcelとRedmineを1対1で一致させるため |
 | 仮想親を廃止し、親行なしは検証エラー（2026-09） | Excelと Redmine のチケット集合を完全に一致させるため |
 | 物理削除を廃止し論理削除（ステータス変更） | 誤削除を防ぐため（statusId未設定時はログのみ） |
@@ -139,18 +160,22 @@ AI エージェント向けのプロジェクト概要。
 | `application.yml` | Spring Boot設定 |
 | `.env.example` | 環境変数テンプレート |
 
-### DB
+### 配布
 | ファイル | 役割 |
 |----------|------|
-| `domain/IssueLinkEntity.java` | このツールが管理するチケット（issue_id, project_id, payload_hash） |
-| `repository/IssueLinkRepository.java` | JPA リポジトリ |
-| `db/migration/V1〜V4__*.sql` | Flywayマイグレーション（V4で (issue_id, project_id) 一意に変更） |
+| `packaging/package-windows.ps1` | Windows 版 app-image（exe）と zip の作成 |
+| `packaging/package-linux.sh` | Linux 版（動作確認用） |
+| `packaging/modules.txt` | jlink で同梱する Java モジュール |
+| `packaging/dist/` | 同梱する設定サンプル・bat |
+| `.github/workflows/package.yml` | テスト → Windows 版ビルド → artifact |
+| `docs/USER_GUIDE.md` | 利用者ガイド（非開発者向け） |
 
 ### 同期ロジック
 | ファイル | 役割 |
 |----------|------|
 | `cli/DiffCalculator.java` | 差分計算（インメモリ） |
-| `cli/SyncExecutor.java` | Redmine API呼び出し・IssueLink保存 |
+| `cli/SyncExecutor.java` | Redmine API呼び出し（作成・更新・論理削除） |
+| `cli/IssueComparator.java` | 送信内容とRedmineの現在値の比較（変更なしスキップ） |
 | `service/RedmineClient.java` | Redmine REST APIクライアント |
 | `service/SpreadsheetParser.java` | CSV/Excel解析（行番号付き） |
 | `service/TicketIdWriter.java` | 新規作成したチケットIDの書き戻し |
@@ -185,8 +210,11 @@ java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
 java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
   --sync --file=input.csv --debug
 
-# Docker Compose（PostgreSQL）
-docker compose up -d
+# Windows 配布版（Windows + JDK 17+ + Maven）
+powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1
+
+# Linux 版 app-image（動作確認用）
+bash packaging/package-linux.sh
 ```
 
 ---
