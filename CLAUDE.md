@@ -25,6 +25,7 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 - 2026-09-28: 不具合修正: 設定の階層列（大分類〜タスク）のうち共通の「タスク」列だけがファイルにあると設定がそのまま使われ、Lv.* 形式のCSVが「階層列がすべて空」になっていた。ファイルにある列が最も多い候補（設定／既定／Lv.01〜06＋タスク）を使い、警告ログに出すよう変更。fillDownHierarchy の補完は DiffCalculator で決定済みの階層列に対して行う。
 - 2026-09-28: Excel の読み込み元を選べるようにした（`sync.excel.table` ＞ `sync.excel.sheet` ＞ 先頭シート、CLI `--table`/`--sheet`）。数式は計算済みの値を読み（単一セル参照の参照先が空欄なら空欄、日付シリアル値も日付として扱う）、チケットIDの書き戻しは同じシート・テーブルの行へ。チケットID列が単一セル参照の数式なら参照先へ書き込み、それ以外の数式は上書きせずエラー。テーブルにチケットID列がなければRedmineに書き込む前にエラー。
 - 2026-09-28: Excel のサンプル `samples/sample-wbs.xlsx` / `.xlsm`（マクロなし）を追加（1枚目「WBS」=人が見る表: タイトル行・大分類/中分類の縦結合・色・未使用列・区切り行、2枚目「取込」=テーブル「取込表」: WBS への単一セル参照の数式。大分類・中分類の直下のタスクを含む）。作成は `src/test/.../samples/SampleWorkbookGenerator`（POI、計算結果を保存＋開いたときに再計算）。配布版の設定は `excel.table: "取込表"` を有効にし、zip に `sample-wbs.xlsx` を同梱（CSV では設定のテーブル指定は info ログで無視）。jar と疑似Redmineで xlsx・xlsm とも dry-run → 作成（飛ばし階層の親も正しい）→ WBS シートへ書き戻し → 再実行で全件スキップを確認。xlsm は書き戻し後も xlsm のまま。
+- 2026-09-28: タグ `v*` の push で GitHub Release を作成し `redmineUpster-windows-<タグ>.zip` を添付（package.yml に release ジョブ、`contents: write` はそのジョブだけ。jpackage のバージョンはタグの数字部分）。ブランチの push は従来どおり artifact。README・USER_GUIDE に Releases からのダウンロード（ログイン不要）と自前ビルド手順を記載。タグの作成・push は未実施。
 - 未実施: Windows ジョブの実行（GitHub Actions 上でのみ確認可能）、Windows 実機での exe・bat の動作確認、実Redmineでの確認。
 
 ## 実行計画（Excel側にRedmineチケットIDを持つ方式への変更）
@@ -195,7 +196,7 @@ redmineUpster/
 ├── .env.example          # 環境変数テンプレート
 ├── CLAUDE.md
 ├── README.md
-├── .github/workflows/package.yml  # テスト → Windows配布版ビルド（artifact）
+├── .github/workflows/package.yml  # テスト → Windows配布版ビルド（artifact、タグ v* で Release に zip 添付）
 ├── docs/
 │   ├── USER_GUIDE.md     # 利用者ガイド（Windows配布版）
 │   ├── DEPLOY.md         # デプロイ手順書

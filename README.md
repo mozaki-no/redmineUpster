@@ -1,6 +1,7 @@
 # redmineUpster
 
-> **使うだけの方（Windows）は [利用者ガイド（docs/USER_GUIDE.md）](./docs/USER_GUIDE.md) を参照してください。** Java・データベースのインストールは不要です（GitHub Actions の `redmineUpster-windows` をダウンロードして展開するだけ）。
+> **使うだけの方（Windows）は [利用者ガイド（docs/USER_GUIDE.md）](./docs/USER_GUIDE.md) を参照してください。** Java・データベースのインストールは不要です。
+> **ダウンロード:** [Releases（最新版）](https://github.com/mozaki-no/redmineUpster/releases/latest) の `redmineUpster-windows-<バージョン>.zip` をダウンロードして展開するだけです（GitHub へのログインは不要）。自分でビルドする場合は Windows + JDK 17 以上 + Maven で `powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1`（下の「配布版のビルド」）。
 
 RedmineのチケットをCSV/Excelから同期するCLIツールです。Excel/CSVの1行がRedmineのチケット1件に対応し、**Excelのチケット一覧とRedmineのチケットを同じ状態に保つ**ことを目的にしています。
 
@@ -46,6 +47,9 @@ RedmineのチケットをCSV/Excelから同期するCLIツールです。Excel/C
 ## 配布版（Java同梱・インストール不要）のビルド
 
 `jpackage`（JDK 17以上に同梱）で Java ランタイムを同梱したアプリフォルダ（app-image）を作ります。jpackage は実行したOS向けしか作れないため、Windows 版は GitHub Actions（`.github/workflows/package.yml`）の `windows-latest` で作成し、artifact **`redmineUpster-windows`** としてアップロードします（全ブランチの push と手動実行で動作。先に ubuntu で `mvn -B test`）。
+
+- **リリース**: `v` で始まるタグ（例: `v1.0.0`）を push すると、同じワークフローが GitHub Release を作成し、`redmineUpster-windows-<タグ>.zip` を添付します（`release` ジョブだけ `contents: write`）。Release の添付ファイルは GitHub にログインしなくてもダウンロードできます（リポジトリが公開の場合）。例: `git tag v1.0.0 && git push origin v1.0.0`。jpackage のバージョンはタグの数字部分（`v1.2.3-rc1` → `1.2.3`）。
+- **GitHub Actions を使わずに作る**: Windows に JDK 17 以上（jpackage 同梱）と Maven を入れ、リポジトリのフォルダで `powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1` を実行すると、`target\package\redmineUpster-windows.zip` ができます（WiX などの追加インストールは不要）。
 
 | コマンド | 出力 |
 |----------|------|

@@ -1,8 +1,12 @@
 name: package
 
+# ブランチへの push: テスト → Windows 版を artifact（redmineUpster-windows）としてアップロード
+# タグ v*（例: v1.0.0）の push: 上記に加えて GitHub Release を作成し、redmineUpster-windows-<タグ>.zip を添付
+#   （Release の添付ファイルは GitHub にログインしなくてもダウンロードできる）
 on:
   push:
     branches: ["**"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -31,9 +35,16 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
+      # jpackage のバージョンは数字のみ（v1.2.3 / v1.2.3-rc1 → 1.2.3。タグ以外は 1.0.0）
       - name: Build jar and app-image (jpackage)
         shell: pwsh
-        run: ./packaging/package-windows.ps1 -NoZip
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $version = "1.0.0"
+          if ($env:REF_TYPE -eq "tag" -and $env:REF_NAME -match '^v(\d+(\.\d+){0,2})') { $version = $Matches[1] }
+          ./packaging/package-windows.ps1 -NoZip -AppVersion $version
       # The artifact is downloaded as redmineUpster-windows.zip whose root holds redmineUpster.exe
       - uses: actions/upload-artifact@v4
         with:
@@ -41,3 +52,36 @@ jobs:
           path: target/package/redmineUpster/
           if-no-files-found: error
           retention-days: 90
+      # タグのときだけ: Release 用の zip（展開すると redmineUpster フォルダ。中に exe・sync-config.yml・サンプル）
+      - name: Zip for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: Compress-Archive -Path target/package/redmineUpster -DestinationPath "target/package/redmineUpster-windows-$env:REF_NAME.zip"
+      - name: Upload release zip
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: redmineUpster-windows-release
+          path: target/package/redmineUpster-windows-*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: redmineUpster-windows-release
+          path: release
+      - name: Create GitHub Release with the Windows zip
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/redmineUpster-windows-*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

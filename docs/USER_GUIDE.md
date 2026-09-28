@@ -4,10 +4,11 @@ Excel/CSV の WBS を Redmine のチケットに反映するツールです。**
 
 ## 1. ダウンロードと展開
 
-1. GitHub のリポジトリで **Actions → 「package」→ 最新の成功した実行** を開き、下の Artifacts から **`redmineUpster-windows`** をダウンロードします（Release に zip が添付されている場合はそちらでも可）。
+1. **[Releases（最新版）](https://github.com/mozaki-no/redmineUpster/releases/latest)** を開き、Assets の **`redmineUpster-windows-<バージョン>.zip`** をダウンロードします（GitHub へのログインは不要）。
+   - 開発中の版を試す場合: GitHub にログインして **Actions → 「package」→ 最新の成功した実行** の Artifacts から `redmineUpster-windows` をダウンロードすることもできます。
 2. zip を好きなフォルダ（例: `C:\tools\redmineUpster`）に展開します。管理者権限は不要です。
 
-展開すると次のファイルがあります。
+展開すると `redmineUpster` フォルダの中に次のファイルがあります（Actions の artifact は zip の直下）。
 
 | ファイル | 用途 |
 |----------|------|
@@ -18,6 +19,14 @@ Excel/CSV の WBS を Redmine のチケットに反映するツールです。**
 | `sample-wbs.xlsx` | WBS の例（Excel。1枚目「WBS」が人が見る表、2枚目「取込」がツールが読むテーブル「取込表」。下の「サンプルで試す」） |
 | `sample-wbs.csv` | WBS の書き方の例（CSV） |
 | `logs\` | 実行ログ（初回実行時に作成） |
+
+### 自分でビルドする場合（GitHub を使わない）
+
+Windows に JDK 17 以上（例: Eclipse Temurin）と Maven をインストールし、ソース一式のフォルダで次を実行します。`target\package\redmineUpster\`（と `redmineUpster-windows.zip`）が上の表と同じ構成で作られます。
+
+```
+powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1
+```
 
 ## 2. 設定（sync-config.yml）
 
