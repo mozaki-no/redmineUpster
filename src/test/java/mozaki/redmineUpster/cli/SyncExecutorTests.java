@@ -12,9 +12,10 @@ import static org.mockito.Mockito.when;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,8 +28,6 @@ import org.mockito.Mockito;
 import mozaki.redmineUpster.config.SyncConfigProperties.DeletionConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
-import mozaki.redmineUpster.domain.IssueLinkEntity;
-import mozaki.redmineUpster.repository.IssueLinkRepository;
 import mozaki.redmineUpster.service.RedmineClient;
 
 class SyncExecutorTests {
@@ -37,20 +36,19 @@ class SyncExecutorTests {
 	Path tempDir;
 
 	private FileLogger logger;
-	private IssueLinkRepository repository;
+	private Map<Long, Map<String, Object>> projectIssues;
 	private RedmineClient client;
 	private SyncExecutor executor;
 
 	@BeforeEach
 	void setUp() throws IOException {
 		logger = new FileLogger(tempDir.toString());
-		repository = Mockito.mock(IssueLinkRepository.class);
-		when(repository.findByIssueIdAndProjectId(any(), any())).thenReturn(Optional.empty());
+		projectIssues = new LinkedHashMap<>();
 		client = Mockito.mock(RedmineClient.class);
 		when(client.getProjectId()).thenReturn("proj");
 		when(client.getBaseUrl()).thenReturn("http://redmine.local");
 		when(client.getProjectNumericId()).thenReturn(7L);
-		executor = new SyncExecutor(repository);
+		executor = new SyncExecutor();
 	}
 
 	@AfterEach
@@ -77,8 +75,30 @@ class SyncExecutorTests {
 	}
 
 	private static Map<String, Object> issue(long id, long projectId, long statusId) {
-		return Map.of("id", id, "project", Map.of("id", projectId, "name", "P" + projectId),
-				"status", Map.of("id", statusId));
+		Map<String, Object> issue = new HashMap<>();
+		issue.put("id", id);
+		issue.put("subject", "S" + id);
+		issue.put("project", Map.of("id", projectId, "name", "P" + projectId));
+		issue.put("status", Map.of("id", statusId));
+		issue.put("tracker", Map.of("id", 2L));
+		return issue;
+	}
+
+	/** item() と同じ内容を持つRedmine上のチケット（変更なし判定用） */
+	private static Map<String, Object> sameAsItem(long id, String subject, Long parentId) {
+		Map<String, Object> issue = issue(id, 7, 1);
+		issue.put("subject", subject);
+		issue.put("start_date", "2026-01-03");
+		if (parentId != null) {
+			issue.put("parent", Map.of("id", parentId));
+		}
+		return issue;
+	}
+
+	private SyncResult run(List<DiffItem> items, List<Long> deletes, Integer deleteStatusId, boolean dryRun,
+			boolean force) {
+		return executor.execute(items, projectIssues, deletes, projectConfig(deleteStatusId), client, dryRun, logger,
+				force);
 	}
 
 	@SuppressWarnings({ "unchecked", "rawtypes" })
@@ -94,10 +114,10 @@ class SyncExecutorTests {
 		when(client.createIssue(anyMap())).thenReturn(101L, 102L, 103L);
 
 		// 子→親の順に渡しても親から作成される
-		SyncResult result = executor.execute(List.of(
+		SyncResult result = run(List.of(
 				item(4, null, 2, 3, "孫"),
 				item(3, null, 1, 2, "子"),
-				item(2, null, 0, null, "親")), List.of(), projectConfig(null), client, false, logger, false);
+				item(2, null, 0, null, "親")), List.of(), null, false, false);
 
 		assertThat(result.errorCount()).isZero();
 		List<Map<String, Object>> payloads = capturedCreates(3);
@@ -107,19 +127,18 @@ class SyncExecutorTests {
 		assertThat(payloads.get(2)).containsEntry("subject", "孫").containsEntry("parent_issue_id", 102L);
 		assertThat(result.createdIssueIds()).containsExactly(Map.entry(2, 101L), Map.entry(3, 102L),
 				Map.entry(4, 103L));
-		verify(repository, times(3)).save(any(IssueLinkEntity.class));
 	}
 
 	@Test
-	@DisplayName("既存チケットの親の下に子を作成し、既存チケットは存在確認してから更新する")
+	@DisplayName("既存チケットの親の下に子を作成し、既存チケットは取得済みの一覧で確認してから更新する（個別GETなし）")
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	void execute_updatesExistingAndCreatesChild() {
-		when(client.getIssue(50L)).thenReturn(issue(50, 7, 1));
+		projectIssues.put(50L, issue(50, 7, 1));
 		when(client.createIssue(anyMap())).thenReturn(201L);
 
-		SyncResult result = executor.execute(List.of(
+		SyncResult result = run(List.of(
 				item(3, null, 1, 2, "子"),
-				item(2, 50L, 0, null, "親")), List.of(), projectConfig(null), client, false, logger, false);
+				item(2, 50L, 0, null, "親")), List.of(), null, false, false);
 
 		assertThat(result.errorCount()).isZero();
 		ArgumentCaptor<Map> update = ArgumentCaptor.forClass(Map.class);
@@ -127,20 +146,21 @@ class SyncExecutorTests {
 		assertThat((Map<String, Object>) update.getValue()).containsEntry("parent_issue_id", "");
 		assertThat(capturedCreates(1).get(0)).containsEntry("parent_issue_id", 50L);
 		assertThat(result.createdIssueIds()).containsExactly(Map.entry(3, 201L));
+		verify(client, never()).getIssue(anyLong());
 	}
 
 	@Test
-	@DisplayName("存在しない・別プロジェクトのチケットIDはエラーにして、子もスキップし他の行は続行する")
+	@DisplayName("プロジェクトの一覧にないチケットID（存在しない・別プロジェクト）はエラーにして、子もスキップし他の行は続行する")
 	void execute_updateErrorsAreReportedAndChildrenSkipped() {
 		when(client.getIssue(60L)).thenReturn(null);
 		when(client.getIssue(61L)).thenReturn(issue(61, 99, 1));
-		when(client.getIssue(62L)).thenReturn(issue(62, 7, 1));
+		projectIssues.put(62L, issue(62, 7, 1));
 
-		SyncResult result = executor.execute(List.of(
+		SyncResult result = run(List.of(
 				item(2, 60L, 0, null, "なし"),
 				item(3, null, 1, 2, "なしの子"),
 				item(4, 61L, 0, null, "別PJ"),
-				item(5, 62L, 0, null, "正常")), List.of(), projectConfig(null), client, false, logger, false);
+				item(5, 62L, 0, null, "正常")), List.of(), null, false, false);
 
 		assertThat(result.errorCount()).isEqualTo(3);
 		assertThat(result.errors().get(0)).contains("行2").contains("存在しません");
@@ -150,84 +170,94 @@ class SyncExecutorTests {
 		verify(client).updateIssue(eq(62L), anyMap());
 		verify(client, never()).updateIssue(eq(60L), anyMap());
 		verify(client, never()).updateIssue(eq(61L), anyMap());
+		verify(client, never()).getIssue(62L);
 	}
 
 	@Test
-	@DisplayName("前回と同じ内容の更新はスキップする（--force-updateなら更新する）")
+	@DisplayName("Redmineの現在の値と送信内容が同じならスキップする（--force-updateなら更新する）")
 	void execute_skipsUnchangedUpdates() {
-		when(client.getIssue(70L)).thenReturn(issue(70, 7, 1));
-		DiffItem item = item(2, 70L, 0, null, "同じ");
-		executor.execute(List.of(item), List.of(), projectConfig(null), client, false, logger, false);
-		ArgumentCaptor<IssueLinkEntity> saved = ArgumentCaptor.forClass(IssueLinkEntity.class);
-		verify(repository).save(saved.capture());
-		IssueLinkEntity link = saved.getValue();
-		assertThat(link.getIssueId()).isEqualTo(70L);
-		assertThat(link.getProjectId()).isEqualTo("proj");
-		when(repository.findByIssueIdAndProjectId(70L, "proj")).thenReturn(Optional.of(link));
+		projectIssues.put(70L, sameAsItem(70, "同じ", null));
+		projectIssues.put(71L, sameAsItem(71, "子", 70L));
+		List<DiffItem> items = List.of(item(2, 70L, 0, null, "同じ"), item(3, 71L, 1, 2, "子"));
 
-		SyncResult second = executor.execute(List.of(item), List.of(), projectConfig(null), client, false, logger,
-				false);
-		assertThat(second.successCount()).isEqualTo(1);
+		SyncResult result = run(items, List.of(), null, false, false);
+		assertThat(result.successCount()).isEqualTo(2);
+		verify(client, never()).updateIssue(anyLong(), anyMap());
+
+		run(items, List.of(), null, false, true);
 		verify(client, times(1)).updateIssue(eq(70L), anyMap());
-
-		executor.execute(List.of(item), List.of(), projectConfig(null), client, false, logger, true);
-		verify(client, times(2)).updateIssue(eq(70L), anyMap());
+		verify(client, times(1)).updateIssue(eq(71L), anyMap());
 	}
 
 	@Test
-	@DisplayName("statusId設定時はExcelから消えたチケットのステータスを変更する（既にそのステータスならスキップ）")
-	@SuppressWarnings({ "unchecked", "rawtypes" })
-	void execute_logicalDeleteWithStatusId() {
-		when(client.getIssue(20L)).thenReturn(issue(20, 7, 1));
-		when(client.getIssue(30L)).thenReturn(issue(30, 7, 6));
-		IssueLinkEntity already = new IssueLinkEntity(40L, "proj");
-		already.setPayloadHash("logical-delete:6");
-		when(repository.findByIssueIdAndProjectId(40L, "proj")).thenReturn(Optional.of(already));
+	@DisplayName("件名・親・日付のいずれかがRedmineと違えば更新する")
+	void execute_updatesWhenRedmineDiffers() {
+		Map<String, Object> renamed = sameAsItem(80, "旧件名", null);
+		Map<String, Object> reparented = sameAsItem(81, "子", 99L);
+		Map<String, Object> redated = sameAsItem(82, "日付", null);
+		redated.put("start_date", "2026-02-01");
+		projectIssues.put(80L, renamed);
+		projectIssues.put(81L, reparented);
+		projectIssues.put(82L, redated);
+		projectIssues.put(83L, sameAsItem(83, "最上位", null));
 
-		SyncResult result = executor.execute(List.of(), List.of(20L, 30L, 40L), projectConfig(6), client, false,
-				logger, false);
+		SyncResult result = run(List.of(
+				item(2, 80L, 0, null, "新件名"),
+				item(3, 81L, 1, 2, "子"),
+				item(4, 82L, 0, null, "日付"),
+				item(5, 83L, 0, null, "最上位")), List.of(), null, false, false);
 
 		assertThat(result.errorCount()).isZero();
-		assertThat(result.successCount()).isEqualTo(3);
+		verify(client).updateIssue(eq(80L), anyMap());
+		verify(client).updateIssue(eq(81L), anyMap());
+		verify(client).updateIssue(eq(82L), anyMap());
+		verify(client, never()).updateIssue(eq(83L), anyMap());
+	}
+
+	@Test
+	@DisplayName("statusId設定時は論理削除候補のステータスを変更する（取得済みの一覧で既にそのステータスならスキップ）")
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	void execute_logicalDeleteWithStatusId() {
+		projectIssues.put(20L, issue(20, 7, 1));
+		projectIssues.put(30L, issue(30, 7, 6));
+
+		SyncResult result = run(List.of(), List.of(20L, 30L), 6, false, false);
+
+		assertThat(result.errorCount()).isZero();
+		assertThat(result.successCount()).isEqualTo(2);
 		ArgumentCaptor<Map> payload = ArgumentCaptor.forClass(Map.class);
 		verify(client).updateIssue(eq(20L), payload.capture());
 		assertThat((Map<String, Object>) payload.getValue()).containsExactly(Map.entry("status_id", 6L));
 		verify(client, never()).updateIssue(eq(30L), anyMap());
-		verify(client, never()).getIssue(40L);
-		verify(client, never()).deleteIssue(anyLong());
-		ArgumentCaptor<IssueLinkEntity> saved = ArgumentCaptor.forClass(IssueLinkEntity.class);
-		verify(repository, times(2)).save(saved.capture());
-		assertThat(saved.getAllValues()).extracting(IssueLinkEntity::getPayloadHash)
-				.containsOnly("logical-delete:6");
+		verify(client, never()).getIssue(anyLong());
 	}
 
 	@Test
 	@DisplayName("statusId未設定なら論理削除候補はログに出すだけで何も変更しない")
 	void execute_logicalDeleteWithoutStatusIdOnlyWarns() {
-		SyncResult result = executor.execute(List.of(), List.of(20L, 30L), projectConfig(null), client, false,
-				logger, false);
+		projectIssues.put(20L, issue(20, 7, 1));
+		SyncResult result = run(List.of(), List.of(20L, 30L), null, false, false);
 
 		assertThat(result.errorCount()).isZero();
 		assertThat(result.totalCount()).isZero();
 		verify(client, never()).getIssue(anyLong());
 		verify(client, never()).updateIssue(anyLong(), anyMap());
-		verify(repository, never()).save(any());
 	}
 
 	@Test
-	@DisplayName("dry-runではRedmineへの書き込みもissue_linkの保存も行わない")
+	@DisplayName("dry-runではRedmineへの書き込みを行わない")
 	void execute_dryRunDoesNotWrite() {
-		when(client.getIssue(50L)).thenReturn(issue(50, 7, 1));
+		projectIssues.put(50L, issue(50, 7, 1));
+		projectIssues.put(20L, issue(20, 7, 1));
 
-		SyncResult result = executor.execute(List.of(
+		SyncResult result = run(List.of(
 				item(2, null, 0, null, "親"),
 				item(3, null, 1, 2, "子"),
-				item(4, 50L, 0, null, "既存")), List.of(20L), projectConfig(6), client, true, logger, false);
+				item(4, 50L, 0, null, "既存")), List.of(20L), 6, true, false);
 
 		assertThat(result.errorCount()).isZero();
 		assertThat(result.createdIssueIds()).isEmpty();
 		verify(client, never()).createIssue(anyMap());
 		verify(client, never()).updateIssue(anyLong(), anyMap());
-		verify(repository, never()).save(any());
 	}
 }

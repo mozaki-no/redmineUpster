@@ -1,5 +1,6 @@
 package mozaki.redmineUpster.service;
 
+import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import mozaki.redmineUpster.cli.FileLogger;
 
@@ -28,6 +30,8 @@ public class RedmineClient {
 	private static final String CONNECTION_CLOSE = "close";
 	private static final String RESPONSE_ISSUE_KEY = "issue";
 	private static final String RESPONSE_ID_KEY = "id";
+	/** チケット一覧取得の1ページ件数（Redmineの上限は既定で100） */
+	static final int PAGE_SIZE = 100;
 
 	private final String baseUrl;
 	private final String apiKey;
@@ -103,22 +107,6 @@ public class RedmineClient {
 	}
 
 	/**
-	 * チケットを削除します。
-	 *
-	 * @param issueId チケットID
-	 */
-	public void deleteIssue(Long issueId) {
-		String url = baseUrl + "/issues/" + issueId + ".json";
-
-		debugLog("Request URL: " + url);
-
-		HttpEntity<Map<String, Object>> entity = buildEntity(Map.of());
-		restTemplate.exchange(url, HttpMethod.DELETE, entity, Void.class);
-
-		debugLog("Response status: 204 NO_CONTENT (DELETE success)");
-	}
-
-	/**
 	 * チケットを取得します。
 	 *
 	 * @param issueId チケットID
@@ -139,6 +127,51 @@ public class RedmineClient {
 			debugLog("Response status: 404 NOT_FOUND");
 			return null;
 		}
+	}
+
+	/**
+	 * 同期先プロジェクトのチケットを全件取得します（クローズ済みを含む、サブプロジェクトは含まない）。
+	 * <p>
+	 * {@code GET /issues.json?project_id=...&subproject_id=!*&status_id=*&limit=100&offset=...}
+	 * を total_count に達するまでページングして取得します。
+	 * </p>
+	 *
+	 * @return チケットID → チケット情報（取得順）
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public Map<Long, Map<String, Object>> listProjectIssues() {
+		if (projectId == null || projectId.isBlank()) {
+			throw new IllegalStateException("redmine.project-id is not configured");
+		}
+		Map<Long, Map<String, Object>> issues = new LinkedHashMap<>();
+		int offset = 0;
+		while (true) {
+			URI uri = UriComponentsBuilder.fromUriString(baseUrl + ISSUES_ENDPOINT)
+					.queryParam("project_id", projectId)
+					.queryParam("subproject_id", "!*")
+					.queryParam("status_id", "*")
+					.queryParam("limit", PAGE_SIZE)
+					.queryParam("offset", offset)
+					.encode()
+					.build()
+					.toUri();
+			debugLog("Request URL: GET " + uri);
+			ResponseEntity<Map> response = restTemplate.exchange(uri, HttpMethod.GET, buildEntity(null), Map.class);
+			Map body = response.getBody();
+			List<?> page = body != null && body.get("issues") instanceof List<?> list ? list : List.of();
+			for (Object element : page) {
+				if (element instanceof Map issue && issue.get(RESPONSE_ID_KEY) instanceof Number id) {
+					issues.put(id.longValue(), (Map<String, Object>) issue);
+				}
+			}
+			int total = body != null && body.get("total_count") instanceof Number n ? n.intValue() : -1;
+			offset += page.size();
+			if (page.isEmpty() || (total >= 0 && offset >= total) || (total < 0 && page.size() < PAGE_SIZE)) {
+				break;
+			}
+		}
+		debugLog("Project issues fetched: " + issues.size());
+		return issues;
 	}
 
 	/**

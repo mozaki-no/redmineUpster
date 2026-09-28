@@ -20,9 +20,6 @@ public final class SyncConstants {
     /** アクション: 論理削除（ステータス変更） */
     public static final String ACTION_LOGICAL_DELETE = "LOGICAL_DELETE";
 
-    /** issue_link.payload_hash に記録する論理削除済みマーカーの接頭辞 */
-    public static final String LOGICAL_DELETE_HASH_PREFIX = "logical-delete:";
-
     // ステータス
     /** ステータス: 新規 */
     public static final String STATUS_NEW = "New";

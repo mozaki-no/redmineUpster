@@ -138,6 +138,30 @@ public class SyncConfigProperties {
 		 * 列設定。
 		 */
 		private ColumnsConfig columns;
+
+		/**
+		 * Excel の読み込み元（シート・テーブル）。
+		 */
+		private ExcelConfig excel;
+	}
+
+	/**
+	 * Excel の読み込み元の設定クラス（.xlsx / .xlsm。CSV では無視）。
+	 * <p>
+	 * 優先順位は table ＞ sheet ＞ 先頭シート。CLI の --table / --sheet で上書きできます。
+	 * </p>
+	 */
+	@Data
+	public static class ExcelConfig {
+		/**
+		 * シート名、または1始まりのシート番号。値のある最初の行をヘッダとして読みます。
+		 */
+		private String sheet;
+
+		/**
+		 * Excel のテーブル（挿入 → テーブル）の名前。テーブルの見出し行・範囲だけを読みます。
+		 */
+		private String table;
 	}
 
 	/**
@@ -204,6 +228,16 @@ public class SyncConfigProperties {
 		 * デフォルト値は "進捗率"。
 		 */
 		private String progressColumn = "進捗率";
+
+		/**
+		 * 階層列の空欄を前行の値で補完するか（旧来の動作）。デフォルト false。
+		 * <p>
+		 * false: 階層列の空欄は「その階層を飛ばした」ことを表します（例: 大分類の直下のタスク）。
+		 * 同じ値が縦に続く箇所はセル結合するか、各行に値を入れてください。
+		 * true: 一番深い値より左の空欄を前行の値で補完します。この場合、階層を飛ばした行は作れません。
+		 * </p>
+		 */
+		private boolean fillDownHierarchy = false;
 	}
 
 	/**

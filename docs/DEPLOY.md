@@ -2,6 +2,9 @@
 
 本ドキュメントは、RedmineUpsterをJenkins環境でデプロイ・実行するための詳細な手順を記載しています。
 
+> **2026-09 更新:** データベース（PostgreSQL / Docker）は不要になりました。同期状態はDBに保存せず、実行のたびに Redmine からプロジェクトのチケットを取得して比較します。
+> Windows で Java をインストールせずに使う場合は [USER_GUIDE.md](./USER_GUIDE.md)（exe 版）を参照してください。本書は Linux/Jenkins で jar を直接実行する場合の手順です。
+
 ---
 
 ## 目次
@@ -10,7 +13,7 @@
 2. [ビルド手順](#2-ビルド手順)
 3. [環境変数の設定](#3-環境変数の設定)
 4. [設定ファイル（sync-config.yml）](#4-設定ファイルsync-configyml)
-5. [データベース設定](#5-データベース設定)
+5. [データベース設定（廃止）](#5-データベース設定廃止)
 6. [CLI引数の説明](#6-cli引数の説明)
 7. [Jenkins Pipeline設定例](#7-jenkins-pipeline設定例)
 8. [ログファイル](#8-ログファイル)
@@ -25,7 +28,6 @@
 | ソフトウェア | バージョン | 用途 |
 |-------------|-----------|------|
 | Java | 17以上 | アプリケーション実行 |
-| PostgreSQL | 16推奨 | データ永続化 |
 | Maven | 3.6以上 | ビルドツール（Maven Wrapperを使用する場合は不要） |
 | Jenkins | 2.x | CI/CD環境 |
 
@@ -36,21 +38,9 @@ java -version
 # 出力例: openjdk version "17.0.x" ...
 ```
 
-### 1.3 PostgreSQLの準備
+### 1.3 データベース（不要）
 
-PostgreSQLが稼働していることを確認してください。Docker Composeを使用する場合は以下のコマンドで起動できます。
-
-```bash
-cd /path/to/redmineUpster
-docker compose up -d
-```
-
-これにより、以下の設定でPostgreSQLコンテナが起動します。
-- ホスト: `localhost`
-- ポート: `5433`
-- データベース名: `redmine_upster`
-- ユーザー名: `postgres`
-- パスワード: `postgres`
+PostgreSQL / Docker は不要になりました（旧バージョンの `issue_link` テーブルは使いません。残っていても削除して構いません）。
 
 ### 1.4 Jenkinsの要件
 
@@ -138,10 +128,6 @@ vi .env
 #### 3.2.2 .env.exampleの内容
 
 ```bash
-# Database
-DB_URL=jdbc:postgresql://localhost:5433/redmine_upster
-DB_USER=postgres
-DB_PASSWORD=postgres
 
 # Redmine API (sync-config.ymlで${VAR}形式で参照)
 REDMINE_API_KEY=your_api_key_here
@@ -170,8 +156,6 @@ echo $REDMINE_API_KEY
 export $(cat .env | grep -v '^#' | xargs)
 
 # または.envファイル自体にexportを記述
-export DB_URL=jdbc:postgresql://localhost:5433/redmine_upster
-export DB_USER=postgres
 # ...
 ```
 
@@ -214,13 +198,6 @@ pipeline {
         // Secret Text タイプのCredentialを参照
         REDMINE_API_KEY = credentials('redmine-api-key')
         REDMINE_TEST_API_KEY = credentials('redmine-test-api-key')
-
-        // Username/Password タイプのCredentialを参照
-        DB_USER = credentials('db-credentials-usr')
-        DB_PASSWORD = credentials('db-credentials-psw')
-
-        // 固定値
-        DB_URL = 'jdbc:postgresql://db-server:5432/redmine_upster'
     }
 
     stages {
@@ -262,9 +239,6 @@ stage('Load Environment') {
         ]) {
             sh '''
                 cat > .env << EOF
-DB_URL=jdbc:postgresql://db-server:5432/redmine_upster
-DB_USER=postgres
-DB_PASSWORD=postgres
 REDMINE_API_KEY=${API_KEY}
 REDMINE_TEST_API_KEY=${TEST_API_KEY}
 EOF
@@ -324,10 +298,7 @@ vi .env
 # 3. 環境変数を読み込み
 source .env
 
-# 4. Docker Composeでデータベース起動
-docker compose up -d
-
-# 5. アプリケーション実行
+# 4. アプリケーション実行
 java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
     --sync \
     --file=deploy/sample_test.csv \
@@ -507,88 +478,17 @@ projects:
 
 ---
 
-## 5. データベース設定
+## 5. データベース設定（廃止）
 
-### 5.1 PostgreSQL接続設定
+データベースは使いません。旧バージョンで `issue_link` テーブルに保存していた情報は、次のように Redmine から毎回取得した値で置き換えています。
 
-データベース接続は環境変数または`application.yml`で設定します。
+| 旧（issue_link） | 現在 |
+|------------------|------|
+| 更新対象の存在・プロジェクト確認 | 同期開始時に `GET /issues.json?project_id=...&subproject_id=!*&status_id=*` をページングして全件取得し、その一覧で確認 |
+| 送信内容のハッシュによる変更なしスキップ | 送信する項目（件名・トラッカー・ステータス・親・開始日・期日・進捗率・担当者・カスタムフィールド）を Redmine の現在の値と比較 |
+| 論理削除候補（このツールが作成したチケット） | プロジェクト内で Excel に記載のないチケット（**Redmine で手動作成したチケットも含む**。既に論理削除ステータスのものは除く） |
 
-#### 5.1.1 環境変数での設定（推奨）
-
-```bash
-export DB_URL="jdbc:postgresql://hostname:5432/redmine_upster"
-export DB_USER="postgres"
-export DB_PASSWORD="your-password"
-```
-
-#### 5.1.2 デフォルト値
-
-環境変数を設定しない場合、以下のデフォルト値が使用されます。
-
-| 環境変数 | デフォルト値 |
-|---------|-------------|
-| `DB_URL` | `jdbc:postgresql://localhost:5432/redmine_upster` |
-| `DB_USER` | `postgres` |
-| `DB_PASSWORD` | `postgres` |
-
-**注意:** Docker Composeで起動したPostgreSQLはポート`5433`を使用するため、以下のように設定してください。
-
-```bash
-export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
-```
-
-### 5.2 issue_linkテーブルの説明
-
-アプリケーション起動時にFlywayが自動的にテーブルを作成します。
-
-#### 5.2.1 テーブル構造
-
-V1〜V4 のマイグレーション適用後の構造:
-
-```sql
-CREATE TABLE issue_link (
-  id BIGSERIAL PRIMARY KEY,
-  external_key TEXT,            -- 旧方式の名残（新方式では未使用、NULL可）
-  issue_id BIGINT NOT NULL,
-  payload_hash TEXT,
-  project_id TEXT,
-  CONSTRAINT issue_link_issue_id_project_id_key UNIQUE (issue_id, project_id)
-);
-```
-
-#### 5.2.2 カラム説明
-
-| カラム名 | 型 | 説明 |
-|---------|-----|------|
-| `id` | BIGSERIAL | 自動採番の主キー |
-| `external_key` | TEXT | 旧方式（CSVの`id`列で紐付け）の値。新方式では使用しない |
-| `issue_id` | BIGINT | このツールが作成・更新したRedmineチケットのID |
-| `payload_hash` | TEXT | 前回送信内容のハッシュ（変更なしスキップ用）。論理削除済みは `logical-delete:<statusId>` |
-| `project_id` | TEXT | 同期先のRedmineプロジェクトID（設定の`projectId`） |
-
-#### 5.2.3 用途
-
-Excel/CSVの行とRedmineチケットの紐付けは、ファイルの「チケットID」列で行います。
-このテーブルは「このツールが管理しているチケット」の記録です。
-
-- **新規作成・更新時**: `(issue_id, project_id)` と送信内容のハッシュを記録
-- **更新時**: 前回と同じ内容なら更新をスキップ（`--force-update` で無効化）
-- **論理削除**: 記録されているチケットのうちExcelにないものを削除候補とし、
-  `sync.deletion.statusId` が設定されていればそのステータスへ変更する（物理削除はしない）
-- V4 マイグレーションで、同じ `(issue_id, project_id)` の重複行は id が最大の1行だけ残る
-
-### 5.3 データベースの手動作成（必要な場合）
-
-```bash
-# PostgreSQLに接続
-psql -h localhost -p 5433 -U postgres
-
-# データベース作成
-CREATE DATABASE redmine_upster;
-
-# 接続終了
-\q
-```
+`DB_URL` / `DB_USER` / `DB_PASSWORD` 環境変数と `docker-compose.yml` は不要です。
 
 ---
 
@@ -609,20 +509,16 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--project=<name>` | いいえ | 使用するプロジェクト名。省略時は`default=true`のプロジェクト |
 | `--file=<path>` | はい | 同期するCSV/Excelファイルのパス |
 | `--dry-run` | いいえ | ドライランモード。実際のRedmine更新を行わない |
-| `--log-dir=<path>` | いいえ | ログ出力ディレクトリ。省略時はカレントディレクトリ |
+| `--log-dir=<path>` | いいえ | ログ出力ディレクトリ。省略時はカレントディレクトリの `logs` |
 
 ### 6.3 各引数の詳細説明と使用例
 
 #### 6.3.1 --sync
 
-CLI同期モードを有効にします。この引数がない場合、アプリケーションはWebサーバーとして起動します。
+同期を実行します（`--file` を指定した場合は省略できます）。引数なし・`--help` の場合は使い方を表示して終了します（Webサーバーモードは廃止）。
 
 ```bash
-# CLI同期モード
 java -jar redmineUpster.jar --sync --file=input.csv
-
-# Webサーバーモード（--syncなし）
-java -jar redmineUpster.jar
 ```
 
 #### 6.3.2 --config
@@ -701,7 +597,7 @@ java -jar redmineUpster.jar --sync --file=input.csv --log-dir=/var/log/redmine-s
 # Jenkinsワークスペースに出力
 java -jar redmineUpster.jar --sync --file=input.csv --log-dir=${WORKSPACE}/logs/
 
-# 省略時はカレントディレクトリに出力
+# 省略時はカレントディレクトリの logs フォルダに出力
 java -jar redmineUpster.jar --sync --file=input.csv
 ```
 
@@ -740,10 +636,6 @@ pipeline {
     agent any
 
     environment {
-        // データベース接続設定
-        DB_URL = 'jdbc:postgresql://db-server:5432/redmine_upster'
-        DB_USER = credentials('db-user')
-        DB_PASSWORD = credentials('db-password')
 
         // Redmine API設定
         REDMINE_API_KEY = credentials('redmine-api-key')
@@ -993,9 +885,6 @@ pipeline {
     }
 
     environment {
-        DB_URL = 'jdbc:postgresql://db-server:5432/redmine_upster'
-        DB_USER = credentials('db-user')
-        DB_PASSWORD = credentials('db-password')
         REDMINE_API_KEY = credentials('redmine-api-key')
         REDMINE_TEST_API_KEY = credentials('redmine-test-api-key')
     }
@@ -1121,7 +1010,7 @@ pipeline {
 ### 8.1 出力場所
 
 ログファイルは`--log-dir`で指定したディレクトリに出力されます。
-省略した場合は、コマンドを実行したカレントディレクトリに出力されます。
+省略した場合は、コマンドを実行したカレントディレクトリの `logs` フォルダに出力されます。
 
 ```
 <log-dir>/sync-YYYYMMDD-HHmmss.log
@@ -1225,39 +1114,9 @@ export JAVA_HOME=/path/to/java17
 export PATH=$JAVA_HOME/bin:$PATH
 ```
 
-### 9.2 データベース接続エラー
+### 9.2 データベース接続エラー（廃止）
 
-#### PostgreSQLに接続できない
-
-**症状:**
-```
-Connection refused to host: localhost, port: 5432
-```
-
-**対処:**
-1. PostgreSQLが起動しているか確認
-   ```bash
-   docker compose ps
-   # または
-   systemctl status postgresql
-   ```
-
-2. 接続設定を確認
-   ```bash
-   # Docker Composeの場合はポート5433
-   export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
-   ```
-
-#### 認証エラー
-
-**症状:**
-```
-FATAL: password authentication failed for user "postgres"
-```
-
-**対処:**
-- 環境変数`DB_USER`と`DB_PASSWORD`が正しいか確認
-- PostgreSQLの`pg_hba.conf`の認証設定を確認
+データベースは使わなくなったため、このエラーは発生しません。
 
 ### 9.3 設定ファイルエラー
 
@@ -1436,22 +1295,18 @@ java -jar redmineUpster.jar --sync --file=input.csv --dry-run
 
 ```bash
 # 1. 環境変数設定
-export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
 export REDMINE_API_KEY="your-api-key"
 
-# 2. データベース起動
-docker compose up -d
-
-# 3. ビルド
+# 2. ビルド
 ./mvnw clean package
 
-# 4. ドライラン実行
+# 3. ドライラン実行
 java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
   --sync \
   --file=deploy/sample_test.csv \
   --dry-run
 
-# 5. 本番実行
+# 4. 本番実行
 java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
   --sync \
   --file=deploy/sample_test.csv
@@ -1459,4 +1314,4 @@ java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
 
 ---
 
-最終更新日: 2026-01-16
+最終更新日: 2026-09-28

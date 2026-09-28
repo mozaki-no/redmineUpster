@@ -9,7 +9,6 @@
 | ドキュメント | 概要 |
 |-------------|------|
 | [Redmine + Apache + Passenger](./redmine-apache-passenger.md) | Redmine本体のセットアップ手順。Apache + Passengerでの運用環境構築 |
-| [Docker / Docker Compose](./docker.md) | コンテナ環境のセットアップ。PostgreSQLコンテナの管理方法 |
 | [Java 17](./java17.md) | redmineUpster実行に必要なJava 17のインストール方法 |
 | [Jenkins](./jenkins.md) | CI/CDツールJenkinsのセットアップとredmineUpsterの定期実行設定 |
 
@@ -29,12 +28,6 @@
 |     Jenkins       +------------->+   redmineUpster   +------------->+     Redmine       |
 |                   |   定期実行    |   (Java 17)       |   REST API   |  (Apache+Pass.)  |
 +-------------------+              +--------+----------+              +-------------------+
-                                            |
-                                            v
-                                   +-------------------+
-                                   |   PostgreSQL      |
-                                   |  (Docker/Native)  |
-                                   +-------------------+
 ```
 
 ---
@@ -49,19 +42,14 @@
 
 - [Redmine + Apache + Passenger セットアップ](./redmine-apache-passenger.md)
 
-### 2. Docker環境のセットアップ
+### 2. Java 17のセットアップ
 
-redmineUpsterはPostgreSQLを使用します。Docker Composeで簡単に環境構築できます。
-
-- [Docker / Docker Compose セットアップ](./docker.md)
-
-### 3. Java 17のセットアップ
-
-redmineUpsterはJava 17で動作します。
+redmineUpsterはJava 17で動作します（データベース・Dockerは不要です）。
+Windowsで使うだけなら、Java同梱の配布版（exe）を使えば Java のインストールも不要です（[利用者ガイド](../USER_GUIDE.md)）。
 
 - [Java 17 セットアップ](./java17.md)
 
-### 4. Jenkinsのセットアップ（オプション）
+### 3. Jenkinsのセットアップ（オプション）
 
 定期実行やCI/CD環境が必要な場合に設定します。
 
@@ -78,23 +66,19 @@ redmineUpsterはJava 17で動作します。
 git clone <repository-url>
 cd redmineUpster
 
-# 2. PostgreSQLの起動
-docker compose up -d
-
-# 3. 環境変数の設定
-export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
+# 2. 環境変数の設定
 export REDMINE_API_KEY="your-api-key"
 
-# 4. ビルド
+# 3. ビルド
 ./mvnw clean package
 
-# 5. ドライラン実行（テスト）
+# 4. ドライラン実行（テスト）
 java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
   --sync \
   --file=deploy/sample_test.csv \
   --dry-run
 
-# 6. 本番実行
+# 5. 本番実行
 java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
   --sync \
   --file=deploy/sample_test.csv
@@ -105,7 +89,7 @@ java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \
 ## 関連ドキュメント
 
 - [README.md](../../README.md) - プロジェクト概要
-- [DEPLOY.md](../../DEPLOY.md) - デプロイ手順の詳細
+- [DEPLOY.md](../DEPLOY.md) - デプロイ手順の詳細
 - [CLAUDE.md](../../CLAUDE.md) - 開発者向け情報
 
 ---

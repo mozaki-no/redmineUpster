@@ -1,0 +1,1 @@
+java.base,java.compiler,java.desktop,java.instrument,java.logging,java.management,java.naming,java.net.http,java.prefs,java.scripting,java.sql,java.xml,jdk.charsets,jdk.crypto.ec,jdk.jfr,jdk.unsupported,jdk.zipfs

@@ -11,8 +11,6 @@ LOG_FILE="${LOG_FILE:-/var/lib/jenkins/redmine-upster/app.log}"
 PID_FILE="${PID_FILE:-/var/lib/jenkins/redmine-upster/app.pid}"
 RUN_IN_FOREGROUND="${RUN_IN_FOREGROUND:-false}"
 LOG_TO_STDOUT="${LOG_TO_STDOUT:-false}"
-START_DOCKER="${START_DOCKER:-false}"
-DOCKER_CMD="${DOCKER_CMD:-docker compose up -d}"
 DETACH_FROM_JENKINS="${DETACH_FROM_JENKINS:-true}"
 
 if [[ ! -x "${JAVA17}" ]]; then
@@ -22,16 +20,6 @@ fi
 if [[ ! -f "${APP_JAR}" ]]; then
   echo "APP_JAR not found: ${APP_JAR}" >&2
   exit 1
-fi
-
-if [[ -n "${DB_URL:-}" && -z "${SPRING_DATASOURCE_URL:-}" ]]; then
-  export SPRING_DATASOURCE_URL="${DB_URL}"
-fi
-if [[ -n "${DB_USER:-}" && -z "${SPRING_DATASOURCE_USERNAME:-}" ]]; then
-  export SPRING_DATASOURCE_USERNAME="${DB_USER}"
-fi
-if [[ -n "${DB_PASSWORD:-}" && -z "${SPRING_DATASOURCE_PASSWORD:-}" ]]; then
-  export SPRING_DATASOURCE_PASSWORD="${DB_PASSWORD}"
 fi
 
 if [[ -f "${PID_FILE}" ]]; then
@@ -65,14 +53,6 @@ if [[ "${AUTO_KILL_PORT}" == "true" ]]; then
     echo "Port ${APP_PORT} is in use by pid=${PORT_PID}, stopping it."
     kill "${PORT_PID}" || true
     sleep 2
-  fi
-fi
-
-if [[ "${START_DOCKER}" == "true" ]]; then
-  if command -v docker >/dev/null 2>&1; then
-    eval "${DOCKER_CMD}"
-  else
-    echo "docker command not found; skipping docker startup." >&2
   fi
 fi
 

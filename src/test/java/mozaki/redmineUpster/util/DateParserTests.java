@@ -25,4 +25,13 @@ class DateParserTests {
 	void normalizeDate_invalid() {
 		assertThat(DateParser.normalizeDate("2026/13/40")).isNull();
 	}
+
+	@Test
+	@DisplayName("normalizeDateはExcelの日付シリアル値（書式なしの数式セル）を日付にする")
+	void normalizeDate_excelSerial() {
+		assertThat(DateParser.normalizeDate("46032")).isEqualTo("2026-01-10");
+		assertThat(DateParser.normalizeDate("46032.75")).isEqualTo("2026-01-10");
+		assertThat(DateParser.normalizeDate("12")).isNull();
+		assertThat(DateParser.normalizeDate("-46032")).isNull();
+	}
 }

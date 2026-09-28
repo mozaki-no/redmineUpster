@@ -6,6 +6,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import lombok.RequiredArgsConstructor;
+import mozaki.redmineUpster.service.ExcelSource;
 
 /**
  * CLI実行クラス。
@@ -16,7 +17,7 @@ import lombok.RequiredArgsConstructor;
  *
  * <p>使用方法:</p>
  * <pre>
- * java -jar redmineUpster.jar \
+ * redmineUpster.exe \        （または java -jar redmineUpster.jar）
  *   --sync \
  *   --config=sync-config.yml \
  *   --project="本番環境" \
@@ -27,14 +28,17 @@ import lombok.RequiredArgsConstructor;
  *
  * <p>引数:</p>
  * <ul>
- *   <li>{@code --sync}: CLI同期モード実行（この引数がない場合はWebサーバーモード）</li>
- *   <li>{@code --config}: 設定ファイルパス（省略時は sync.config-path 設定値）</li>
+ *   <li>{@code --sync}: 同期を実行（{@code --file} を指定した場合は省略可）</li>
+ *   <li>{@code --config}: 設定ファイルパス（省略時は SYNC_CONFIG_PATH、なければカレントディレクトリ／
+ *       実行ファイルと同じフォルダの sync-config.yml）</li>
  *   <li>{@code --project}: プロジェクト名（省略時はdefault=trueのプロジェクト）</li>
  *   <li>{@code --file}: CSV/Excelファイルパス（必須）</li>
  *   <li>{@code --dry-run}: ドライランモード（省略時はfalse）</li>
- *   <li>{@code --log-dir}: ログ出力ディレクトリ（省略時はカレントディレクトリ）</li>
+ *   <li>{@code --log-dir}: ログ出力ディレクトリ（省略時はカレントディレクトリの logs フォルダ）</li>
  *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
  *   <li>{@code --force-update}: 更新スキップを無効化して全件Update</li>
+ *   <li>{@code --sheet} / {@code --table}: Excel の読み込み元（シート名・番号／テーブル名。設定 sync.excel より優先）</li>
+ *   <li>{@code --help}: 使い方を表示</li>
  *   <li>{@code --relink-parent} / {@code --reset-sync}: 廃止（指定しても無視し、警告を出す）</li>
  * </ul>
  */
@@ -54,8 +58,10 @@ public class SyncCommand implements CommandLineRunner {
      */
     @Override
     public void run(String... args) {
-        // --sync引数がない場合はWebサーバーモードとして何もしない
-        if (!hasArg(args, "--sync")) {
+        // --sync も --file もない場合（引数なし・--help）は使い方を表示して終了
+        if (hasArg(args, "--help") || hasArg(args, "-h")
+                || (!hasArg(args, "--sync") && !hasArg(args, "--file"))) {
+            printUsage();
             return;
         }
 
@@ -67,6 +73,7 @@ public class SyncCommand implements CommandLineRunner {
         String logDir = getArgValue(args, "--log-dir");
         boolean debug = hasArg(args, "--debug");
         boolean forceUpdate = hasArg(args, "--force-update");
+        ExcelSource excelSource = new ExcelSource(getArgValue(args, "--sheet"), getArgValue(args, "--table"));
         for (String removed : REMOVED_OPTIONS) {
             if (hasArg(args, removed)) {
                 System.err.println("WARN: " + removed + " は廃止されました（チケットID列方式では不要のため無視します）");
@@ -83,7 +90,8 @@ public class SyncCommand implements CommandLineRunner {
         }
 
         // 同期実行
-        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate);
+        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate,
+                excelSource);
         System.exit(exitCode);
     }
 
@@ -122,21 +130,25 @@ public class SyncCommand implements CommandLineRunner {
      * 使用方法を表示します。
      */
     private void printUsage() {
-        System.out.println("Usage: java -jar redmineUpster.jar --sync [options]");
+        System.out.println("Usage: redmineUpster --sync --file=<CSV/Excel> [options]");
+        System.out.println("       (java -jar redmineUpster.jar --sync --file=<CSV/Excel> [options])");
         System.out.println();
         System.out.println("Options:");
-        System.out.println("  --sync                  CLI sync mode (required for CLI execution)");
-        System.out.println("  --config=<path>         Configuration file path (optional)");
-        System.out.println("  --project=<name>        Project name (optional, uses default if not specified)");
+        System.out.println("  --sync                  Run sync (may be omitted when --file is given)");
         System.out.println("  --file=<path>           CSV/Excel file path (required)");
-        System.out.println("  --dry-run               Dry run mode (optional)");
-        System.out.println("  --log-dir=<path>        Log output directory (optional, defaults to current directory)");
-        System.out.println("  --debug                 Debug mode (output detailed logs, optional)");
-        System.out.println("  --force-update          Disable update skipping (force all updates)");
+        System.out.println("  --config=<path>         Config file (default: SYNC_CONFIG_PATH, else sync-config.yml");
+        System.out.println("                          in the current folder or next to the executable)");
+        System.out.println("  --project=<name>        Project name (default: the project with default: true)");
+        System.out.println("  --dry-run               Show what would change without writing to Redmine");
+        System.out.println("  --log-dir=<path>        Log output directory (default: ./logs)");
+        System.out.println("  --debug                 Output detailed logs");
+        System.out.println("  --force-update          Update every row even if Redmine already has the same values");
+        System.out.println("  --sheet=<name|number>   Excel sheet to read (default: sync.excel.sheet, else the first sheet)");
+        System.out.println("  --table=<name>          Excel table to read (default: sync.excel.table; overrides --sheet)");
+        System.out.println("  --help                  Show this help");
         System.out.println();
         System.out.println("Example:");
-        System.out.println("  java -jar redmineUpster.jar --sync --file=input.csv --dry-run");
-        System.out.println("  java -jar redmineUpster.jar --sync --config=my-config.yml --project=\"Production\" --file=tasks.xlsx");
-        System.out.println("  java -jar redmineUpster.jar --sync --file=input.csv --debug");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx --dry-run");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx");
     }
 }
