@@ -198,3 +198,9 @@ CSVの日本語ステータスをRedmineのステータスIDへ変換したい�
 Jenkins連携、設定ファイルの詳細、トラブルシューティングについては [docs/DEPLOY.md](./docs/DEPLOY.md) を参照してください。
 
 設定ファイルのサンプルは [samples/sync-config.example.yml](./samples/sync-config.example.yml) を参照してください。
+
+## ライセンス
+
+本プロジェクトは MIT License で公開しています。詳細は [LICENSE](./LICENSE) を参照してください。
+
+なお、Windows配布版には Java ランタイム（OpenJDK、GPLv2 with Classpath Exception）と、Apache-2.0 等の各ライセンスに基づくサードパーティライブラリが同梱されています。これらのライセンス文書は配布物の `runtime/legal` フォルダに含まれています。

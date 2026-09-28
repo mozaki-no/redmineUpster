@@ -33,6 +33,7 @@ jpackage --type app-image \
 APP_DIR="${OUT}/${APP_NAME}"
 cp packaging/dist/sync-config.yml "${APP_DIR}/"
 cp docs/USER_GUIDE.md "${APP_DIR}/"
+cp LICENSE "${APP_DIR}/"
 cp samples/wbs_hierarchy.csv "${APP_DIR}/sample-wbs.csv"
 
 (cd "${OUT}" && tar czf "${APP_NAME}-linux.tar.gz" "${APP_NAME}")
