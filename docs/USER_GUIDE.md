@@ -166,6 +166,7 @@ Redmine のプロジェクトにあって **WBS に `チケットID` が書か�
 | `設定ファイルが見つかりません` | `sync-config.yml` を `redmineUpster.exe` と同じフォルダに置くか、`--config=` で指定 |
 | `401 Unauthorized` | API キーが違う・未設定。`apiKey` か環境変数 `REDMINE_API_KEY` を確認（`setx` の後はウィンドウを開き直す） |
 | `403 Forbidden` / `404 Not Found`（開始直後） | `projectId` が違う、またはそのプロジェクトの権限がない |
+| `PKIX path building failed` | Redmine の証明書を発行した CA が信頼されていない。Windows 版は Windows の「信頼されたルート証明機関」の CA も使うので、社内CAが Windows に登録されていれば接続できる（ブラウザで開けるのにこのエラーが出る場合は開発担当へ） |
 | `Connection refused` / `UnknownHost` | `baseUrl` の誤り、社内ネットワーク・VPN に未接続 |
 | `入力ファイルの検証エラー` | ログに行番号と理由（親の行がない、大分類が空欄、階層の重複、チケットIDの重複、トラッカー名の誤り）が出る。WBS を直して再実行（Redmine は変更されていない）。親の行がない場合は仮想親（3.）も使える |
 | `仮想親チケットのトラッカー「…」が見つかりません` | `virtualParents:` の `trackerId:` を Redmine にあるトラッカー名か番号にする |
