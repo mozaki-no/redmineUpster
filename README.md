@@ -89,6 +89,8 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--sheet=<名前 or 番号>` | いいえ | 読み込む Excel のシート（シート名、または1始まりの番号）。`sync.excel.sheet` より優先 |
 | `--table=<名前>` | いいえ | 読み込む Excel のテーブル名。`sync.excel.table` より優先（`--sheet` より優先） |
 | `--virtual-parents` / `--no-virtual-parents` | いいえ | 親の行がない行の祖先を仮想親チケットとして作成する／しない（`sync.virtualParents.enabled` より優先） |
+| `--targets=<対象>` | いいえ | 同期・出力する対象（`tickets`, `users`, `groups` のカンマ区切り）。省略時はファイルにある表すべて |
+| `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループを `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
 | ~~`--relink-parent`~~ | - | **廃止**（親子は毎回階層から再設定するため不要。指定しても警告を出して無視） |
 | ~~`--reset-sync`~~ | - | **廃止**（物理削除を行わない方針のため。指定しても警告を出して無視） |
 
@@ -115,6 +117,21 @@ java -jar redmineUpster.jar --sync --file=tasks.csv --debug
 # 更新スキップを無効化（全件Update）
 java -jar redmineUpster.jar --sync --file=tasks.csv --force-update
 ```
+
+### Excel 出力とユーザー・グループの Upsert
+
+```bash
+# プロジェクトのチケット＋ユーザー＋グループを Excel に出力（ユーザー・グループは管理者の API キーが必要）
+java -jar redmineUpster.jar --export --file=redmine.xlsx
+
+# 出力した Excel を編集して取り込む（ユーザー → グループ → チケットの順に Upsert）
+java -jar redmineUpster.jar --sync --file=redmine.xlsx --dry-run
+
+# ユーザーとグループだけ取り込む
+java -jar redmineUpster.jar --sync --file=redmine.xlsx --targets=users,groups
+```
+
+詳細（列の意味・空欄の扱い）は [docs/USER_GUIDE.md](docs/USER_GUIDE.md) の「Excel 出力とユーザー・グループ」を参照してください。
 
 ## 設定ファイル（sync-config.yml）
 

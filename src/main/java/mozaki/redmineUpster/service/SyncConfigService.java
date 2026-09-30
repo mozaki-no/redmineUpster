@@ -235,17 +235,9 @@ public class SyncConfigService {
 			config.setDeletion(parseDeletionConfig(deletionMap));
 		}
 
-		Map<String, Object> excelMap = (Map<String, Object>) map.get("excel");
-		if (excelMap != null) {
-			ExcelConfig excel = new ExcelConfig();
-			if (excelMap.get("sheet") != null) {
-				excel.setSheet(expandEnvVars(String.valueOf(excelMap.get("sheet"))).trim());
-			}
-			if (excelMap.get("table") != null) {
-				excel.setTable(expandEnvVars(String.valueOf(excelMap.get("table"))).trim());
-			}
-			config.setExcel(excel);
-		}
+		config.setExcel(parseExcelConfig(map.get("excel")));
+		config.setUsers(parseExcelConfig(map.get("users")));
+		config.setGroups(parseExcelConfig(map.get("groups")));
 
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
 		if (columnsMap != null) {
@@ -332,6 +324,28 @@ public class SyncConfigService {
 		}
 
 		return config;
+	}
+
+	/**
+	 * シート・テーブルの指定（excel / users / groups）を解析します。
+	 *
+	 * @param value YAMLの値（nullなら指定なし）
+	 * @return 設定（指定なしならnull）
+	 */
+	@SuppressWarnings("unchecked")
+	private ExcelConfig parseExcelConfig(Object value) {
+		if (!(value instanceof Map<?, ?>)) {
+			return null;
+		}
+		Map<String, Object> excelMap = (Map<String, Object>) value;
+		ExcelConfig excel = new ExcelConfig();
+		if (excelMap.get("sheet") != null) {
+			excel.setSheet(expandEnvVars(String.valueOf(excelMap.get("sheet"))).trim());
+		}
+		if (excelMap.get("table") != null) {
+			excel.setTable(expandEnvVars(String.valueOf(excelMap.get("table"))).trim());
+		}
+		return excel;
 	}
 
 	/**

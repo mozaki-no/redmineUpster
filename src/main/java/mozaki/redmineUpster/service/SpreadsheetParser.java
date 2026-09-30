@@ -102,6 +102,26 @@ public class SpreadsheetParser {
 	}
 
 	/**
+	 * Excel ファイルのシート名を返します（CSV は空）。
+	 *
+	 * @param filePath ファイルパス
+	 * @return シート名（ファイル内の順）
+	 * @throws IOException 読み込みに失敗した場合
+	 */
+	public List<String> sheetNames(String filePath) throws IOException {
+		if (filePath.toLowerCase().endsWith(".csv")) {
+			return List.of();
+		}
+		try (InputStream is = new FileInputStream(filePath); Workbook workbook = WorkbookFactory.create(is)) {
+			List<String> names = new ArrayList<>();
+			for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
+				names.add(workbook.getSheetName(i));
+			}
+			return names;
+		}
+	}
+
+	/**
 	 * CSVファイルをパスから解析します。
 	 * 文字コード（UTF-8 / BOM付きUTF-8 / Windows-31J）は自動判定します。
 	 */

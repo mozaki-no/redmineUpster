@@ -50,6 +50,7 @@ $AppDir = Join-Path $Out $AppName
 Copy-Item (Join-Path $Root "packaging\dist\sync-config.yml") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\run.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\run-dry-run.bat") $AppDir
+Copy-Item (Join-Path $Root "packaging\dist\export.bat") $AppDir
 Copy-Item (Join-Path $Root "docs\USER_GUIDE.md") $AppDir
 Copy-Item (Join-Path $Root "LICENSE") $AppDir
 Copy-Item (Join-Path $Root "samples\wbs_hierarchy.csv") (Join-Path $AppDir "sample-wbs.csv")

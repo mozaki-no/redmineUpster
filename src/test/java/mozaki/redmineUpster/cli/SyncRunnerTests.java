@@ -83,7 +83,7 @@ class SyncRunnerTests {
 
 		RedmineClientFactory factory = Mockito.mock(RedmineClientFactory.class);
 		SyncRunner runner = new SyncRunner(configService, new SpreadsheetParser(), new DiffCalculator(),
-				Mockito.mock(SyncExecutor.class), factory, new TicketIdWriter());
+				Mockito.mock(SyncExecutor.class), factory, new TicketIdWriter(), new DirectorySync());
 		int exit = runner.run(config.toString(), null, xlsx.toString(), true, tempDir.resolve("logs").toString(),
 				false, false, null);
 

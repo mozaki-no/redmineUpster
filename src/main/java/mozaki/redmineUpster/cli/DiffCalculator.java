@@ -689,6 +689,10 @@ public class DiffCalculator {
             customFields.put(column, value(rowData.row, column));
         }
         payload.put("customFields", customFields);
+        Map<String, String> cfColumns = CustomFieldColumns.cellValues(rowData.row);
+        if (!cfColumns.isEmpty()) {
+            payload.put("cfColumns", cfColumns);
+        }
         return payload;
     }
 
