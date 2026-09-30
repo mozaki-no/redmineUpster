@@ -16,6 +16,11 @@ projects:
       customFieldMap: {}
       customFieldDateColumns:
         - "開始日"
+      trackerMap:
+        "タスク": 2
+        "サマリ": 6
+      deletion:
+        statusId: 6
       columns:
         hierarchy:
           - "大分類"
@@ -26,11 +31,14 @@ projects:
         startDateColumn: "開始日"
         dueDateColumn: "期限"
         statusColumn: "状態"
+        progressColumn: "進捗率"
+        ticketIdColumn: "Redmine番号"
+        trackerColumn: "種別"
+        fillDownHierarchy: true
         required:
-          - "id"
+          - "チケットID"
           - "チーム"
           - "工程"
         customFieldColumns:
-          - "id"
           - "チーム"
           - "工程"

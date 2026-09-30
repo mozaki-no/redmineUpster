@@ -266,19 +266,6 @@ Jenkinsのcredentials機能を使用すると、APIキーやパスワードな�
 
 5. 「Create」をクリック
 
-#### Username with password（データベース認証）の登録
-
-1. 「Add Credentials」をクリック
-2. 以下を入力:
-   - **Kind**: Username with password
-   - **Scope**: Global
-   - **Username**: postgres
-   - **Password**: your_password
-   - **ID**: `db-credentials`
-   - **Description**: PostgreSQL Database Credentials
-
-3. 「Create」をクリック
-
 ### 4.4 redmineUpster用のCredential一覧
 
 以下のCredentialを登録することを推奨します。
@@ -287,7 +274,6 @@ Jenkinsのcredentials機能を使用すると、APIキーやパスワードな�
 |----|------|------|
 | `redmine-api-key` | Secret text | 本番環境Redmine APIキー |
 | `redmine-test-api-key` | Secret text | テスト環境Redmine APIキー |
-| `db-credentials` | Username with password | PostgreSQL認証情報 |
 | `git-credentials` | Username with password or SSH | Gitリポジトリアクセス |
 
 ### 4.5 Pipelineでの使用方法
@@ -297,10 +283,6 @@ pipeline {
     environment {
         // Secret textの参照
         REDMINE_API_KEY = credentials('redmine-api-key')
-
-        // Username with passwordの参照
-        // 自動的に DB_CREDENTIALS_USR と DB_CREDENTIALS_PSW が設定される
-        DB_CREDENTIALS = credentials('db-credentials')
     }
 
     stages {
@@ -308,8 +290,6 @@ pipeline {
             steps {
                 sh '''
                     echo "API Key: ${REDMINE_API_KEY}"
-                    echo "DB User: ${DB_CREDENTIALS_USR}"
-                    echo "DB Password: ${DB_CREDENTIALS_PSW}"
                 '''
             }
         }
@@ -398,10 +378,6 @@ pipeline {
     }
 
     environment {
-        // データベース接続設定
-        DB_URL = 'jdbc:postgresql://localhost:5433/redmine_upster'
-        DB_CREDENTIALS = credentials('db-credentials')
-
         // Redmine API設定
         REDMINE_API_KEY = credentials('redmine-api-key')
         REDMINE_TEST_API_KEY = credentials('redmine-test-api-key')
@@ -491,11 +467,8 @@ pipeline {
                 script {
                     def dryRunFlag = params.DRY_RUN ? '--dry-run' : ''
 
-                    // 環境変数を設定して実行
-                    withEnv([
-                        "DB_USER=${DB_CREDENTIALS_USR}",
-                        "DB_PASSWORD=${DB_CREDENTIALS_PSW}"
-                    ]) {
+                    // 追加の環境変数が必要ならここで指定（DB接続情報は不要になりました）
+                    withEnv([]) {
                         def exitCode = sh(
                             script: """
                                 java -jar target/redmineUpster-0.0.1-SNAPSHOT.jar \\
@@ -580,7 +553,6 @@ pipeline {
 
     environment {
         REDMINE_API_KEY = credentials('redmine-api-key')
-        DB_URL = 'jdbc:postgresql://localhost:5433/redmine_upster'
     }
 
     stages {

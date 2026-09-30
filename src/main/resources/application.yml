@@ -1,23 +1,16 @@
 spring:
   application:
     name: redmineUpster
-  datasource:
-    url: "${DB_URL:jdbc:postgresql://localhost:5432/redmine_upster}"
-    username: "${DB_USER:postgres}"
-    password: "${DB_PASSWORD:postgres}"
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    properties:
-      hibernate:
-        jdbc:
-          time_zone: Asia/Tokyo
+  main:
+    # CLI専用: Webサーバーを起動しない（DBも使わない）
+    web-application-type: none
+    banner-mode: "off"
   jackson:
     time-zone: Asia/Tokyo
-  flyway:
-    enabled: true
-server:
-  port: 3004
+
+logging:
+  level:
+    root: WARN
 
 redmine:
   base-url: "${REDMINE_BASE_URL:http://localhost:3000}"
@@ -25,4 +18,5 @@ redmine:
   project-id: "${REDMINE_PROJECT_ID:}"
 
 sync:
-  config-path: "${SYNC_CONFIG_PATH:sync-config.yml}"
+  # 空の場合は --config、なければカレントディレクトリ／実行ファイルと同じフォルダの sync-config.yml を使う
+  config-path: "${SYNC_CONFIG_PATH:}"

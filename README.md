@@ -1,6 +1,49 @@
 # redmineUpster
 
-RedmineのチケットをCSV/Excelから同期するCLIツールです。`id`をexternal_keyとして管理し、階層列（大分類 → 中分類 → 小分類 → 成果物 → タスク）から親子関係を推定します。親が推定できない場合は、外部キーの末尾区切り（例: `1.2.3` → 親 `1.2`）から補助的に推定します。
+> **使うだけの方（Windows）は [利用者ガイド（docs/USER_GUIDE.md）](./docs/USER_GUIDE.md) を参照してください。** Java・データベースのインストールは不要です。
+> **ダウンロード:** [Releases（最新版）](https://github.com/mozaki-no/redmineUpster/releases/latest) の `redmineUpster-windows-<バージョン>.zip` をダウンロードして展開するだけです（GitHub へのログインは不要）。自分でビルドする場合は Windows + JDK 17 以上 + Maven で `powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1`（下の「配布版のビルド」）。
+
+RedmineのチケットをCSV/Excelから同期するCLIツールです。Excel/CSVの1行がRedmineのチケット1件に対応し、**Excelのチケット一覧とRedmineのチケットを同じ状態に保つ**ことを目的にしています。
+
+## 同期の仕組み
+
+- **チケットID列**（既定: `チケットID`）: 値があればそのチケットを更新、空欄なら新規作成します。
+  新規作成したチケットのIDは、同期後に入力ファイルの同じ行へ自動で書き戻します（元ファイルは `<ファイル名>.bak` に保存。`--dry-run` では書き戻しません）。チケットID列がないファイルは、書き戻し時に列をヘッダの末尾へ追加します。
+- **トラッカー列**（既定: `トラッカー`）: 行ごとのトラッカー名（またはID）。`sync.trackerMap`（名前→ID）で変換し、そこにない名前は Redmine の `GET /trackers.json` から解決します。空欄の場合は `sync.tracker`（`enabled: true` の場合）の値を使い、それもなければ新規作成はエラー・更新はトラッカーを変更しません。
+- **親子関係**: 親チケットIDは持たず、階層列（既定: 大分類 → 中分類 → 小分類 → 成果物 → タスク）だけで決めます。値が入っている一番深い階層列がその行のレベルです。親は「その行の値が入っている階層列から、一番深い値を1つ取り除いたもの」とまったく同じ階層列・値を持つ行です。途中の階層列は空欄にでき、空欄は「その階層を飛ばす」ことを表します（例: 大分類の直下のタスク、中分類の直下のタスク）。親→子の順に作成し、同じ実行内で作成した親のIDを子に設定します。更新時も毎回階層から親を設定するため、行を移動すると親子関係も付け替わります（最上位へ移動した場合は親を外します）。
+- **件名**: `タスク` 列、なければ一番深い階層の値。
+- **検証**: 次の場合は Redmine に一切書き込まずに終了します（行番号と階層パスをログに出力、終了コード1）。
+  - 親の行がファイルにない（仮想親モードを有効にした場合は、エラーにせず仮想親チケットを作成します。下記「仮想親チケット」）
+  - 階層パスがまったく同じ行が2つ以上ある／階層列がすべて空の行がある／一番浅い階層列（大分類）が空欄の行がある（`fillDownHierarchy: true` の場合を除く）
+  - チケットIDが数値でない（`#123` 形式は可）、または同じチケットIDが複数行にある
+  - トラッカー名が見つからない
+- **Redmineの現在の状態が正**: データベースは使いません。同期開始時に同期先プロジェクトのチケットを全件取得し（`GET /issues.json?project_id=...&subproject_id=!*&status_id=*` を100件ずつページング。クローズ済みを含み、サブプロジェクトは含まない）、以下の判定に使います。
+- **更新対象の確認**: チケットIDが同期先プロジェクトのチケットにない（Redmine に存在しない、または別プロジェクト・サブプロジェクトのチケット）場合は、その行をエラーとしてスキップし（子の行もスキップ）、他の行は続行します。エラーは最後にまとめて出力します。
+- **論理削除**: 同期先プロジェクトのチケットのうち、今回のファイルのチケットID列に記載のないものを削除候補とします。**Redmine で手動作成したチケットも候補になります**（ファイルに行を追加してチケットIDを書けば対象外）。物理削除はせず、`sync.deletion.statusId` が設定されていればそのステータスへ変更します（既にそのステータスのチケットは候補にしません）。未設定の場合は候補を警告ログに出すだけで何も変更しません。
+- **変更なしスキップ**: 送信する項目（件名・トラッカー・ステータス・親・開始日・期日・進捗率・担当者・カスタムフィールド）を Redmine の現在の値と比較し、すべて同じなら更新をスキップします（`--force-update` で無効化）。更新した場合はログに変わった項目名（`changes=subject,due_date` など）を出力します。ファイルで空欄の日付などは送信しないため比較もしません。
+  - Redmine の設定で親チケットの開始日・期日・進捗率を子から算出する場合、親の行にそれと異なる値を書くと毎回「更新」になります（Redmine 側で無視されるだけで害はありません）。気になる場合は親の行の日付・進捗率を空欄にしてください。
+- **仮想親チケット（任意。既定は無効）**: `sync.virtualParents.enabled: true`（または CLI `--virtual-parents`）にすると、親の行がファイルにない行の祖先を「仮想親チケット」として自動で作成・更新します（`--no-virtual-parents` で設定より優先して無効化）。
+  - 対象: 親の行（一番深い値を1つ取り除いた階層）がない場合、その祖先を最上位まで順に補います。ファイルにある行は常に優先し、欠けている階層だけを仮想親にします。階層を飛ばした行の祖先は、飛ばした階層を空欄のまま扱います。件名はその階層の値です。
+  - トラッカー: `sync.virtualParents.trackerId`（名前またはID。名前は `trackerMap` → Redmine のトラッカー名で解決）。省略時は「サマリ」。解決できなければ検証エラー（Redmine は変更しません）。
+  - 開始日＝直下の子（仮想親を含む）の最小、期日＝最大、進捗率＝進捗率のある子の平均（切り捨て。1件もなければ送らない）。ステータスは送りません（作成時は Redmine の既定）。担当者・カスタムフィールドも送りません。作成時だけ説明に `[redmineUpster] 仮想親チケット（Excelに行がないため自動作成）` を入れます。
+  - 仮想親にはチケットID列がないため、**毎回 Redmine から見つけ直します**。浅い階層から順に、同期先プロジェクトのチケットのうち「親チケットが同じ（最上位は親なし）・件名が完全一致・トラッカーが仮想親のトラッカー」で、ファイルの行のチケットIDでも論理削除ステータスでもないものを探します。説明に上の目印があるものを優先し、その中で最も小さい番号を使います（複数あれば警告ログ）。見つからなければ新規作成し、そのIDを子の親に設定します。見つかれば通常の行と同じく現在値と比較し、同じならスキップします。
+  - 今回も必要な仮想親は論理削除の候補になりません。子の行がなくなって不要になった仮想親は、ほかのチケットと同じく論理削除の候補になります（論理削除済みの仮想親は再利用せず、再び必要になれば新しく作ります）。
+  - 仮想親の件名を Redmine で変えると別のチケットとして扱われ、新しい仮想親が作られます（古いものは論理削除の候補）。
+  - dry-run では `DRY_RUN CREATE (仮想親) [大分類 > 中分類]` のように表示し、ログの `VIRTUAL_PARENT: n（既存 x / 新規作成 y）` と合計件数に含めます。チケットIDの書き戻しは行いません。
+  - Redmine の設定で親チケットの進捗率を子から算出する場合、Redmine の計算（全子孫・工数の重み付け・完了=100%）とこのツールの平均が一致しないと、毎回 `changes=done_ratio` の更新になります（Redmine 側で無視されるだけで害はありません）。
+- **階層の飛ばし**: 階層列の空欄は前の行の値で補完しません（空欄＝その階層を飛ばす）。例（大分類, 中分類, 小分類, 成果物, タスク）:
+
+  | 行 | 大分類 | 中分類 | 小分類 | 成果物 | タスク | 親 |
+  |----|--------|--------|--------|--------|--------|----|
+  | P | A | | | | | なし（最上位） |
+  | Q | A | M | | | | P |
+  | R | A | M | | | T1 | Q（小分類・成果物を飛ばす） |
+  | S | A | | | | T2 | P（中分類〜成果物を飛ばす） |
+
+  - 同じ大分類・中分類が続く行は、**各行に値を入れるか、Excel（xlsx/xls）でセル結合**してください。縦方向に結合したセルは、結合範囲の各行にその値が入っているものとして読みます（横方向に結合した右側の列は空欄＝飛ばしのまま）。CSV には結合がないため、各行に値を入れます。
+  - 一番浅い階層列（大分類）が空欄の行は検証エラーになります（前行の値を引き継ぐ前提のシートを誤って最上位に作らないため）。
+  - 階層列は `sync.columns.hierarchy`（既定: 大分類〜タスク）ですが、その列がファイルに揃っていない場合は、設定の列・既定の列・旧形式（`Lv.01`〜`Lv.06` ＋ `タスク`）のうちファイルにある列が最も多いものを使い、使った列を警告ログに出します（1つもなければ検証エラー）。
+  - 旧来の「前行値の補完」が必要な場合は `sync.columns.fillDownHierarchy: true` を設定します。一番深い値より左の空欄を前の行の値で補完しますが、**この設定では階層を飛ばした行は作れません**（上の S は A > M の下になります）。
 
 ## ビルド
 
@@ -9,6 +52,21 @@ RedmineのチケットをCSV/Excelから同期するCLIツールです。`id`を
 ```
 
 成果物: `target/redmineUpster-0.0.1-SNAPSHOT.jar`
+
+## 配布版（Java同梱・インストール不要）のビルド
+
+`jpackage`（JDK 17以上に同梱）で Java ランタイムを同梱したアプリフォルダ（app-image）を作ります。jpackage は実行したOS向けしか作れないため、Windows 版は GitHub Actions（`.github/workflows/package.yml`）の `windows-latest` で作成し、artifact **`redmineUpster-windows`** としてアップロードします（全ブランチの push と手動実行で動作。先に ubuntu で `mvn -B test`）。
+
+- **リリース**: `v` で始まるタグ（例: `v1.0.0`）を push すると、同じワークフローが GitHub Release を作成し、`redmineUpster-windows-<タグ>.zip` を添付します（`release` ジョブだけ `contents: write`）。Release の添付ファイルは GitHub にログインしなくてもダウンロードできます（リポジトリが公開の場合）。例: `git tag v1.0.0 && git push origin v1.0.0`。jpackage のバージョンはタグの数字部分（`v1.2.3-rc1` → `1.2.3`）。
+- **GitHub Actions を使わずに作る**: Windows に JDK 17 以上（jpackage 同梱）と Maven を入れ、リポジトリのフォルダで `powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1` を実行すると、`target\package\redmineUpster-windows.zip` ができます（WiX などの追加インストールは不要）。
+
+| コマンド | 出力 |
+|----------|------|
+| `powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1`（Windows + JDK + Maven） | `target\package\redmineUpster\redmineUpster.exe` と `redmineUpster-windows.zip` |
+| `bash packaging/package-linux.sh`（Linux + JDK + Maven、動作確認用） | `target/package/redmineUpster/bin/redmineUpster` と `redmineUpster-linux.tar.gz` |
+
+- 同梱する Java モジュールは `packaging/modules.txt`（Windows は `jdk.crypto.mscapi` を追加）。Shift_JIS の CSV に `jdk.charsets`、HTTPS に `jdk.crypto.ec` が必要です。
+- 配布フォルダには `sync-config.yml`（サンプル）、`run-dry-run.bat` / `run.bat`（WBS ファイルをドラッグ＆ドロップして実行）、`USER_GUIDE.md`、`sample-wbs.xlsx` / `sample-wbs.csv` を同梱します（`packaging/dist/`）。配布版の `sync-config.yml` は `excel.table: "取込表"` が有効で、`sample-wbs.xlsx` をそのまま読めます（CSV では無視）。
 
 ## CLI実行
 
@@ -20,13 +78,21 @@ java -jar redmineUpster.jar --sync [オプション]
 
 | 引数 | 必須 | 説明 |
 |------|------|------|
-| `--sync` | はい | CLI同期モードで実行 |
-| `--config=<path>` | いいえ | 設定ファイルパス（デフォルト: `sync-config.yml`） |
+| `--sync` | いいえ | 同期を実行（`--file` を指定すれば省略可。引数なし・`--help` は使い方を表示） |
+| `--config=<path>` | いいえ | 設定ファイルパス（省略時: 環境変数 `SYNC_CONFIG_PATH` → カレントディレクトリ → 実行ファイル/jarと同じフォルダの `sync-config.yml`） |
 | `--project=<name>` | いいえ | 使用するプロジェクト名（デフォルト: `default=true`のプロジェクト） |
 | `--file=<path>` | はい | 同期するCSV/Excelファイルのパス |
 | `--dry-run` | いいえ | ドライランモード（実際のRedmine更新なし） |
-| `--log-dir=<path>` | いいえ | ログ出力ディレクトリ（デフォルト: カレントディレクトリ） |
+| `--log-dir=<path>` | いいえ | ログ出力ディレクトリ（デフォルト: カレントディレクトリの `logs`） |
 | `--debug` | いいえ | デバッグログを出力（APIリクエスト/レスポンス等） |
+| `--force-update` | いいえ | 更新スキップを無効化して全件Update |
+| `--sheet=<名前 or 番号>` | いいえ | 読み込む Excel のシート（シート名、または1始まりの番号）。`sync.excel.sheet` より優先 |
+| `--table=<名前>` | いいえ | 読み込む Excel のテーブル名。`sync.excel.table` より優先（`--sheet` より優先） |
+| `--virtual-parents` / `--no-virtual-parents` | いいえ | 親の行がない行の祖先を仮想親チケットとして作成する／しない（`sync.virtualParents.enabled` より優先） |
+| `--targets=<対象>` | いいえ | 同期・出力する対象（`tickets`, `users`, `groups` のカンマ区切り）。省略時はファイルにある表すべて |
+| `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループを `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
+| ~~`--relink-parent`~~ | - | **廃止**（親子は毎回階層から再設定するため不要。指定しても警告を出して無視） |
+| ~~`--reset-sync`~~ | - | **廃止**（物理削除を行わない方針のため。指定しても警告を出して無視） |
 
 ### 実行例
 
@@ -47,7 +113,25 @@ java -jar redmineUpster.jar --sync --file=tasks.csv --dry-run
 
 # デバッグログ付き実行
 java -jar redmineUpster.jar --sync --file=tasks.csv --debug
+
+# 更新スキップを無効化（全件Update）
+java -jar redmineUpster.jar --sync --file=tasks.csv --force-update
 ```
+
+### Excel 出力とユーザー・グループの Upsert
+
+```bash
+# プロジェクトのチケット＋ユーザー＋グループを Excel に出力（ユーザー・グループは管理者の API キーが必要）
+java -jar redmineUpster.jar --export --file=redmine.xlsx
+
+# 出力した Excel を編集して取り込む（ユーザー → グループ → チケットの順に Upsert）
+java -jar redmineUpster.jar --sync --file=redmine.xlsx --dry-run
+
+# ユーザーとグループだけ取り込む
+java -jar redmineUpster.jar --sync --file=redmine.xlsx --targets=users,groups
+```
+
+詳細（列の意味・空欄の扱い）は [docs/USER_GUIDE.md](docs/USER_GUIDE.md) の「Excel 出力とユーザー・グループ」を参照してください。
 
 ## 設定ファイル（sync-config.yml）
 
@@ -62,9 +146,17 @@ projects:
       apiKey: "${REDMINE_API_KEY}"
       projectId: "project-id"
     sync:
-      tracker:
+      tracker:            # トラッカー列が空欄の行に使う既定値
         enabled: true
         value: "タスク"
+      trackerMap:         # トラッカー名 → ID（ないものは /trackers.json から解決）
+        "タスク": 2
+        "サマリ": 6
+      deletion:           # Excelから消えたチケットの論理削除
+        statusId: 6       # 省略時は候補をログに出すだけ
+      virtualParents:     # 親の行がない階層を仮想親チケットとして自動作成（既定: 無効）
+        enabled: false
+        trackerId: "サマリ"  # 名前またはID（省略時は「サマリ」）
       status:
         enabled: true
         mode: "BY_DATES"  # または "FIXED"
@@ -80,8 +172,9 @@ projects:
         - "着手実績"
         - "完了実績"
       columns:
-        externalKeyColumn: "id"  # 外部キー列（"WBS番号"などに変更可能）
-        hierarchy:  # 親子関係推定に使用する列
+        ticketIdColumn: "チケットID"  # Redmineのチケット番号列
+        trackerColumn: "トラッカー"    # トラッカー列
+        hierarchy:  # 親子関係を決める列（浅い順）
           - "大分類"
           - "中分類"
           - "小分類"
@@ -90,32 +183,86 @@ projects:
         startDateColumn: "着手予定"  # Redmine start_date
         dueDateColumn: "完了予定"    # Redmine due_date
         statusColumn: "ステータス"  # CSVのステータス列（優先）
+        progressColumn: "進捗率"    # Redmine done_ratio
 ```
 
 環境変数は `${VAR_NAME}` 形式で参照可能です。
 
 ## 環境変数
 
+データベースは不要です（PostgreSQL・Docker・`DB_URL` などの設定は廃止しました）。
+APIキーは設定ファイルに `${REDMINE_API_KEY}` のように書いて環境変数から渡せます（直接書くこともできます）。
+
 | 変数 | 説明 |
 |------|------|
-| `DB_URL` | PostgreSQL接続URL（デフォルト: `jdbc:postgresql://localhost:5432/redmine_upster`） |
-| `DB_USER` | DBユーザー名（デフォルト: `postgres`） |
-| `DB_PASSWORD` | DBパスワード（デフォルト: `postgres`） |
-
-Docker Composeでローカル起動する場合はポート`5433`を使用:
-```bash
-docker compose up -d
-export DB_URL="jdbc:postgresql://localhost:5433/redmine_upster"
-```
+| `SYNC_CONFIG_PATH` | `--config` を省略したときの設定ファイルパス（任意） |
+| 任意（例: `REDMINE_API_KEY`） | 設定ファイル中の `${VAR}` で参照 |
 
 ## ヘッダ仕様
 
 デフォルトのCSVヘッダ:
 ```
-id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績,ステータス
+チケットID,トラッカー,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織,担当,着手予定,着手実績,完了予定,完了実績,ステータス,進捗率
 ```
 
-※ 外部キー列（`id`）、階層列、カスタムフィールド列、開始日/期限/ステータス列は設定ファイルで変更可能です。
+例（親の行も明示的に書きます）:
+```
+チケットID,トラッカー,大分類,中分類,タスク
+120,サマリ,認証システム,,
+,サマリ,認証システム,ユーザー認証,
+,タスク,認証システム,ユーザー認証,ログイン画面設計
+```
+
+※ チケットID列、トラッカー列、階層列、カスタムフィールド列、開始日/期限/ステータス/進捗率列は設定ファイルで変更可能です。
+※ CSVの文字コードは UTF-8（BOMあり/なし）と Shift_JIS（Windows-31J）を自動判定し、書き戻し時も元の文字コード・BOM・改行コードを保ちます。Excelは既定で先頭シート（値のある最初の行がヘッダ）を読み書きします。
+
+### Excel の読み込み元（シート・テーブル）
+
+WBS 本体のシートが複雑な場合は、取込用のシート（例: 2枚目）に Excel のテーブル（挿入 → テーブル）を作り、それを読み込めます。
+
+```yaml
+    sync:
+      excel:
+        table: "取込表"   # テーブル名（テーブルの見出し行と範囲だけを読む。テーブルの外の値は無視）
+        # sheet: "取込"   # シート名 または 1始まりの番号（値のある最初の行がヘッダ）
+```
+
+- 優先順位は **テーブル ＞ シート ＞ 先頭シート**。CLI の `--table=` / `--sheet=` は設定より優先します（CLI で `--sheet` だけを指定すると設定の `table` は使いません）。.xlsx / .xlsm のみ（テーブルは .xlsx / .xlsm、CSV では無視。CLI で指定した場合だけ警告）。
+- テーブルが見つからない場合は、ファイル内のテーブル名を表示してエラーにします。
+- 数式のセルは、Excel が保存時に計算した値を読みます（**Excel で保存してから**実行してください）。単一セル参照（`='WBS 本体'!C12` など）の参照先が空欄なら空欄として読みます（Excel は 0 を保存するため）。日付の書式が付いていない数式セルの日付（シリアル値。例: `46032`）も日付として扱います。
+- メッセージの行番号は、読み込んだシートの行番号です（検証エラーには `シート「取込」行12` のようにシート名が付きます）。
+- 新規作成したチケットIDは同じシート・テーブルの同じ行へ書き戻します。
+  - チケットID列のセルが **単一セル参照の数式**（`=WBS!C12`、`='WBS 本体'!$C$12` など）なら、**参照先のセル**（WBS 本体側）へ書き込み、ログに出します（数式はそのまま）。
+  - それ以外の数式（`=IF(...)` など）は上書きせず、行とチケット番号をエラーとしてログに出します（終了コード1）。ログの番号を手で入力してください（**入力せずに再実行すると二重作成になります**）。
+  - テーブルにチケットID列がない場合は、Redmine に書き込む前にエラーで終了します（テーブルに列を追加してください）。シート指定・先頭シートの場合は従来どおりヘッダの末尾に列を追加します。
+
+### サンプル（Excel）
+
+`samples/sample-wbs.xlsx`（とマクロ有効形式の `samples/sample-wbs.xlsm`。マクロは入っていません）は、取込用テーブルを使う WBS の例です。
+
+| シート | 内容 |
+|--------|------|
+| 1枚目「WBS」 | 人が見る・編集する表。タイトル行、大分類・中分類の縦のセル結合、色、ツールが使わない列（No・担当・工数・備考）、区切り行あり。4行目が見出し |
+| 2枚目「取込」 | テーブル **`取込表`**（3行目が見出し、1行目は注意書き）。列は チケットID・トラッカー・大分類〜タスク・着手予定・完了予定・ステータス・進捗率。各セルは `=WBS!$B$5` のような「WBS」シートへの参照（結合セルは結合範囲の先頭セルを参照、進捗率は `=IF(WBS!$M$5="","",ROUND(WBS!$M$5*100,0))` で 50% → 50） |
+
+- 大分類の直下のタスク（例: 要件定義書レビュー）、中分類の直下のタスク（例: 画面一覧作成）を含みます。
+- `チケットID` 列は単純な参照なので、新規作成したチケット番号は「WBS」シートの `チケットID` 列に書き込まれます。
+- 試し方: 配布版の `sync-config.yml`（`excel.table: "取込表"` が有効）の Redmine 接続先を設定して、`--dry-run` で確認してから本実行します。
+
+```bash
+java -jar target/redmineUpster.jar --sync --config=packaging/dist/sync-config.yml --file=samples/sample-wbs.xlsx --dry-run
+```
+
+- サンプルは `src/test/java/mozaki/redmineUpster/samples/SampleWorkbookGenerator.java`（Apache POI）で作成しています。数式の計算結果を保存し、Excel で開いたときにも再計算されるようにしています。作り直す場合は `mvn -q test-compile` の後、テストのクラスパスで `java mozaki.redmineUpster.samples.SampleWorkbookGenerator samples` を実行します。
+
+## 旧方式（id列）からの移行
+
+1. 既存チケットの行には、対応する Redmine のチケット番号を `チケットID` 列に入力します（旧 `id`/`WBS_ID` 列は同期には使われなくなります。カスタムフィールドとして送りたい場合は `customFieldColumns` に残してください）。
+   同期先プロジェクトのチケットでファイルに `チケットID` が書かれていないものは、論理削除の候補になります（手動作成したチケットを含む）。
+2. `トラッカー` 列を追加します（または `sync.tracker` で既定値を設定）。
+3. 親の行がない階層（旧方式では仮想親が自動生成されていたもの）は、親の行をファイルに追加します。仮想親として作られたチケットがある場合は、そのチケット番号を親の行の `チケットID` に入力してください。親の行を追加しない場合は `sync.virtualParents.enabled: true` で仮想親モードを使えます（旧方式で作られた仮想親も、親・件名・トラッカーが同じなら見つけて再利用します）。
+4. 設定から `virtualParentTrackerId` と `externalKeyColumn` を削除します（残っていても無視されます）。
+5. まず `--dry-run` で検証エラーと論理削除候補（`DRY_RUN LOGICAL_DELETE`）を確認してから実行します。旧バージョンのデータベース（`issue_link`）は使わないため、不要なら削除して構いません。
 
 ## 日付形式
 
@@ -131,8 +278,16 @@ id,チーム,工程,大分類,中分類,小分類,成果物,タスク,社/組織
 CSVの日本語ステータスをRedmineのステータスIDへ変換したい場合は `statusMap` を指定します。
 `statusMap` の値が数値の場合は `status_id` として送信されます。
 
+`BY_DATES` の場合は、デフォルトで `New=1` / `In Progress=2` / `Closed=5` のIDに変換されます。
+
 ## 詳細
 
 Jenkins連携、設定ファイルの詳細、トラブルシューティングについては [docs/DEPLOY.md](./docs/DEPLOY.md) を参照してください。
 
 設定ファイルのサンプルは [samples/sync-config.example.yml](./samples/sync-config.example.yml) を参照してください。
+
+## ライセンス
+
+本プロジェクトは MIT License で公開しています。詳細は [LICENSE](./LICENSE) を参照してください。
+
+なお、Windows配布版には Java ランタイム（OpenJDK、GPLv2 with Classpath Exception）と、Apache-2.0 等の各ライセンスに基づくサードパーティライブラリが同梱されています。これらのライセンス文書は配布物の `runtime/legal` フォルダに含まれています。

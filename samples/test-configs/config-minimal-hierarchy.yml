@@ -21,11 +21,10 @@ projects:
           - "カテゴリ"
           - "タスク"
         required:
-          - "id"
+          - "チケットID"
+          - "トラッカー"
           - "カテゴリ"
           - "タスク"
           - "担当"
           - "着手予定"
           - "完了予定"
-        customFieldColumns:
-          - "id"

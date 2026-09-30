@@ -122,9 +122,84 @@ public class SyncConfigProperties {
 		private List<String> customFieldDateColumns = new ArrayList<>();
 
 		/**
+		 * トラッカー名 → トラッカーIDの対応表。
+		 * Excelの「トラッカー」列の値を変換します。
+		 * ここにない名前は Redmine の /trackers.json から解決します。
+		 * 例: {"タスク": "2", "サマリ": "6"}
+		 */
+		private Map<String, String> trackerMap = new HashMap<>();
+
+		/**
+		 * 論理削除（Excelから消えたチケットのステータス変更）設定。
+		 */
+		private DeletionConfig deletion;
+
+		/**
 		 * 列設定。
 		 */
 		private ColumnsConfig columns;
+
+		/**
+		 * Excel の読み込み元（シート・テーブル）。
+		 */
+		private ExcelConfig excel;
+
+		/**
+		 * ユーザーの読み込み元（シート・テーブル）。省略時はシート「ユーザー」（なければユーザーは同期しない）。
+		 */
+		private ExcelConfig users;
+
+		/**
+		 * グループの読み込み元（シート・テーブル）。省略時はシート「グループ」（なければグループは同期しない）。
+		 */
+		private ExcelConfig groups;
+
+		/**
+		 * 仮想親チケットの自動作成（Excelに親行がない場合）の設定。
+		 */
+		private VirtualParentsConfig virtualParents;
+	}
+
+	/**
+	 * 仮想親チケットの設定クラス。
+	 * <p>
+	 * 有効にすると、親行がファイルにない行（例: 大分類の行がないタスク）の祖先を
+	 * 「仮想親チケット」として自動作成・更新します。無効（既定）の場合は親行がないと検証エラーです。
+	 * 仮想親はExcelに行がないため、次回以降は Redmine の同期先プロジェクトから
+	 * （親チケット・件名・トラッカーが同じチケットとして）見つけ直します。
+	 * </p>
+	 */
+	@Data
+	public static class VirtualParentsConfig {
+		/**
+		 * 仮想親チケットを作成するかどうか（既定: false。CLI の --virtual-parents / --no-virtual-parents が優先）。
+		 */
+		private boolean enabled;
+
+		/**
+		 * 仮想親チケットのトラッカー（名前またはID。名前は trackerMap → Redmine のトラッカー名で解決）。
+		 * 未設定の場合は「サマリ」。
+		 */
+		private String tracker;
+	}
+
+	/**
+	 * Excel の読み込み元の設定クラス（.xlsx / .xlsm。CSV では無視）。
+	 * <p>
+	 * 優先順位は table ＞ sheet ＞ 先頭シート。CLI の --table / --sheet で上書きできます。
+	 * </p>
+	 */
+	@Data
+	public static class ExcelConfig {
+		/**
+		 * シート名、または1始まりのシート番号。値のある最初の行をヘッダとして読みます。
+		 */
+		private String sheet;
+
+		/**
+		 * Excel のテーブル（挿入 → テーブル）の名前。テーブルの見出し行・範囲だけを読みます。
+		 */
+		private String table;
 	}
 
 	/**
@@ -144,22 +219,29 @@ public class SyncConfigProperties {
 
 		/**
 		 * 必須列のリスト（CSVに必ず含める列）。
-		 * 例: ["id", "チーム", "工程", ...]
+		 * 例: ["チケットID", "トラッカー", "チーム", "工程", ...]
 		 */
 		private List<String> required = new ArrayList<>();
 
 		/**
 		 * カスタムフィールドマッピング対象列のリスト。
-		 * 例: ["id", "チーム", "工程", ...]
+		 * 例: ["チーム", "工程", ...]
 		 */
 		private List<String> customFieldColumns = new ArrayList<>();
 
 		/**
-		 * 外部キー列名（Redmineチケットと紐付けるためのID列）。
-		 * デフォルト値は "id"。
-		 * 例: "WBS番号" などに変更可能。
+		 * チケットID列名（Redmineのチケット番号）。
+		 * 空欄なら新規作成、値があればそのチケットを更新します。
+		 * 新規作成したチケットのIDはこの列へ書き戻されます。
+		 * デフォルト値は "チケットID"。
 		 */
-		private String externalKeyColumn = "id";
+		private String ticketIdColumn = "チケットID";
+
+		/**
+		 * トラッカー列名（行ごとのトラッカー名またはID）。
+		 * デフォルト値は "トラッカー"。
+		 */
+		private String trackerColumn = "トラッカー";
 
 		/**
 		 * 開始日列名（Redmineのstart_dateに反映）。
@@ -178,12 +260,44 @@ public class SyncConfigProperties {
 		 * デフォルト値は "ステータス"。
 		 */
 		private String statusColumn = "ステータス";
+
+		/**
+		 * 進捗率列名（Redmineのdone_ratioに反映）。
+		 * デフォルト値は "進捗率"。
+		 */
+		private String progressColumn = "進捗率";
+
+		/**
+		 * 階層列の空欄を前行の値で補完するか（旧来の動作）。デフォルト false。
+		 * <p>
+		 * false: 階層列の空欄は「その階層を飛ばした」ことを表します（例: 大分類の直下のタスク）。
+		 * 同じ値が縦に続く箇所はセル結合するか、各行に値を入れてください。
+		 * true: 一番深い値より左の空欄を前行の値で補完します。この場合、階層を飛ばした行は作れません。
+		 * </p>
+		 */
+		private boolean fillDownHierarchy = false;
+	}
+
+	/**
+	 * 論理削除設定クラス。
+	 * <p>
+	 * このツールが作成・更新したチケット（issue_link に記録されたもの）のうち、
+	 * 今回のExcelに存在しないものを、指定ステータスへ変更して論理削除します。
+	 * statusId を設定しない場合は、候補をログに警告として出すだけで何も変更しません。
+	 * </p>
+	 */
+	@Data
+	public static class DeletionConfig {
+		/**
+		 * 論理削除時に設定するステータスID（未設定の場合は変更しない）。
+		 */
+		private Integer statusId;
 	}
 
 	/**
 	 * トラッカー設定クラス。
 	 * <p>
-	 * チケット作成時に使用するトラッカーの設定を保持します。
+	 * トラッカー列が空欄の行に使用する既定トラッカーの設定を保持します。
 	 * </p>
 	 */
 	@Data

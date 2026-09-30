@@ -44,3 +44,10 @@ sync-config.yml
 .env.local
 .env.test
 !.env.example
+【バックオフィス領域_J0】WBS.xlsx
+issues.csv
+20260428_001.log
+wbs_planb_J0 (2).xlsm
+
+# 配布版に同梱する設定サンプル
+!packaging/dist/sync-config.yml
