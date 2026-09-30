@@ -83,6 +83,26 @@ public class TicketIdWriter {
 	 */
 	public WriteBackResult writeBack(String filePath, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
 			ExcelSource source) throws IOException {
+		return writeBack(filePath, ticketIdColumn, rowIssueIds, source, true);
+	}
+
+	/**
+	 * IDを書き戻します（バックアップの作成有無を指定）。
+	 * <p>
+	 * 1回の実行で複数の表（ユーザー・グループ・チケット）へ書き戻す場合、2回目以降は makeBackup=false にして
+	 * 実行前の元ファイルのバックアップを残します。
+	 * </p>
+	 *
+	 * @param filePath 入力ファイルのパス
+	 * @param ticketIdColumn ID列のヘッダ名
+	 * @param rowIssueIds 行番号 → ID
+	 * @param source Excel の読み込み元（CSV では無視）
+	 * @param makeBackup {@code <file>.bak} を作成（上書き）する場合 true
+	 * @return 結果（makeBackup=false の場合、backup は既存のバックアップのパス）
+	 * @throws IOException 読み書きに失敗した場合
+	 */
+	public WriteBackResult writeBack(String filePath, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
+			ExcelSource source, boolean makeBackup) throws IOException {
 		Path path = Paths.get(filePath);
 		byte[] original = Files.readAllBytes(path);
 		List<String> notes = new ArrayList<>();
@@ -97,7 +117,9 @@ public class TicketIdWriter {
 			return new WriteBackResult(null, notes, failures);
 		}
 		Path backup = path.resolveSibling(path.getFileName().toString() + ".bak");
-		Files.copy(path, backup, StandardCopyOption.REPLACE_EXISTING);
+		if (makeBackup) {
+			Files.copy(path, backup, StandardCopyOption.REPLACE_EXISTING);
+		}
 		Files.write(path, updated);
 		return new WriteBackResult(backup, notes, failures);
 	}

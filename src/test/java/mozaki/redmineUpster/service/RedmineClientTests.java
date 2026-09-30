@@ -67,4 +67,46 @@ class RedmineClientTests {
 		assertThat(client.listProjectIssues()).isEmpty();
 		server.verify();
 	}
+
+	@Test
+	@DisplayName("ユーザーは状態（有効・登録・ロック）ごとに取得して status を補う")
+	void listUsers_byStatus() {
+		RestTemplate restTemplate = new RestTemplate();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+		server.expect(requestTo("http://redmine.local/users.json?status=1&limit=100&offset=0"))
+				.andRespond(withSuccess("{\"users\":[{\"id\":5,\"login\":\"tanaka\"}],\"total_count\":1}",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/users.json?status=2&limit=100&offset=0"))
+				.andRespond(withSuccess("{\"users\":[],\"total_count\":0}", MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/users.json?status=3&limit=100&offset=0"))
+				.andRespond(withSuccess("{\"users\":[{\"id\":6,\"login\":\"old\"}],\"total_count\":1}",
+						MediaType.APPLICATION_JSON));
+
+		RedmineClient client = new RedmineClient("http://redmine.local", "key", "proj", restTemplate);
+		Map<Long, Map<String, Object>> users = client.listUsers();
+
+		server.verify();
+		assertThat(users.get(5L)).containsEntry("status", 1);
+		assertThat(users.get(6L)).containsEntry("status", 3);
+	}
+
+	@Test
+	@DisplayName("グループはメンバー込みで取得し、ユーザー作成は POST /users.json の id を返す")
+	void listGroupsAndCreateUser() {
+		RestTemplate restTemplate = new RestTemplate();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+		server.expect(requestTo("http://redmine.local/groups.json?limit=100&offset=0"))
+				.andRespond(withSuccess("{\"groups\":[{\"id\":20,\"name\":\"開発\"}]}", MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/groups/20.json?include=users"))
+				.andRespond(withSuccess("{\"group\":{\"id\":20,\"name\":\"開発\",\"users\":[{\"id\":5,\"name\":\"田中\"}]}}",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/users.json")).andExpect(method(HttpMethod.POST))
+				.andRespond(withSuccess("{\"user\":{\"id\":10,\"login\":\"sato\"}}", MediaType.APPLICATION_JSON));
+
+		RedmineClient client = new RedmineClient("http://redmine.local", "key", "proj", restTemplate);
+		Map<Long, Map<String, Object>> groups = client.listGroups();
+		assertThat(groups.get(20L).get("users")).asList().hasSize(1);
+		assertThat(client.createUser(Map.of("login", "sato", "password", "secret"))).isEqualTo(10L);
+		server.verify();
+	}
 }

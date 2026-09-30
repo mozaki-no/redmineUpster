@@ -1,6 +1,7 @@
 package mozaki.redmineUpster.cli;
 
 import java.util.Arrays;
+import java.util.Set;
 
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
@@ -40,6 +41,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --sheet} / {@code --table}: Excel の読み込み元（シート名・番号／テーブル名。設定 sync.excel より優先）</li>
  *   <li>{@code --virtual-parents} / {@code --no-virtual-parents}: 親行がない行の祖先を仮想親チケットとして
  *       作成する／しない（設定 sync.virtualParents.enabled より優先）</li>
+ *   <li>{@code --targets}: 同期・出力する対象（tickets,users,groups のカンマ区切り。省略時はファイルにある表すべて）</li>
+ *   <li>{@code --export}: 同期の代わりに、プロジェクトのチケットとユーザー・グループを {@code --file} の .xlsx に出力</li>
  *   <li>{@code --help}: 使い方を表示</li>
  *   <li>{@code --relink-parent} / {@code --reset-sync}: 廃止（指定しても無視し、警告を出す）</li>
  * </ul>
@@ -52,6 +55,7 @@ public class SyncCommand implements CommandLineRunner {
     private static final String[] REMOVED_OPTIONS = { "--relink-parent", "--reset-sync" };
 
     private final SyncRunner syncRunner;
+    private final ExportRunner exportRunner;
 
     /**
      * コマンドライン引数を解析して同期処理を実行します。
@@ -62,8 +66,31 @@ public class SyncCommand implements CommandLineRunner {
     public void run(String... args) {
         // --sync も --file もない場合（引数なし・--help）は使い方を表示して終了
         if (hasArg(args, "--help") || hasArg(args, "-h")
-                || (!hasArg(args, "--sync") && !hasArg(args, "--file"))) {
+                || (!hasArg(args, "--sync") && !hasArg(args, "--file") && !hasArg(args, "--export"))) {
             printUsage();
+            return;
+        }
+
+        Set<SyncTarget> targets;
+        try {
+            String rawTargets = getArgValue(args, "--targets");
+            targets = rawTargets == null ? null : SyncTarget.parse(rawTargets);
+        } catch (IllegalArgumentException e) {
+            System.err.println("Error: " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+
+        // Excel 出力（--export --file=出力先.xlsx）
+        if (hasArg(args, "--export")) {
+            String out = getArgValue(args, "--file");
+            if (out == null || out.isBlank()) {
+                System.err.println("Error: --export には --file=<出力先.xlsx> が必要です");
+                System.exit(1);
+                return;
+            }
+            System.exit(exportRunner.run(getArgValue(args, "--config"), getArgValue(args, "--project"), out,
+                    getArgValue(args, "--log-dir"), hasArg(args, "--debug"), targets));
             return;
         }
 
@@ -93,7 +120,7 @@ public class SyncCommand implements CommandLineRunner {
 
         // 同期実行
         int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate,
-                excelSource, parseVirtualParents(args));
+                excelSource, parseVirtualParents(args), targets);
         System.exit(exitCode);
     }
 
@@ -151,6 +178,7 @@ public class SyncCommand implements CommandLineRunner {
      */
     private void printUsage() {
         System.out.println("Usage: redmineUpster --sync --file=<CSV/Excel> [options]");
+        System.out.println("       redmineUpster --export --file=<output.xlsx> [options]");
         System.out.println("       (java -jar redmineUpster.jar --sync --file=<CSV/Excel> [options])");
         System.out.println();
         System.out.println("Options:");
@@ -167,10 +195,15 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --table=<name>          Excel table to read (default: sync.excel.table; overrides --sheet)");
         System.out.println("  --virtual-parents       Auto-create missing ancestor rows as virtual parent tickets");
         System.out.println("  --no-virtual-parents    Treat missing parent rows as errors (overrides sync.virtualParents)");
+        System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: all sheets in the file)");
+        System.out.println("  --export                Export tickets of the project, users and groups to --file (.xlsx)");
+        System.out.println("                          The exported file can be used as --file for --sync as it is");
         System.out.println("  --help                  Show this help");
         System.out.println();
         System.out.println("Example:");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx --dry-run");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx");
+        System.out.println("  redmineUpster --export --config=sync-config.yml --file=redmine.xlsx");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml --file=redmine.xlsx --targets=users,groups");
     }
 }

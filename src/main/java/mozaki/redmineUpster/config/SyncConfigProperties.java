@@ -145,6 +145,16 @@ public class SyncConfigProperties {
 		private ExcelConfig excel;
 
 		/**
+		 * ユーザーの読み込み元（シート・テーブル）。省略時はシート「ユーザー」（なければユーザーは同期しない）。
+		 */
+		private ExcelConfig users;
+
+		/**
+		 * グループの読み込み元（シート・テーブル）。省略時はシート「グループ」（なければグループは同期しない）。
+		 */
+		private ExcelConfig groups;
+
+		/**
 		 * 仮想親チケットの自動作成（Excelに親行がない場合）の設定。
 		 */
 		private VirtualParentsConfig virtualParents;
