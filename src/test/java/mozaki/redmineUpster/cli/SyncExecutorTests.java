@@ -260,4 +260,31 @@ class SyncExecutorTests {
 		verify(client, never()).createIssue(anyMap());
 		verify(client, never()).updateIssue(anyLong(), anyMap());
 	}
+
+	@Test
+	@DisplayName("「CF:名前」列はプロジェクトのチケットの custom_fields から ID を解決して送る（同じ値ならスキップ）")
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	void customFieldColumns() {
+		Map<String, Object> current = sameAsItem(3L, "T", null);
+		current.put("custom_fields", List.of(Map.of("id", 12, "name", "工程", "value", "設計"),
+				Map.of("id", 13, "name", "タグ", "multiple", true, "value", List.of("a", "b"))));
+		projectIssues.put(3L, current);
+		DiffItem changed = new DiffItem(2, 3L, "T", "T", 0, null, "UPDATE", null, 2L,
+				Map.of("startDate", "2026-1-3", "customFields", Map.of(), "cfColumns",
+						Map.of("工程", "実装", "タグ", "b, a", "未知", "x")));
+		SyncResult result = run(List.of(changed), List.of(), null, false, false);
+		assertThat(result.errors()).isEmpty();
+		ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
+		verify(client).updateIssue(eq(3L), captor.capture());
+		List<Map<String, Object>> fields = (List<Map<String, Object>>) captor.getValue().get("custom_fields");
+		assertThat(fields).containsExactlyInAnyOrder(Map.of("id", 12L, "value", "実装"),
+				Map.of("id", 13L, "value", List.of("b", "a")));
+
+		Mockito.clearInvocations(client);
+		DiffItem same = new DiffItem(2, 3L, "T", "T", 0, null, "UPDATE", null, 2L,
+				Map.of("startDate", "2026-1-3", "customFields", Map.of(), "cfColumns",
+						Map.of("工程", "設計", "タグ", "b, a")));
+		run(List.of(same), List.of(), null, false, false);
+		verify(client, never()).updateIssue(any(), any());
+	}
 }

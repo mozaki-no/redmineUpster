@@ -71,9 +71,16 @@ public class DirectorySync {
      * @param admin 管理者（null＝変更しない）
      * @param status 状態（null＝変更しない）
      * @param password 新規作成時のパスワード（空欄なら自動生成）
+     * @param customFields 「CF:名前」列の値（{@code {id, value}}。空欄の列は含まない）
      */
     public record UserRow(int rowNumber, Long id, boolean matchedByName, String login, String lastname,
-            String firstname, String mail, Boolean admin, Integer status, String password) {
+            String firstname, String mail, Boolean admin, Integer status, String password,
+            List<Map<String, Object>> customFields) {
+        public UserRow(int rowNumber, Long id, boolean matchedByName, String login, String lastname,
+                String firstname, String mail, Boolean admin, Integer status, String password) {
+            this(rowNumber, id, matchedByName, login, lastname, firstname, mail, admin, status, password, List.of());
+        }
+
         String label() {
             return "ユーザー 行" + rowNumber + (id != null ? " #" + id : "") + " [" + login + "]";
         }
@@ -87,8 +94,14 @@ public class DirectorySync {
      * @param matchedByName ID列が空欄で、グループ名で既存グループが見つかった場合 true（IDを書き戻す）
      * @param name グループ名
      * @param members メンバーのログインID（null＝変更しない）
+     * @param customFields 「CF:名前」列の値（{@code {id, value}}。空欄の列は含まない）
      */
-    public record GroupRow(int rowNumber, Long id, boolean matchedByName, String name, List<String> members) {
+    public record GroupRow(int rowNumber, Long id, boolean matchedByName, String name, List<String> members,
+            List<Map<String, Object>> customFields) {
+        public GroupRow(int rowNumber, Long id, boolean matchedByName, String name, List<String> members) {
+            this(rowNumber, id, matchedByName, name, members, List.of());
+        }
+
         String label() {
             return "グループ 行" + rowNumber + (id != null ? " #" + id : "") + " [" + name + "]";
         }
@@ -137,6 +150,7 @@ public class DirectorySync {
             return new Plan<>(rows, errors);
         }
         Map<String, Long> byLogin = loginIndex(existingUsers);
+        Map<String, CustomFieldColumns.Definition> userFields = CustomFieldColumns.definitions(existingUsers.values());
         Map<String, Integer> seenLogins = new HashMap<>();
         Map<Long, Integer> seenIds = new HashMap<>();
         for (int i = 0; i < sheet.rows().size(); i++) {
@@ -179,8 +193,15 @@ public class DirectorySync {
                 errors.add(prefix + ex.getMessage());
                 continue;
             }
+            List<Map<String, Object>> customFields = new ArrayList<>();
+            List<String> unknownFields = customFieldCells(row, userFields, customFields);
+            if (!unknownFields.isEmpty()) {
+                errors.add(prefix + "ユーザーのカスタムフィールドが Redmine にありません: " + unknownFields);
+                continue;
+            }
             UserRow user = new UserRow(rowNumber, id, matchedByName, login, value(row, COL_LASTNAME),
-                    value(row, COL_FIRSTNAME), value(row, COL_MAIL), admin, status, value(row, COL_PASSWORD));
+                    value(row, COL_FIRSTNAME), value(row, COL_MAIL), admin, status, value(row, COL_PASSWORD),
+                    customFields);
             if (id == null) {
                 List<String> missing = new ArrayList<>();
                 for (String column : List.of(COL_LASTNAME, COL_FIRSTNAME, COL_MAIL)) {
@@ -286,6 +307,9 @@ public class DirectorySync {
         if (row.status() != null) {
             payload.put("status", row.status());
         }
+        if (!row.customFields().isEmpty()) {
+            payload.put("custom_fields", apiFields(row.customFields()));
+        }
         if (row.password().isEmpty()) {
             payload.put("generate_password", true);
             payload.put("send_information", true);
@@ -311,6 +335,7 @@ public class DirectorySync {
         if (row.status() != null && !Objects.equals(currentStatus, row.status().longValue())) {
             changes.put("status", row.status());
         }
+        putCustomFieldChanges(changes, row.customFields(), current);
         return changes;
     }
 
@@ -340,6 +365,8 @@ public class DirectorySync {
         for (String login : knownLogins) {
             known.add(login.toLowerCase(Locale.ROOT));
         }
+        Map<String, CustomFieldColumns.Definition> groupFields = CustomFieldColumns.definitions(
+                existingGroups.values());
         Map<String, Integer> seenNames = new HashMap<>();
         Map<Long, Integer> seenIds = new HashMap<>();
         for (int i = 0; i < sheet.rows().size(); i++) {
@@ -401,7 +428,13 @@ public class DirectorySync {
                     continue;
                 }
             }
-            rows.add(new GroupRow(rowNumber, id, matchedByName, name, members));
+            List<Map<String, Object>> customFields = new ArrayList<>();
+            List<String> unknownFields = customFieldCells(row, groupFields, customFields);
+            if (!unknownFields.isEmpty()) {
+                errors.add(prefix + "グループのカスタムフィールドが Redmine にありません: " + unknownFields);
+                continue;
+            }
+            rows.add(new GroupRow(rowNumber, id, matchedByName, name, members, customFields));
         }
         return new Plan<>(rows, errors);
     }
@@ -458,6 +491,9 @@ public class DirectorySync {
                     if (memberIds != null) {
                         payload.put("user_ids", memberIds);
                     }
+                    if (!row.customFields().isEmpty()) {
+                        payload.put("custom_fields", apiFields(row.customFields()));
+                    }
                     Long newId = client.createGroup(payload);
                     if (newId == null) {
                         addError(errors, logger, "作成失敗: " + row.label() + " 理由=レスポンスにIDがありません");
@@ -477,6 +513,7 @@ public class DirectorySync {
                 if (row.members() != null && !sameMembers(row.members(), current, users)) {
                     changes.put("user_ids", memberIds);
                 }
+                putCustomFieldChanges(changes, row.customFields(), current);
                 if (changes.isEmpty()) {
                     logger.debug("skipped update " + row.label() + " (no changes)");
                     unchanged++;
@@ -600,6 +637,55 @@ public class DirectorySync {
             case "ロック", "ロック中", "locked", "3" -> 3;
             default -> throw new IllegalArgumentException("状態の値が不正です（有効／登録／ロック）: " + raw);
         };
+    }
+
+    /**
+     * 行の「CF:名前」列を {@code {id, value}} に変換します。
+     *
+     * @return 見つからないカスタムフィールド名
+     */
+    private static List<String> customFieldCells(Map<String, String> row,
+            Map<String, CustomFieldColumns.Definition> definitions, List<Map<String, Object>> out) {
+        List<String> unknown = new ArrayList<>();
+        for (Map.Entry<String, String> cell : CustomFieldColumns.cellValues(row).entrySet()) {
+            CustomFieldColumns.Definition definition = CustomFieldColumns.find(definitions, cell.getKey());
+            if (definition == null) {
+                unknown.add(cell.getKey());
+            } else {
+                Map<String, Object> field = CustomFieldColumns.payload(definition, cell.getValue());
+                field.put("multiple", definition.multiple());
+                field.put("cell", cell.getValue());
+                out.add(field);
+            }
+        }
+        return unknown;
+    }
+
+    private static List<Map<String, Object>> apiFields(List<Map<String, Object>> fields) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> field : fields) {
+            result.add(Map.of("id", field.get("id"), "value", field.get("value")));
+        }
+        return result;
+    }
+
+    /**
+     * 現在の値と違う「CF:名前」列だけを custom_fields として changes に入れます。
+     */
+    private static void putCustomFieldChanges(Map<String, Object> changes, List<Map<String, Object>> fields,
+            Map<String, Object> current) {
+        List<Map<String, Object>> changed = new ArrayList<>();
+        for (Map<String, Object> field : fields) {
+            long id = ((Number) field.get("id")).longValue();
+            CustomFieldColumns.Definition definition = new CustomFieldColumns.Definition(id, "",
+                    Boolean.TRUE.equals(field.get("multiple")));
+            if (!CustomFieldColumns.same(definition, String.valueOf(field.get("cell")), current)) {
+                changed.add(Map.of("id", id, "value", field.get("value")));
+            }
+        }
+        if (!changed.isEmpty()) {
+            changes.put("custom_fields", changed);
+        }
     }
 
     private static void requireColumns(ParsedSheet sheet, List<String> columns, String kind, List<String> errors) {

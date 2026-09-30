@@ -108,34 +108,41 @@ public class WorkbookExporter {
             }
             if (data.users() != null) {
                 List<List<Object>> rows = new ArrayList<>();
+                Map<String, CustomFieldColumns.Definition> cf = CustomFieldColumns.definitions(data.users().values());
                 for (Map.Entry<Long, Map<String, Object>> entry : sortedById(data.users())) {
                     Map<String, Object> user = entry.getValue();
                     Long status = user.get("status") instanceof Number n ? n.longValue() : null;
-                    rows.add(List.of(entry.getKey(), text(user.get("login")), text(user.get("lastname")),
-                            text(user.get("firstname")), text(user.get("mail")),
+                    List<Object> row = new ArrayList<>(List.of(entry.getKey(), text(user.get("login")),
+                            text(user.get("lastname")), text(user.get("firstname")), text(user.get("mail")),
                             Boolean.TRUE.equals(user.get("admin")) ? "はい" : "いいえ",
                             status == null ? "" : DirectorySync.STATUS_LABELS.getOrDefault(status.intValue(), ""),
                             ""));
+                    cf.values().forEach(d -> row.add(CustomFieldColumns.exportValue(user, d.id())));
+                    rows.add(row);
                 }
                 String name = sheetName(sync != null ? sync.getUsers() : null, DirectorySync.DEFAULT_USERS_SHEET);
                 writeSheet(workbook, styles, name, tableName(sync != null ? sync.getUsers() : null),
-                        DirectorySync.USER_COLUMNS, rows);
+                        withCustomFields(DirectorySync.USER_COLUMNS, cf), rows);
                 sheets.put(name, rows.size());
             }
             if (data.groups() != null) {
                 Map<Long, Map<String, Object>> users = allUsers != null ? allUsers : Map.of();
                 List<List<Object>> rows = new ArrayList<>();
+                Map<String, CustomFieldColumns.Definition> cf = CustomFieldColumns.definitions(data.groups().values());
                 for (Map.Entry<Long, Map<String, Object>> entry : sortedById(data.groups())) {
                     List<String> members = DirectorySync.currentMemberLogins(entry.getValue(), users, false);
                     if (members.stream().anyMatch(m -> m.startsWith("#"))) {
                         warnings.add("グループ「" + text(entry.getValue().get("name"))
                                 + "」のメンバーにログインIDが分からないユーザーがあります（#ID で出力。取り込み前に直してください）");
                     }
-                    rows.add(List.of(entry.getKey(), text(entry.getValue().get("name")), String.join(", ", members)));
+                    List<Object> row = new ArrayList<>(List.of(entry.getKey(), text(entry.getValue().get("name")),
+                            String.join(", ", members)));
+                    cf.values().forEach(d -> row.add(CustomFieldColumns.exportValue(entry.getValue(), d.id())));
+                    rows.add(row);
                 }
                 String name = sheetName(sync != null ? sync.getGroups() : null, DirectorySync.DEFAULT_GROUPS_SHEET);
                 writeSheet(workbook, styles, name, tableName(sync != null ? sync.getGroups() : null),
-                        DirectorySync.GROUP_COLUMNS, rows);
+                        withCustomFields(DirectorySync.GROUP_COLUMNS, cf), rows);
                 sheets.put(name, rows.size());
             }
             if (workbook.getNumberOfSheets() == 0) {
@@ -195,6 +202,15 @@ public class WorkbookExporter {
             headers.add(column);
             exportedCustomFields.put(column, field);
         }
+        // それ以外のカスタムフィールドは「CF:名前」列で出力する（そのまま取り込める）
+        Map<String, CustomFieldColumns.Definition> cfColumns = new LinkedHashMap<>();
+        for (CustomFieldColumns.Definition definition : CustomFieldColumns.definitions(issues.values()).values()) {
+            boolean mapped = exportedCustomFields.values().stream().anyMatch(
+                    f -> f.equals(String.valueOf(definition.id())) || f.equals(definition.name()));
+            if (!mapped && headers.add(CustomFieldColumns.PREFIX + definition.name())) {
+                cfColumns.put(CustomFieldColumns.PREFIX + definition.name(), definition);
+            }
+        }
 
         Map<Long, List<Long>> children = new HashMap<>();
         List<Long> roots = new ArrayList<>();
@@ -237,6 +253,9 @@ public class WorkbookExporter {
             values.put(dueColumn, date(issue.get("due_date")));
             if (issue.get("done_ratio") instanceof Number ratio) {
                 values.put(progressColumn, ratio.longValue());
+            }
+            for (Map.Entry<String, CustomFieldColumns.Definition> field : cfColumns.entrySet()) {
+                values.put(field.getKey(), CustomFieldColumns.exportValue(issue, field.getValue().id()));
             }
             for (Map.Entry<String, String> field : exportedCustomFields.entrySet()) {
                 values.put(field.getKey(), customFieldValue(issue, field.getValue()));
@@ -370,6 +389,13 @@ public class WorkbookExporter {
             sheet.setAutoFilter(new org.apache.poi.ss.util.CellRangeAddress(0, Math.max(rows.size(), 0), 0,
                     headers.size() - 1));
         }
+    }
+
+    private static List<String> withCustomFields(List<String> columns,
+            Map<String, CustomFieldColumns.Definition> definitions) {
+        List<String> headers = new ArrayList<>(columns);
+        headers.addAll(CustomFieldColumns.headers(definitions));
+        return headers;
     }
 
     private static String sheetName(ExcelConfig config, String defaultName) {

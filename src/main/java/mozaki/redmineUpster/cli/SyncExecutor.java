@@ -75,6 +75,10 @@ public class SyncExecutor {
         Map<Long, Map<String, Object>> currentIssues = projectIssues == null ? Map.of() : projectIssues;
         Map<String, String> customFieldMap = getCustomFieldMap(projectConfig);
         List<String> customFieldDateColumns = getCustomFieldDateColumns(projectConfig);
+        // 「CF:名前」列の名前 → ID（プロジェクトのチケットの custom_fields から解決）
+        Map<String, CustomFieldColumns.Definition> cfDefinitions = CustomFieldColumns.definitions(
+                currentIssues.values());
+        Set<String> warnedCustomFields = new HashSet<>();
         String projectId = client.getProjectId();
         if (projectId == null || projectId.isBlank()) {
             throw new IllegalStateException("redmine.project-id is not configured");
@@ -124,6 +128,7 @@ public class SyncExecutor {
 
                 Map<String, Object> issuePayload = buildIssuePayload(item, projectId, parentIssueId, projectConfig,
                         customFieldMap, customFieldDateColumns);
+                addCustomFieldColumns(issuePayload, item, cfDefinitions, warnedCustomFields, logger);
 
                 if (ACTION_CREATE.equalsIgnoreCase(item.action())) {
                     if (dryRun) {
@@ -344,6 +349,43 @@ public class SyncExecutor {
             issue.put("custom_fields", customFields);
         }
         return issue;
+    }
+
+    /**
+     * 「CF:名前」列の値を custom_fields に加えます（空欄は送らない。customFieldMap で送る項目が優先）。
+     */
+    @SuppressWarnings("unchecked")
+    private void addCustomFieldColumns(Map<String, Object> issuePayload, DiffItem item,
+            Map<String, CustomFieldColumns.Definition> definitions, Set<String> warned, FileLogger logger) {
+        Object raw = item.payload().get("cfColumns");
+        if (!(raw instanceof Map<?, ?> cells) || cells.isEmpty()) {
+            return;
+        }
+        List<Map<String, Object>> customFields = new ArrayList<>();
+        Set<Object> ids = new HashSet<>();
+        if (issuePayload.get("custom_fields") instanceof List<?> existing) {
+            for (Object element : existing) {
+                customFields.add((Map<String, Object>) element);
+                ids.add(((Map<String, Object>) element).get("id") instanceof Number n ? n.longValue() : null);
+            }
+        }
+        for (Map.Entry<?, ?> cell : cells.entrySet()) {
+            String name = String.valueOf(cell.getKey());
+            CustomFieldColumns.Definition definition = CustomFieldColumns.find(definitions, name);
+            if (definition == null) {
+                if (warned.add(name)) {
+                    logger.warn("カスタムフィールド「" + name + "」がこのプロジェクトのチケットにありません（列「"
+                            + CustomFieldColumns.PREFIX + name + "」は無視します）");
+                }
+                continue;
+            }
+            if (ids.add(definition.id())) {
+                customFields.add(CustomFieldColumns.payload(definition, String.valueOf(cell.getValue())));
+            }
+        }
+        if (!customFields.isEmpty()) {
+            issuePayload.put("custom_fields", customFields);
+        }
     }
 
     private List<Map<String, Object>> buildCustomFields(

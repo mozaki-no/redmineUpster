@@ -259,4 +259,39 @@ class ExportImportTests {
 			assertThat(wb.getSheet("ユーザー").getRow(1).getCell(0).getStringCellValue()).isEmpty();
 		}
 	}
+
+	@Test
+	@DisplayName("カスタムフィールドは「CF:名前」列で出力し、そのまま取り込める（ユーザーは値を変えた列だけ更新）")
+	void customFieldColumns_roundTrip() throws Exception {
+		Map<Long, Map<String, Object>> issues = issues();
+		issues.get(3L).put("custom_fields", List.of(Map.of("id", 12, "name", "工程", "value", "設計"),
+				Map.of("id", 14, "name", "締切", "value", "2026-11-01")));
+		Map<Long, Map<String, Object>> users = users();
+		users.get(5L).put("custom_fields", List.of(Map.of("id", 7, "name", "社員番号", "value", "E001")));
+		Path xlsx = tempDir.resolve("cf.xlsx");
+		new WorkbookExporter().export(xlsx, new WorkbookExporter.ExportData(issues, users, null), config(null));
+
+		SpreadsheetParser parser = new SpreadsheetParser();
+		ParsedSheet tickets = parser.parseFromPath(xlsx.toString(), new ExcelSource("チケット", null));
+		assertThat(tickets.headers()).contains("CF:工程", "CF:締切");
+		DiffPlan plan = new DiffCalculator().calculate(tickets, config(null),
+				new TrackerResolver(Map.of("サマリ", "6", "タスク", "2"), null), logger, false);
+		DiffItem task = plan.items().stream().filter(i -> i.issueId() == 3L).findFirst().orElseThrow();
+		assertThat(task.payload().get("cfColumns")).isEqualTo(Map.of("工程", "設計", "締切", "2026-11-01"));
+
+		ParsedSheet usersSheet = parser.parseFromPath(xlsx.toString(), new ExcelSource("ユーザー", null));
+		assertThat(usersSheet.headers()).contains("CF:社員番号");
+		DirectorySync.Plan<DirectorySync.UserRow> same = DirectorySync.parseUsers(usersSheet, users);
+		assertThat(same.errors()).isEmpty();
+		assertThat(DirectorySync.userChanges(same.rows().get(0), users.get(5L))).isEmpty();
+
+		usersSheet.rows().get(0).put("CF:社員番号", "E002");
+		usersSheet.rows().get(0).put("CF:部署", "");
+		DirectorySync.Plan<DirectorySync.UserRow> changed = DirectorySync.parseUsers(usersSheet, users);
+		assertThat(DirectorySync.userChanges(changed.rows().get(0), users.get(5L)))
+				.isEqualTo(Map.of("custom_fields", List.of(Map.of("id", 7L, "value", "E002"))));
+
+		usersSheet.rows().get(0).put("CF:部署", "開発部");
+		assertThat(DirectorySync.parseUsers(usersSheet, users).errors()).singleElement().asString().contains("部署");
+	}
 }
