@@ -681,6 +681,9 @@ public class DiffCalculator {
         if (rowData.progress != null) {
             payload.put("progress", rowData.progress);
         }
+        if (!rowData.description.isBlank()) {
+            payload.put("description", rowData.description);
+        }
         Map<String, String> customFields = new LinkedHashMap<>();
         for (String column : customFieldColumns) {
             if (customFieldMap.get(column) == null) {
@@ -733,6 +736,7 @@ public class DiffCalculator {
         private final String dueDateColumn;
         private final String statusColumn;
         private final String progressColumn;
+        private final String descriptionColumn;
 
         private ColumnNames(ProjectConfig projectConfig) {
             ColumnsConfig columns = projectConfig != null && projectConfig.getSync() != null
@@ -746,6 +750,8 @@ public class DiffCalculator {
             this.dueDateColumn = StringUtils.valueOrDefault(columns.getDueDateColumn(), ColumnDefinitions.COL_DUE_PLAN);
             this.statusColumn = StringUtils.valueOrDefault(columns.getStatusColumn(), ColumnDefinitions.COL_STATUS);
             this.progressColumn = StringUtils.valueOrDefault(columns.getProgressColumn(), ColumnDefinitions.COL_PROGRESS);
+            this.descriptionColumn = StringUtils.valueOrDefault(columns.getDescriptionColumn(),
+                    ColumnDefinitions.COL_DESCRIPTION);
         }
     }
 
@@ -769,6 +775,7 @@ public class DiffCalculator {
         private final String dueActual;
         private final String statusValue;
         private final Integer progress;
+        private final String description;
         private final List<String> parentCells;
 
         private RowData(int rowNumber, Map<String, String> row, Long issueId, int depth, String levelPath,
@@ -791,6 +798,9 @@ public class DiffCalculator {
             this.dueActual = value(row, ColumnDefinitions.COL_DUE_ACTUAL);
             this.statusValue = value(row, names.statusColumn);
             this.progress = parseProgress(value(row, names.progressColumn));
+            // 説明は改行・インデント・Markdown をそのまま送る（改行コードだけ LF にそろえる）
+            String rawDescription = row.get(names.descriptionColumn);
+            this.description = rawDescription == null ? "" : rawDescription.replace("\r\n", "\n").replace('\r', '\n');
         }
     }
 }

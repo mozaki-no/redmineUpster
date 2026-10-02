@@ -268,6 +268,13 @@ public class SyncConfigProperties {
 		private String progressColumn = "進捗率";
 
 		/**
+		 * 説明列名（Redmineのdescriptionに反映）。セル内の改行・Markdownはそのまま送ります。
+		 * 空欄の場合は送らない（Redmineの説明を変更しない）。
+		 * デフォルト値は "説明"。
+		 */
+		private String descriptionColumn = "説明";
+
+		/**
 		 * 階層列の空欄を前行の値で補完するか（旧来の動作）。デフォルト false。
 		 * <p>
 		 * false: 階層列の空欄は「その階層を飛ばした」ことを表します（例: 大分類の直下のタスク）。

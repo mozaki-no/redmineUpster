@@ -319,6 +319,11 @@ public class SyncExecutor {
             issue.put("done_ratio", Integer.parseInt(progressString));
         }
 
+        String description = (String) payload.get("description");
+        if (description != null && !description.isBlank()) {
+            issue.put("description", description);
+        }
+
         if (parentIssueId != null) {
             issue.put("parent_issue_id", parentIssueId);
         }

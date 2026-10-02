@@ -106,6 +106,19 @@ class DiffCalculatorTests {
 	}
 
 	@Test
+	@DisplayName("説明列はMarkdown・改行・インデントをそのまま送る（CRLFはLFに）。空欄なら送らない")
+	void calculate_descriptionKeepsMarkdown() {
+		Map<String, String> withDescription = row("", "サマリ", "A", "", "");
+		withDescription.put("説明", "## 見出し\r\n- 項目\r\n    ```\r\n    code\r\n    ```");
+		DiffPlan plan = calculate(projectConfig(), List.of(withDescription, row("", "タスク", "A", "B", "")));
+
+		assertThat(plan.errors()).isEmpty();
+		assertThat(byRow(plan, 2).payload().get("description"))
+				.isEqualTo("## 見出し\n- 項目\n    ```\n    code\n    ```");
+		assertThat(byRow(plan, 3).payload()).doesNotContainKey("description");
+	}
+
+	@Test
 	@DisplayName("親は階層列から決まり、親→子の順に並ぶ（途中の空欄列も扱える）")
 	void calculate_resolvesParentFromHierarchy() {
 		DiffPlan plan = calculate(projectConfig(), List.of(

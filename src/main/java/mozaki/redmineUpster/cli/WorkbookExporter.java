@@ -18,6 +18,7 @@ import java.util.Set;
 import org.apache.poi.ss.SpreadsheetVersion;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.VerticalAlignment;
 import org.apache.poi.ss.usermodel.Font;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.util.AreaReference;
@@ -173,6 +174,8 @@ public class WorkbookExporter {
         String dueColumn = StringUtils.valueOrDefault(columns.getDueDateColumn(), ColumnDefinitions.COL_DUE_PLAN);
         String progressColumn = StringUtils.valueOrDefault(columns.getProgressColumn(),
                 ColumnDefinitions.COL_PROGRESS);
+        String descriptionColumn = StringUtils.valueOrDefault(columns.getDescriptionColumn(),
+                ColumnDefinitions.COL_DESCRIPTION);
 
         Set<String> headers = new LinkedHashSet<>();
         headers.add(idColumn);
@@ -183,6 +186,7 @@ public class WorkbookExporter {
         headers.add(startColumn);
         headers.add(dueColumn);
         headers.add(progressColumn);
+        headers.add(descriptionColumn);
         // カスタムフィールド（customFieldMap に対応がある列だけ。階層列などと同じ名前の列は出力しない）
         Map<String, String> customFieldMap = sync != null && sync.getCustomFieldMap() != null
                 ? sync.getCustomFieldMap() : Map.of();
@@ -253,6 +257,11 @@ public class WorkbookExporter {
             values.put(dueColumn, date(issue.get("due_date")));
             if (issue.get("done_ratio") instanceof Number ratio) {
                 values.put(progressColumn, ratio.longValue());
+            }
+            // 説明は Markdown などをそのまま出力（Excel のセル内改行は LF）
+            Object description = issue.get("description");
+            if (description != null) {
+                values.put(descriptionColumn, String.valueOf(description).replace("\r\n", "\n").replace('\r', '\n'));
             }
             for (Map.Entry<String, CustomFieldColumns.Definition> field : cfColumns.entrySet()) {
                 values.put(field.getKey(), CustomFieldColumns.exportValue(issue, field.getValue().id()));
@@ -367,7 +376,11 @@ public class WorkbookExporter {
                     cell.setCellValue(date);
                     cell.setCellStyle(styles.date);
                 } else {
-                    cell.setCellValue(String.valueOf(value));
+                    String text = String.valueOf(value);
+                    cell.setCellValue(text);
+                    if (text.indexOf('\n') >= 0) {
+                        cell.setCellStyle(styles.wrap);
+                    }
                 }
             }
         }
@@ -428,6 +441,7 @@ public class WorkbookExporter {
     private static final class Styles {
         private final CellStyle header;
         private final CellStyle date;
+        private final CellStyle wrap;
 
         private Styles(XSSFWorkbook workbook) {
             header = workbook.createCellStyle();
@@ -436,6 +450,9 @@ public class WorkbookExporter {
             header.setFont(bold);
             date = workbook.createCellStyle();
             date.setDataFormat(workbook.getCreationHelper().createDataFormat().getFormat("yyyy/mm/dd"));
+            wrap = workbook.createCellStyle();
+            wrap.setWrapText(true);
+            wrap.setVerticalAlignment(VerticalAlignment.TOP);
         }
     }
 }
