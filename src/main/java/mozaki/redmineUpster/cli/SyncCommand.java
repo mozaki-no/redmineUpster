@@ -1,6 +1,8 @@
 package mozaki.redmineUpster.cli;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 
 import org.springframework.boot.CommandLineRunner;
@@ -33,7 +35,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --config}: 設定ファイルパス（省略時は SYNC_CONFIG_PATH、なければカレントディレクトリ／
  *       実行ファイルと同じフォルダの sync-config.yml）</li>
  *   <li>{@code --project}: プロジェクト名（省略時はdefault=trueのプロジェクト）</li>
- *   <li>{@code --file}: CSV/Excelファイルパス（必須）</li>
+ *   <li>{@code --file}: CSV/Excelファイルパス。複数指定すると指定した順に1つずつ同期
+ *       （省略時は設定 sync.files のファイル。どちらもなければエラー）</li>
  *   <li>{@code --dry-run}: ドライランモード（省略時はfalse）</li>
  *   <li>{@code --log-dir}: ログ出力ディレクトリ（省略時はカレントディレクトリの logs フォルダ）</li>
  *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
@@ -89,6 +92,11 @@ public class SyncCommand implements CommandLineRunner {
                 System.exit(1);
                 return;
             }
+            if (getArgValues(args, "--file").size() > 1) {
+                System.err.println("Error: --export の --file（出力先）は1つだけ指定してください");
+                System.exit(1);
+                return;
+            }
             System.exit(exportRunner.run(getArgValue(args, "--config"), getArgValue(args, "--project"), out,
                     getArgValue(args, "--log-dir"), hasArg(args, "--debug"), targets));
             return;
@@ -97,7 +105,7 @@ public class SyncCommand implements CommandLineRunner {
         // 引数を解析
         String configPath = getArgValue(args, "--config");
         String projectName = getArgValue(args, "--project");
-        String filePath = getArgValue(args, "--file");
+        List<String> filePaths = getArgValues(args, "--file");
         boolean dryRun = hasArg(args, "--dry-run");
         String logDir = getArgValue(args, "--log-dir");
         boolean debug = hasArg(args, "--debug");
@@ -109,17 +117,9 @@ public class SyncCommand implements CommandLineRunner {
             }
         }
 
-        // --fileは必須
-        if (filePath == null || filePath.isBlank()) {
-            System.err.println("Error: --file argument is required");
-            System.err.println();
-            printUsage();
-            System.exit(1);
-            return;
-        }
-
-        // 同期実行
-        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate,
+        // --file は省略可（省略時は設定 sync.files のファイル。どちらもなければ SyncRunner がエラーにする）
+        // 同期実行（複数ファイルは指定した順に1つずつ）
+        int exitCode = syncRunner.runFiles(configPath, projectName, filePaths, dryRun, logDir, debug, forceUpdate,
                 excelSource, parseVirtualParents(args), targets);
         System.exit(exitCode);
     }
@@ -174,6 +174,24 @@ public class SyncCommand implements CommandLineRunner {
     }
 
     /**
+     * 同じ引数を複数回指定した場合の値をすべて取得します（例: {@code --file=a.xlsx --file=b.xlsx}）。
+     *
+     * @param args 引数配列
+     * @param argName 引数名（例: "--file"）
+     * @return 引数の値（指定した順。空欄の値は除く。見つからない場合は空のリスト）
+     */
+    static List<String> getArgValues(String[] args, String argName) {
+        String prefix = argName + "=";
+        List<String> values = new ArrayList<>();
+        for (String arg : args) {
+            if (arg.startsWith(prefix) && !arg.substring(prefix.length()).isBlank()) {
+                values.add(arg.substring(prefix.length()));
+            }
+        }
+        return values;
+    }
+
+    /**
      * 使用方法を表示します。
      */
     private void printUsage() {
@@ -183,7 +201,9 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println();
         System.out.println("Options:");
         System.out.println("  --sync                  Run sync (may be omitted when --file is given)");
-        System.out.println("  --file=<path>           CSV/Excel file path (required)");
+        System.out.println("  --file=<path>           CSV/Excel file path. Repeat it to sync several files one after");
+        System.out.println("                          another in the given order (--file=a.xlsx --file=b.xlsx).");
+        System.out.println("                          If omitted, the files listed in sync.files of the config are used");
         System.out.println("  --config=<path>         Config file (default: SYNC_CONFIG_PATH, else sync-config.yml");
         System.out.println("                          in the current folder or next to the executable)");
         System.out.println("  --project=<name>        Project name (default: the project with default: true)");
@@ -200,9 +220,17 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("                          The exported file can be used as --file for --sync as it is");
         System.out.println("  --help                  Show this help");
         System.out.println();
+        System.out.println("Several Excel files for one project:");
+        System.out.println("  One sync-config.yml is enough. List ALL the files of the project in sync.files:");
+        System.out.println("  every file is validated first (nothing is written if any file has errors), then synced");
+        System.out.println("  one by one. Logical delete only targets tickets that are in none of the processed or");
+        System.out.println("  listed files, so syncing one file never logically deletes another file's tickets.");
+        System.out.println();
         System.out.println("Example:");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx --dry-run");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS-A.xlsx --file=WBS-B.xlsx");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml   (files listed in sync.files)");
         System.out.println("  redmineUpster --export --config=sync-config.yml --file=redmine.xlsx");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=redmine.xlsx --targets=users,groups");
     }

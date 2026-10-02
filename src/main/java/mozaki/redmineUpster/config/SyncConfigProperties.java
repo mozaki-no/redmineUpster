@@ -158,6 +158,17 @@ public class SyncConfigProperties {
 		 * 仮想親チケットの自動作成（Excelに親行がない場合）の設定。
 		 */
 		private VirtualParentsConfig virtualParents;
+
+		/**
+		 * このプロジェクトを更新する Excel/CSV ファイルの一覧（任意。相対パスは設定ファイルのフォルダ基準で、
+		 * 読み込み時に絶対パスへ変換済み）。
+		 * <p>
+		 * --file を省略した場合は、ここに書いた順にすべてのファイルを同期します。
+		 * また論理削除では、ここに書いたどのファイルにもないチケットだけを対象にします
+		 * （1つのファイルだけを同期しても、別のファイルのチケットを論理削除しない）。
+		 * </p>
+		 */
+		private List<String> files = new ArrayList<>();
 	}
 
 	/**
