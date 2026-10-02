@@ -14,6 +14,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -71,6 +72,7 @@ public class SyncExecutor {
         int successCount = 0;
         List<String> errors = new ArrayList<>();
         Map<Integer, Long> createdIssueIds = new LinkedHashMap<>();
+        Set<Long> createdVirtualIssueIds = new LinkedHashSet<>();
 
         Map<Long, Map<String, Object>> currentIssues = projectIssues == null ? Map.of() : projectIssues;
         Map<String, String> customFieldMap = getCustomFieldMap(projectConfig);
@@ -151,7 +153,9 @@ public class SyncExecutor {
                         continue;
                     }
                     rowIssueIds.put(item.rowNumber(), issueId);
-                    if (!item.virtual()) {
+                    if (item.virtual()) {
+                        createdVirtualIssueIds.add(issueId);
+                    } else {
                         createdIssueIds.put(item.rowNumber(), issueId);
                     }
                     logger.info("created issue " + issueId + " for " + item.label());
@@ -196,26 +200,57 @@ public class SyncExecutor {
         }
 
         // 論理削除（Excelにないプロジェクト内のチケット。Redmineで手動作成したチケットも含む）
+        SyncResult deleted = executeLogicalDelete(logicalDeleteCandidates, currentIssues, projectConfig, client,
+                dryRun, logger);
+        totalCount += deleted.totalCount();
+        successCount += deleted.successCount();
+        errors.addAll(deleted.errors());
+
+        return new SyncResult(totalCount, successCount, errors.size(), errors, createdIssueIds,
+                createdVirtualIssueIds);
+    }
+
+    /**
+     * 論理削除（ステータス変更）を実行します。
+     * <p>
+     * {@code sync.deletion.statusId} が未設定なら候補を警告ログに出すだけで変更しません。
+     * 複数ファイルの同期では、すべてのファイルの同期が終わった後に1回だけ呼び出します。
+     * </p>
+     *
+     * @param logicalDeleteCandidates 論理削除候補のチケットID（null可）
+     * @param currentIssues 同期先プロジェクトのチケット（チケットID → チケット情報）
+     * @param projectConfig プロジェクト設定
+     * @param client Redmineクライアント
+     * @param dryRun ドライランの場合はtrue
+     * @param logger ファイルロガー
+     * @return 論理削除の結果（件数は論理削除したチケットのみ。createdIssueIds は空）
+     */
+    public SyncResult executeLogicalDelete(List<Long> logicalDeleteCandidates,
+            Map<Long, Map<String, Object>> currentIssues, ProjectConfig projectConfig, RedmineClient client,
+            boolean dryRun, FileLogger logger) {
+        int totalCount = 0;
+        int successCount = 0;
+        List<String> errors = new ArrayList<>();
+        Map<Long, Map<String, Object>> issues = currentIssues == null ? Map.of() : currentIssues;
         Integer deleteStatusId = getLogicalDeleteStatusId(projectConfig);
         List<Long> candidates = logicalDeleteCandidates == null ? List.of() : logicalDeleteCandidates;
         if (!candidates.isEmpty() && deleteStatusId == null) {
             for (Long issueId : candidates) {
-                logger.warn("論理削除候補: " + describeIssue(issueId, currentIssues)
+                logger.warn("論理削除候補: " + describeIssue(issueId, issues)
                         + "（Excelに存在しません。sync.deletion.statusId が未設定のため変更しません）");
             }
         } else if (deleteStatusId != null) {
             for (Long issueId : candidates) {
                 totalCount++;
                 try {
-                    logicallyDelete(issueId, deleteStatusId, currentIssues, client, dryRun, logger);
+                    logicallyDelete(issueId, deleteStatusId, issues, client, dryRun, logger);
                     successCount++;
                 } catch (RuntimeException ex) {
                     addError(errors, logger, formatError("論理削除 #" + issueId, ex));
                 }
             }
         }
-
-        return new SyncResult(totalCount, successCount, errors.size(), errors, createdIssueIds);
+        return new SyncResult(totalCount, successCount, errors.size(), errors, Map.of());
     }
 
     /**
