@@ -318,6 +318,11 @@ public class SyncConfigService {
 			config.setProgressColumn(progressColumn);
 		}
 
+		String descriptionColumn = (String) map.get("descriptionColumn");
+		if (descriptionColumn != null && !descriptionColumn.isBlank()) {
+			config.setDescriptionColumn(descriptionColumn);
+		}
+
 		Object fillDownHierarchy = map.get("fillDownHierarchy");
 		if (fillDownHierarchy != null) {
 			config.setFillDownHierarchy(Boolean.parseBoolean(fillDownHierarchy.toString().trim()));

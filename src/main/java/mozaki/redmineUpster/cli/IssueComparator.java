@@ -40,6 +40,7 @@ public final class IssueComparator {
                 case "assigned_to_id" -> sameId(value, nestedId(issue, "assigned_to"));
                 case "parent_issue_id" -> sameId(value, nestedId(issue, "parent"));
                 case "start_date", "due_date" -> text(value).equals(text(issue.get(key)));
+                case "description" -> sameMultiline(value, issue.get("description"));
                 case "done_ratio" -> sameId(value, issue.get("done_ratio") instanceof Number n ? n.longValue() : null);
                 case "custom_fields" -> sameCustomFields(value, issue.get("custom_fields"));
                 default -> false; // 知らない項目は変更ありとみなす（安全側）
@@ -72,6 +73,17 @@ public final class IssueComparator {
             return map.get(field);
         }
         return null;
+    }
+
+    /**
+     * 複数行テキストの比較。Redmine は改行を CRLF で保存するため、改行コードと末尾の空白の違いは無視します。
+     */
+    private static boolean sameMultiline(Object expected, Object actual) {
+        return multiline(expected).equals(multiline(actual));
+    }
+
+    private static String multiline(Object value) {
+        return value == null ? "" : String.valueOf(value).replace("\r\n", "\n").replace('\r', '\n').strip();
     }
 
     private static boolean sameId(Object expected, Long actual) {
