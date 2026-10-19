@@ -44,6 +44,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --sheet} / {@code --table}: Excel の読み込み元（シート名・番号／テーブル名。設定 sync.excel より優先）</li>
  *   <li>{@code --virtual-parents} / {@code --no-virtual-parents}: 親行がない行の祖先を仮想親チケットとして
  *       作成する／しない（設定 sync.virtualParents.enabled より優先）</li>
+ *   <li>{@code --root-issue}: ルートチケットのID。今回同期するすべてのファイルの最上位の行を、このチケットの子にする
+ *       （設定 sync.files の rootIssueId より優先）</li>
  *   <li>{@code --targets}: 同期・出力する対象（tickets,users,groups のカンマ区切り。省略時はファイルにある表すべて）</li>
  *   <li>{@code --export}: 同期の代わりに、プロジェクトのチケットとユーザー・グループを {@code --file} の .xlsx に出力</li>
  *   <li>{@code --help}: 使い方を表示</li>
@@ -111,6 +113,14 @@ public class SyncCommand implements CommandLineRunner {
         boolean debug = hasArg(args, "--debug");
         boolean forceUpdate = hasArg(args, "--force-update");
         ExcelSource excelSource = new ExcelSource(getArgValue(args, "--sheet"), getArgValue(args, "--table"));
+        Long rootIssueId;
+        try {
+            rootIssueId = parseRootIssue(getArgValue(args, "--root-issue"));
+        } catch (IllegalArgumentException e) {
+            System.err.println("Error: " + e.getMessage());
+            System.exit(1);
+            return;
+        }
         for (String removed : REMOVED_OPTIONS) {
             if (hasArg(args, removed)) {
                 System.err.println("WARN: " + removed + " は廃止されました（チケットID列方式では不要のため無視します）");
@@ -120,8 +130,35 @@ public class SyncCommand implements CommandLineRunner {
         // --file は省略可（省略時は設定 sync.files のファイル。どちらもなければ SyncRunner がエラーにする）
         // 同期実行（複数ファイルは指定した順に1つずつ）
         int exitCode = syncRunner.runFiles(configPath, projectName, filePaths, dryRun, logDir, debug, forceUpdate,
-                excelSource, parseVirtualParents(args), targets);
+                excelSource, parseVirtualParents(args), targets, rootIssueId);
         System.exit(exitCode);
+    }
+
+    /**
+     * {@code --root-issue=<チケットID>} の値を解析します（先頭の # は省略可）。
+     *
+     * @param value 引数の値（null可）
+     * @return チケットID（指定なしはnull）
+     * @throws IllegalArgumentException 正の整数でない場合
+     */
+    static Long parseRootIssue(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        if (text.startsWith("#")) {
+            text = text.substring(1).trim();
+        }
+        try {
+            long id = Long.parseLong(text);
+            if (id > 0) {
+                return id;
+            }
+        } catch (NumberFormatException e) {
+            // 下でエラーにする
+        }
+        throw new IllegalArgumentException("--root-issue にはルートチケットのチケット番号（数値）を指定してください: "
+                + value);
     }
 
     /**
@@ -215,6 +252,8 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --table=<name>          Excel table to read (default: sync.excel.table; overrides --sheet)");
         System.out.println("  --virtual-parents       Auto-create missing ancestor rows as virtual parent tickets");
         System.out.println("  --no-virtual-parents    Treat missing parent rows as errors (overrides sync.virtualParents)");
+        System.out.println("  --root-issue=<id>       Root ticket: top-level rows of every file in this run become");
+        System.out.println("                          children of this Redmine issue (overrides rootIssueId in sync.files)");
         System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: all sheets in the file)");
         System.out.println("  --export                Export tickets of the project, users and groups to --file (.xlsx)");
         System.out.println("                          The exported file can be used as --file for --sync as it is");
@@ -225,12 +264,16 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  every file is validated first (nothing is written if any file has errors), then synced");
         System.out.println("  one by one. Logical delete only targets tickets that are in none of the processed or");
         System.out.println("  listed files, so syncing one file never logically deletes another file's tickets.");
+        System.out.println("  A file can have its own root ticket: files: [{ path: wbs-a.xlsx, rootIssueId: 123 }].");
+        System.out.println("  When every synced file has a root ticket, logical delete only targets tickets under");
+        System.out.println("  those root tickets (root tickets and their ancestors are never logically deleted).");
         System.out.println();
         System.out.println("Example:");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx --dry-run");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS-A.xlsx --file=WBS-B.xlsx");
         System.out.println("  redmineUpster --sync --config=sync-config.yml   (files listed in sync.files)");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx --root-issue=123");
         System.out.println("  redmineUpster --export --config=sync-config.yml --file=redmine.xlsx");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=redmine.xlsx --targets=users,groups");
     }

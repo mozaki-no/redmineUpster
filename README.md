@@ -89,6 +89,7 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--sheet=<名前 or 番号>` | いいえ | 読み込む Excel のシート（シート名、または1始まりの番号）。`sync.excel.sheet` より優先 |
 | `--table=<名前>` | いいえ | 読み込む Excel のテーブル名。`sync.excel.table` より優先（`--sheet` より優先） |
 | `--virtual-parents` / `--no-virtual-parents` | いいえ | 親の行がない行の祖先を仮想親チケットとして作成する／しない（`sync.virtualParents.enabled` より優先） |
+| `--root-issue=<チケット番号>` | いいえ | ルートチケット。今回同期するすべてのファイルの最上位の行を、このチケットの子にする（`sync.files` の `rootIssueId` より優先）。数値でなければエラー |
 | `--targets=<対象>` | いいえ | 同期・出力する対象（`tickets`, `users`, `groups` のカンマ区切り）。省略時はファイルにある表すべて |
 | `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループを `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
 | ~~`--relink-parent`~~ | - | **廃止**（親子は毎回階層から再設定するため不要。指定しても警告を出して無視） |
@@ -134,6 +135,21 @@ java -jar redmineUpster.jar --sync --file=wbs-設計.xlsx --file=wbs-開発.xlsx
       files:
         - "wbs-設計.xlsx"
         - "wbs-開発.xlsx"
+```
+
+#### WBS ごとのルートチケット
+
+`sync.files` の要素を `{ path: ..., rootIssueId: 番号 }` と書くと（`--root-issue=番号` は今回のすべてのファイルに適用）、そのファイルの最上位の行（親行がない行。最上位の仮想親を含む）を、親なしではなく既存チケットの子として同期します。
+
+- ルートチケットは Redmine に書き込む前に確認します。見つからない・論理削除ステータス・ファイルの行のチケットIDに同じ番号がある場合は検証エラーです。別プロジェクト（親プロジェクトなど）のチケットも指定できます。
+- ルートチケット（今回同期したファイル・`sync.files` のファイルのもの）とその祖先は論理削除しません。
+- **今回同期するすべてのファイルにルートチケットがある場合、論理削除の対象はそれらのルートチケットの配下（子孫）だけ**です。ルートチケットのないファイルが1つでもあれば、従来どおりプロジェクト全体が対象です（どちらを使ったかはログに出ます）。
+
+```yaml
+    sync:
+      files:
+        - { path: "wbs-設計.xlsx", rootIssueId: 123 }
+        - { path: "wbs-開発.xlsx", rootIssueId: 124 }
 ```
 
 ### Excel 出力とユーザー・グループの Upsert

@@ -265,7 +265,17 @@ public class SyncConfigService {
 			config.setVirtualParents(virtualParents);
 		}
 
-		config.setFiles(parseFiles(map.get("files")));
+		List<FileEntry> fileEntries = parseFileEntries(map.get("files"));
+		List<String> files = new ArrayList<>();
+		Map<String, Long> fileRootIssueIds = new HashMap<>();
+		for (FileEntry entry : fileEntries) {
+			files.add(entry.path());
+			if (entry.rootIssueId() != null) {
+				fileRootIssueIds.put(entry.path(), entry.rootIssueId());
+			}
+		}
+		config.setFiles(files);
+		config.setFileRootIssueIds(fileRootIssueIds);
 
 		return config;
 	}
@@ -275,13 +285,38 @@ public class SyncConfigService {
 	 * <p>
 	 * 1件だけなら文字列でも書けます。相対パスは設定ファイルのフォルダを基準に絶対パスへ変換します
 	 * （クラスパスから読み込んだ場合はカレントディレクトリ基準のまま）。空欄の要素は無視します。
+	 * ルートチケットの指定（{@code { path: ..., rootIssueId: 123 }}）はパスだけを返します。
 	 * </p>
 	 *
 	 * @param value YAMLの値（null・文字列・リスト）
 	 * @return ファイルパスの一覧（書いた順）
 	 */
 	List<String> parseFiles(Object value) {
-		List<String> files = new ArrayList<>();
+		return parseFileEntries(value).stream().map(FileEntry::path).toList();
+	}
+
+	/**
+	 * sync.files の1件（ファイルパスと、そのファイルのルートチケット）。
+	 *
+	 * @param path ファイルパス（相対パスは設定ファイルのフォルダ基準で絶対パスに変換済み）
+	 * @param rootIssueId ルートチケットのID（指定なしは null）
+	 */
+	record FileEntry(String path, Long rootIssueId) {
+	}
+
+	/**
+	 * sync.files（同期するファイルの一覧）を、ルートチケットの指定も含めて解析します。
+	 * <p>
+	 * 要素は文字列（パスのみ）か、{@code { path: "wbs-a.xlsx", rootIssueId: 123 }} の形式で書けます
+	 * （{@code rootIssueId} の代わりに {@code rootIssue} も可。数値・数字の文字列のどちらでも可）。
+	 * </p>
+	 *
+	 * @param value YAMLの値（null・文字列・リスト）
+	 * @return ファイルの一覧（書いた順）
+	 * @throws IllegalArgumentException パスがない・ルートチケットが数値でない場合
+	 */
+	List<FileEntry> parseFileEntries(Object value) {
+		List<FileEntry> files = new ArrayList<>();
 		if (value == null) {
 			return files;
 		}
@@ -290,7 +325,17 @@ public class SyncConfigService {
 			if (entry == null) {
 				continue;
 			}
-			String file = expandEnvVars(entry.toString()).trim();
+			Object rawPath = entry;
+			Long rootIssueId = null;
+			if (entry instanceof Map<?, ?> map) {
+				rawPath = map.get("path") != null ? map.get("path") : map.get("file");
+				if (rawPath == null) {
+					throw new IllegalArgumentException("sync.files の要素に path がありません: " + map);
+				}
+				Object rawRoot = map.get("rootIssueId") != null ? map.get("rootIssueId") : map.get("rootIssue");
+				rootIssueId = parseRootIssueId(rawRoot, rawPath);
+			}
+			String file = expandEnvVars(rawPath.toString()).trim();
 			if (file.isEmpty()) {
 				continue;
 			}
@@ -298,9 +343,32 @@ public class SyncConfigService {
 			if (!path.isAbsolute() && configBaseDir != null) {
 				path = configBaseDir.resolve(path);
 			}
-			files.add(path.isAbsolute() ? path.normalize().toString() : file);
+			files.add(new FileEntry(path.isAbsolute() ? path.normalize().toString() : file, rootIssueId));
 		}
 		return files;
+	}
+
+	private Long parseRootIssueId(Object rawRoot, Object rawPath) {
+		if (rawRoot == null) {
+			return null;
+		}
+		String text = expandEnvVars(String.valueOf(rawRoot)).trim();
+		if (text.startsWith("#")) {
+			text = text.substring(1).trim();
+		}
+		if (text.isEmpty()) {
+			return null;
+		}
+		try {
+			long id = Long.parseLong(text);
+			if (id <= 0) {
+				throw new NumberFormatException(text);
+			}
+			return id;
+		} catch (NumberFormatException ex) {
+			throw new IllegalArgumentException("sync.files の rootIssueId はチケット番号（数値）で指定してください: "
+					+ rawPath + " → " + rawRoot, ex);
+		}
 	}
 
 	/**

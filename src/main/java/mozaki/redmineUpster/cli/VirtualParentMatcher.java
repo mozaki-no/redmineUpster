@@ -15,7 +15,8 @@ import java.util.Set;
  * 仮想親にはチケットID列がなく、DBもないため、毎回 Redmine の現在の状態から見つけ直します。
  * 浅い階層から順に、次の条件をすべて満たすチケットを探します。
  * <ul>
- *   <li>親チケットが同じ（最上位の仮想親は親なし。親がファイルの行ならその行のチケットID、
+ *   <li>親チケットが同じ（最上位の仮想親は親なし（ルートチケットがあるファイルはルートチケット）。
+ *       親がファイルの行ならその行のチケットID、
  *       親が仮想親なら先に見つかったそのチケットID）</li>
  *   <li>件名が完全に一致（前後の空白は無視）</li>
  *   <li>トラッカーが仮想親のトラッカー</li>
@@ -46,6 +47,21 @@ public final class VirtualParentMatcher {
      */
     public static List<DiffItem> match(List<DiffItem> items, Map<Long, Map<String, Object>> projectIssues,
             Integer deleteStatusId, FileLogger logger) {
+        return match(items, projectIssues, deleteStatusId, logger, null);
+    }
+
+    /**
+     * 仮想親を既存チケットに対応付けます（ルートチケットの配下に同期する場合）。
+     *
+     * @param items 差分アイテム（ファイルの行と仮想親）
+     * @param projectIssues 同期先プロジェクトのチケット（チケットID → チケット情報）
+     * @param deleteStatusId 論理削除ステータスID（null可。このステータスのチケットは対応付けない）
+     * @param logger ファイルロガー（null可）
+     * @param rootIssueId ルートチケットのID（null可）。最上位の仮想親は、親がこのチケットのものと対応付ける
+     * @return 対応付け後の差分アイテム（見つかった仮想親は既存チケットIDの UPDATE。順序は元のまま）
+     */
+    public static List<DiffItem> match(List<DiffItem> items, Map<Long, Map<String, Object>> projectIssues,
+            Integer deleteStatusId, FileLogger logger, Long rootIssueId) {
         if (items.stream().noneMatch(DiffItem::virtual)) {
             return items;
         }
@@ -58,11 +74,14 @@ public final class VirtualParentMatcher {
                 claimed.add(item.issueId());
             }
         }
+        if (rootIssueId != null) {
+            claimed.add(rootIssueId); // ルートチケット自身は仮想親にしない
+        }
         List<DiffItem> virtuals = new ArrayList<>(items.stream().filter(DiffItem::virtual).toList());
         virtuals.sort(Comparator.comparingInt(DiffItem::depth).thenComparingInt(DiffItem::rowNumber));
         Map<Integer, DiffItem> matched = new HashMap<>();
         for (DiffItem virtual : virtuals) {
-            Long parentId = null;
+            Long parentId = rootIssueId;
             if (virtual.parentRowNumber() != null) {
                 parentId = rowIssueIds.get(virtual.parentRowNumber());
                 if (parentId == null) {
