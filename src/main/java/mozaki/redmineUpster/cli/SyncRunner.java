@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -160,6 +161,35 @@ public class SyncRunner {
     public int runFiles(String configPath, String projectName, List<String> filePaths, boolean dryRun, String logDir,
             boolean debug, boolean forceUpdate, ExcelSource cliExcelSource, Boolean cliVirtualParents,
             Set<SyncTarget> targets) {
+        return runFiles(configPath, projectName, filePaths, dryRun, logDir, debug, forceUpdate, cliExcelSource,
+                cliVirtualParents, targets, null);
+    }
+
+    /**
+     * 複数のファイルを指定した順に1つずつ同期します（ルートチケットを CLI で指定）。
+     * <p>
+     * ルートチケットがあるファイルの最上位の行（親行がない行・最上位の仮想親）は、ルートチケットの子として同期します。
+     * ルートチケットは、--root-issue（今回のすべてのファイル）＞ 設定 sync.files の rootIssueId の順に決めます。
+     * 今回同期するすべてのファイルにルートチケットがある場合、論理削除の範囲はそれらのルートチケットの配下に限ります。
+     * </p>
+     *
+     * @param configPath 設定ファイルパス（nullの場合は既定の場所の sync-config.yml）
+     * @param projectName プロジェクト名（nullの場合はデフォルトプロジェクトを使用）
+     * @param filePaths CSV/Excelファイルパス（空なら設定 sync.files のファイル）
+     * @param dryRun ドライランモードの場合はtrue
+     * @param logDir ログ出力ディレクトリ（nullの場合はカレントディレクトリの logs）
+     * @param debug デバッグモードの場合はtrue
+     * @param forceUpdate 変更なしスキップを無効化する場合はtrue
+     * @param cliExcelSource CLI の --sheet / --table（null可。設定ファイルの sync.excel より優先）
+     * @param cliVirtualParents CLI の --virtual-parents（true）/ --no-virtual-parents（false）。
+     *        null なら設定 sync.virtualParents.enabled に従う
+     * @param targets 対象（null ならファイルにある表すべて）
+     * @param cliRootIssueId CLI の --root-issue（null なら設定 sync.files の rootIssueId に従う）
+     * @return 成功の場合は0、失敗の場合は1
+     */
+    public int runFiles(String configPath, String projectName, List<String> filePaths, boolean dryRun, String logDir,
+            boolean debug, boolean forceUpdate, ExcelSource cliExcelSource, Boolean cliVirtualParents,
+            Set<SyncTarget> targets, Long cliRootIssueId) {
         FileLogger logger = null;
         Set<SyncTarget> selected = targets == null ? EnumSet.allOf(SyncTarget.class) : targets;
         List<String> givenFiles = filePaths == null ? List.of() : filePaths;
@@ -221,6 +251,12 @@ public class SyncRunner {
                     }
                     return 1;
                 }
+                job.rootIssueId = cliRootIssueId != null ? cliRootIssueId
+                        : configuredRootIssueIds(projectConfig).get(normalize(file));
+                if (job.rootIssueId != null) {
+                    logger.info("Root Issue: #" + job.rootIssueId + (multi ? "（" + job.fileName() + "）" : "")
+                            + (cliRootIssueId != null ? "（コマンドライン指定）" : "（設定 sync.files の rootIssueId）"));
+                }
                 jobs.add(job);
             }
 
@@ -231,6 +267,7 @@ public class SyncRunner {
             logger.info("Redmine Project: " + client.getProjectId());
 
             // 7. すべてのファイルを検証（エラーがあればRedmineに一切書き込まない）
+            RunState state = new RunState();
             List<String> validationErrors = new ArrayList<>();
             for (FileJob job : jobs) {
                 if (multi) {
@@ -240,6 +277,7 @@ public class SyncRunner {
                     validationErrors.add(multi ? "[" + job.fileName() + "] " + error : error);
                 }
             }
+            validationErrors.addAll(validateRootIssues(jobs, client, deleteStatusId(syncConfig), state, logger));
             if (!validationErrors.isEmpty()) {
                 logger.error("入力ファイルの検証エラー: " + validationErrors.size() + "件（Redmineは更新していません）");
                 for (String error : validationErrors) {
@@ -249,7 +287,6 @@ public class SyncRunner {
             }
 
             // 8. ファイルごとに同期（ユーザー → グループ → チケット、IDの書き戻し）
-            RunState state = new RunState();
             for (int i = 0; i < jobs.size(); i++) {
                 FileJob job = jobs.get(i);
                 if (multi) {
@@ -332,6 +369,8 @@ public class SyncRunner {
         private DirectorySync.Plan<DirectorySync.UserRow> userPlan;
         private DirectorySync.Plan<DirectorySync.GroupRow> groupPlan;
         private DiffPlan plan;
+        /** ルートチケットのID（null なら最上位の行は親なし） */
+        private Long rootIssueId;
 
         private FileJob(String filePath) {
             this.filePath = filePath;
@@ -352,6 +391,8 @@ public class SyncRunner {
         private final Set<Long> keepIssueIds = new HashSet<>();
         /** 最後に取得したプロジェクトのチケット（dry-run の論理削除候補に使用） */
         private Map<Long, Map<String, Object>> lastIssues = Map.of();
+        /** 検証で取得したルートチケット（同期先プロジェクト外のものを含む。チケットID → チケット情報） */
+        private final Map<Long, Map<String, Object>> rootIssues = new HashMap<>();
         private boolean ticketsSynced;
         /** 再検証エラーで同期しなかったファイルがある（安全のため論理削除しない） */
         private boolean skippedFile;
@@ -386,6 +427,76 @@ public class SyncRunner {
             files.add(file);
         }
         return files;
+    }
+
+    /**
+     * 設定 sync.files のファイルごとのルートチケットを返します（正規化した絶対パス → チケットID）。
+     */
+    static Map<Path, Long> configuredRootIssueIds(ProjectConfig projectConfig) {
+        SyncConfig syncConfig = projectConfig.getSync();
+        Map<Path, Long> roots = new HashMap<>();
+        if (syncConfig != null && syncConfig.getFileRootIssueIds() != null) {
+            syncConfig.getFileRootIssueIds().forEach((file, id) -> roots.put(normalize(file), id));
+        }
+        return roots;
+    }
+
+    /**
+     * ルートチケットを検証します（Redmineには読み取りのみ）。
+     * <p>
+     * ルートチケットは同期先プロジェクトのチケットから探し、なければ個別に取得します
+     * （親プロジェクトなど別プロジェクトのチケットも指定できます）。
+     * 存在しない・論理削除ステータスのルートチケットはエラーです。
+     * </p>
+     *
+     * @return 検証エラー（なければ空）
+     */
+    private List<String> validateRootIssues(List<FileJob> jobs, RedmineClient client, Integer deleteStatusId,
+            RunState state, FileLogger logger) {
+        Set<Long> roots = new LinkedHashSet<>();
+        for (FileJob job : jobs) {
+            if (job.doTickets && job.rootIssueId != null) {
+                roots.add(job.rootIssueId);
+            }
+        }
+        List<String> errors = new ArrayList<>();
+        if (roots.isEmpty()) {
+            return errors;
+        }
+        logger.info("Fetching issues of project " + client.getProjectId() + " from Redmine (root issue check)...");
+        Map<Long, Map<String, Object>> projectIssues = client.listProjectIssues();
+        for (Long root : roots) {
+            Map<String, Object> issue = projectIssues.get(root);
+            if (issue == null) {
+                issue = client.getIssue(root);
+                if (issue != null && issue.isEmpty()) {
+                    issue = null;
+                }
+                if (issue != null) {
+                    logger.info("ルートチケット #" + root + " は同期先プロジェクト外のチケットです（"
+                            + projectName(issue) + "）");
+                }
+            }
+            if (issue == null) {
+                errors.add("ルートチケット #" + root + " が見つかりません");
+                continue;
+            }
+            state.rootIssues.put(root, issue);
+            Long statusId = IssueComparator.nestedId(issue, "status");
+            if (deleteStatusId != null && statusId != null && statusId.longValue() == deleteStatusId.longValue()) {
+                errors.add("ルートチケット #" + root + " は論理削除ステータス（status_id=" + deleteStatusId
+                        + "）です");
+                continue;
+            }
+            logger.info("ルートチケット #" + root + " 「" + issue.get("subject") + "」を確認しました");
+        }
+        return errors;
+    }
+
+    private static String projectName(Map<String, Object> issue) {
+        Object project = issue.get("project");
+        return project instanceof Map<?, ?> map && map.get("name") != null ? String.valueOf(map.get("name"))
+                : "project_id=" + IssueComparator.nestedId(issue, "project");
     }
 
     private static List<String> listedFiles(ProjectConfig projectConfig) {
@@ -528,6 +639,15 @@ public class SyncRunner {
             logger.info("Calculating diff...");
             job.plan = calculatePlan(job.parsed, projectConfig, client, cliVirtualParents, logger);
             validationErrors.addAll(job.plan.errors());
+            if (job.rootIssueId != null) {
+                for (DiffItem item : job.plan.items()) {
+                    if (!item.virtual() && job.rootIssueId.equals(item.issueId())) {
+                        validationErrors.add("行" + item.rowNumber() + ": チケットID #" + job.rootIssueId
+                                + " はこのファイルのルートチケットです（ルートチケットは行に書かず、"
+                                + "sync.files の rootIssueId または --root-issue で指定してください）");
+                    }
+                }
+            }
         }
         return validationErrors;
     }
@@ -601,10 +721,18 @@ public class SyncRunner {
             logger.info("Fetched " + projectIssues.size() + " issues (closed included, subprojects excluded)");
             state.lastIssues = projectIssues;
 
+            if (job.rootIssueId != null) {
+                Map<String, Object> root = projectIssues.containsKey(job.rootIssueId)
+                        ? projectIssues.get(job.rootIssueId) : state.rootIssues.get(job.rootIssueId);
+                logger.info((dryRun ? "DRY_RUN " : "") + "ルートチケット #" + job.rootIssueId
+                        + (root != null && root.get("subject") != null ? " 「" + root.get("subject") + "」" : "")
+                        + " の配下に同期します（最上位の行の親をこのチケットにします）");
+            }
+
             // 仮想親（ファイルに行がない祖先）を既存チケットに対応付ける（見つからなければ新規作成）
             Integer deleteStatusId = deleteStatusId(syncConfig);
             if (items.stream().anyMatch(DiffItem::virtual)) {
-                items = VirtualParentMatcher.match(items, projectIssues, deleteStatusId, logger);
+                items = VirtualParentMatcher.match(items, projectIssues, deleteStatusId, logger, job.rootIssueId);
                 long virtualTotal = items.stream().filter(DiffItem::virtual).count();
                 long virtualExisting = items.stream().filter(i -> i.virtual() && i.issueId() != null).count();
                 logger.info("  VIRTUAL_PARENT: " + virtualTotal + "（既存 " + virtualExisting + " / 新規作成 "
@@ -621,7 +749,7 @@ public class SyncRunner {
             // 同期実行（論理削除は全ファイルの同期後）
             logger.info("Executing sync...");
             SyncResult result = syncExecutor.execute(items, projectIssues, List.of(), projectConfig, client,
-                    dryRun, logger, forceUpdate);
+                    dryRun, logger, forceUpdate, job.rootIssueId);
             state.ticketsSynced = true;
             state.keepIssueIds.addAll(result.createdIssueIds().values());
             if (result.createdVirtualIssueIds() != null) {
@@ -689,6 +817,9 @@ public class SyncRunner {
      * </ul>
      * sync.files のファイルを読めない・検証エラーがある場合や、同期しなかったファイルがある場合は、
      * 安全のため論理削除を行いません。
+     * 今回同期したファイル・sync.files のファイルのルートチケットとその祖先は、論理削除しません。
+     * また今回同期したすべてのファイルにルートチケットがある場合は、それらのルートチケットの子孫だけを対象にします
+     * （ルートチケットのないファイルが1つでもあればプロジェクト全体）。
      * </p>
      */
     private void logicalDelete(List<FileJob> jobs, List<String> listedFiles, ProjectConfig projectConfig,
@@ -707,6 +838,37 @@ public class SyncRunner {
             issues = client.listProjectIssues();
         }
         Set<Long> keep = new HashSet<>(state.keepIssueIds);
+        Map<Path, Long> configuredRoots = configuredRootIssueIds(projectConfig);
+        // ルートチケット（今回同期したファイル・sync.files のファイル）とその祖先は論理削除しない
+        Set<Long> roots = new LinkedHashSet<>();
+        jobs.stream().filter(job -> job.rootIssueId != null).forEach(job -> roots.add(job.rootIssueId));
+        for (String listed : listedFiles) {
+            Long root = configuredRoots.get(normalize(listed));
+            if (root != null) {
+                roots.add(root);
+            }
+        }
+        if (!roots.isEmpty()) {
+            Set<Long> protectedIds = rootsAndAncestors(roots, issues, state.rootIssues, client);
+            logger.info("ルートチケットとその祖先 " + protectedIds.size() + "件を論理削除の対象外にします: "
+                    + protectedIds.stream().sorted().map(id -> "#" + id).toList());
+            keep.addAll(protectedIds);
+        }
+        // 論理削除の範囲（今回同期したすべてのファイルにルートチケットがあれば、その配下だけ）
+        List<FileJob> ticketJobs = jobs.stream().filter(job -> job.doTickets).toList();
+        Set<Long> scope = null;
+        if (!ticketJobs.isEmpty() && ticketJobs.stream().allMatch(job -> job.rootIssueId != null)) {
+            scope = new LinkedHashSet<>();
+            for (FileJob job : ticketJobs) {
+                scope.add(job.rootIssueId);
+            }
+            logger.info("論理削除の範囲: ルートチケット " + scope.stream().map(id -> "#" + id).toList()
+                    + " の配下（今回同期したすべてのファイルにルートチケットがあるため）");
+        } else if (ticketJobs.stream().anyMatch(job -> job.rootIssueId != null)) {
+            logger.info("論理削除の範囲: プロジェクト全体（ルートチケットのないファイルがあるため）");
+        } else {
+            logger.info("論理削除の範囲: プロジェクト全体");
+        }
         Set<Path> processed = new HashSet<>();
         jobs.forEach(job -> processed.add(normalize(job.filePath)));
         for (String listed : listedFiles) {
@@ -716,7 +878,7 @@ public class SyncRunner {
             logger.info("論理削除の対象外にするため、sync.files のファイルを読み込みます（同期はしません）: " + listed);
             try {
                 Set<Long> ids = listedFileIssueIds(listed, projectConfig, cliExcelSource, cliVirtualParents, client,
-                        issues, deleteStatusId, logger);
+                        issues, deleteStatusId, logger, configuredRoots.get(normalize(listed)));
                 if (ids == null) {
                     logger.warn("sync.files のファイル「" + listed + "」を読み込めないため、安全のため論理削除は行いません");
                     return;
@@ -729,10 +891,11 @@ public class SyncRunner {
                 return;
             }
         }
-        List<Long> candidates = DiffCalculator.findLogicalDeleteCandidates(keep, issues, deleteStatusId);
+        List<Long> candidates = DiffCalculator.findLogicalDeleteCandidates(keep, issues, deleteStatusId, scope);
         logger.info("LOGICAL_DELETE candidates: " + candidates.size()
                 + "（同期したファイル" + (listedFiles.isEmpty() ? "" : "・sync.files のファイル")
-                + "のどれにもないプロジェクト内のチケット。Redmineで手動作成したチケットも含みます）");
+                + "のどれにもない" + (scope != null ? "ルートチケット配下" : "プロジェクト内")
+                + "のチケット。Redmineで手動作成したチケットも含みます）");
         SyncResult deleted = syncExecutor.executeLogicalDelete(candidates, issues, projectConfig, client, dryRun,
                 logger);
         if (deleted == null) {
@@ -751,7 +914,7 @@ public class SyncRunner {
      */
     Set<Long> listedFileIssueIds(String filePath, ProjectConfig projectConfig, ExcelSource cliExcelSource,
             Boolean cliVirtualParents, RedmineClient client, Map<Long, Map<String, Object>> issues,
-            Integer deleteStatusId, FileLogger logger) throws IOException {
+            Integer deleteStatusId, FileLogger logger, Long rootIssueId) throws IOException {
         if (!Files.isRegularFile(Paths.get(filePath))) {
             logger.warn("ファイルがありません: " + filePath);
             return null;
@@ -771,13 +934,45 @@ public class SyncRunner {
                     + plan.errors().get(0) + "）");
             return null;
         }
-        List<DiffItem> items = VirtualParentMatcher.match(plan.items(), issues, deleteStatusId, logger);
+        List<DiffItem> items = VirtualParentMatcher.match(plan.items(), issues, deleteStatusId, logger, rootIssueId);
         for (DiffItem item : items) {
             if (item.issueId() != null) {
                 ids.add(item.issueId());
             }
         }
         return ids;
+    }
+
+    /**
+     * ルートチケットとその祖先のチケットIDを返します（親チケットを順にたどる）。
+     * <p>
+     * 同期先プロジェクトのチケット → 検証で取得したルートチケット → 個別取得の順に探します。
+     * </p>
+     */
+    static Set<Long> rootsAndAncestors(Set<Long> roots, Map<Long, Map<String, Object>> issues,
+            Map<Long, Map<String, Object>> fetched, RedmineClient client) {
+        Set<Long> result = new LinkedHashSet<>();
+        for (Long root : roots) {
+            Long current = root;
+            while (current != null && result.add(current)) {
+                Map<String, Object> issue = issues.get(current);
+                if (issue == null) {
+                    issue = fetched.get(current);
+                }
+                if (issue == null && client != null) {
+                    try {
+                        issue = client.getIssue(current);
+                    } catch (RuntimeException e) {
+                        issue = null;
+                    }
+                    if (issue != null) {
+                        fetched.put(current, issue);
+                    }
+                }
+                current = IssueComparator.nestedId(issue, "parent");
+            }
+        }
+        return result;
     }
 
     /** 1ファイルでの書き戻しの状態（バックアップは最初の書き込みの前に1回だけ作る） */

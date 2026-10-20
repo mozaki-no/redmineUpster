@@ -67,6 +67,35 @@ public class SyncExecutor {
             boolean dryRun,
             FileLogger logger,
             boolean forceUpdate) {
+        return execute(items, projectIssues, logicalDeleteCandidates, projectConfig, client, dryRun, logger,
+                forceUpdate, null);
+    }
+
+    /**
+     * 同期を実行します（ルートチケットの配下に同期）。
+     *
+     * @param items 差分アイテム
+     * @param projectIssues 同期開始時に取得した同期先プロジェクトのチケット（チケットID → チケット情報）
+     * @param logicalDeleteCandidates 論理削除候補のチケットID
+     * @param projectConfig プロジェクト設定
+     * @param client Redmineクライアント
+     * @param dryRun ドライランの場合はtrue（Redmineへの書き込みを行わない）
+     * @param logger ファイルロガー
+     * @param forceUpdate 変更なしスキップを無効化する場合はtrue
+     * @param rootIssueId ルートチケットのID（null可）。指定すると最上位の行（親行がない行・最上位の仮想親）の
+     *        親をこのチケットにする（null なら最上位の行は親なし）
+     * @return 同期結果
+     */
+    public SyncResult execute(
+            List<DiffItem> items,
+            Map<Long, Map<String, Object>> projectIssues,
+            List<Long> logicalDeleteCandidates,
+            ProjectConfig projectConfig,
+            RedmineClient client,
+            boolean dryRun,
+            FileLogger logger,
+            boolean forceUpdate,
+            Long rootIssueId) {
 
         int totalCount = items.size();
         int successCount = 0;
@@ -122,6 +151,9 @@ public class SyncExecutor {
                                 + "のチケットIDが確定していません");
                         continue;
                     }
+                } else if (rootIssueId != null) {
+                    // ルートチケットがあるファイルの最上位の行は、ルートチケットの子にする
+                    parentIssueId = rootIssueId;
                 } else {
                     // 最上位の行は親を空にする（Excelで最上位に移動した場合に親子関係を解除する。
                     // Redmineの現在値と比較するときは「親なし」と同じ扱いになる）
@@ -136,7 +168,7 @@ public class SyncExecutor {
                     if (dryRun) {
                         plannedCreates.add(item.rowNumber());
                         logger.info("DRY_RUN CREATE " + item.label() + " subject=" + item.subject()
-                                + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths));
+                                + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths, rootIssueId));
                         successCount++;
                         continue;
                     }
@@ -183,7 +215,7 @@ public class SyncExecutor {
                 String changes = forceUpdate && changed.isEmpty() ? "(force-update)" : String.join(",", changed);
                 if (dryRun) {
                     logger.info("DRY_RUN UPDATE " + item.label() + " subject=" + item.subject()
-                            + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths)
+                            + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths, rootIssueId)
                             + " changes=" + changes);
                     successCount++;
                     continue;
@@ -262,10 +294,10 @@ public class SyncExecutor {
                 : "行(行" + parent + ")";
     }
 
-    private static String parentLabel(DiffItem item, Map<Integer, String> virtualPaths) {
+    private static String parentLabel(DiffItem item, Map<Integer, String> virtualPaths, Long rootIssueId) {
         Integer parent = item.parentRowNumber();
         if (parent == null) {
-            return "";
+            return rootIssueId != null ? " parent=#" + rootIssueId + "(ルートチケット)" : "";
         }
         return parent < 0 ? " parent=(仮想親)[" + virtualPaths.getOrDefault(parent, "?") + "]" : " parent=行" + parent;
     }

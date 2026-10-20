@@ -408,6 +408,22 @@ public class DiffCalculator {
      */
     public static List<Long> findLogicalDeleteCandidates(Collection<Long> excelIssueIds,
             Map<Long, Map<String, Object>> projectIssues, Integer deleteStatusId) {
+        return findLogicalDeleteCandidates(excelIssueIds, projectIssues, deleteStatusId, null);
+    }
+
+    /**
+     * 論理削除の候補を求めます（範囲をルートチケットの配下に限定する場合）。
+     *
+     * @param excelIssueIds Excelに記載されたチケットID（論理削除しないチケット）
+     * @param projectIssues 同期先プロジェクトのチケット（チケットID → チケット情報）
+     * @param deleteStatusId 論理削除ステータスID（未設定ならnull）
+     * @param scopeRootIssueIds ルートチケットのID（null ならプロジェクト全体。指定するとこれらの子孫だけを候補にする。
+     *        ルートチケット自身は候補にしない）
+     * @return 論理削除候補のチケットID（昇順）
+     */
+    public static List<Long> findLogicalDeleteCandidates(Collection<Long> excelIssueIds,
+            Map<Long, Map<String, Object>> projectIssues, Integer deleteStatusId,
+            Collection<Long> scopeRootIssueIds) {
         if (projectIssues == null || projectIssues.isEmpty()) {
             return List.of();
         }
@@ -422,9 +438,33 @@ public class DiffCalculator {
             if (deleteStatusId != null && statusId != null && statusId.longValue() == deleteStatusId.longValue()) {
                 continue;
             }
+            if (scopeRootIssueIds != null && !isDescendant(issueId, scopeRootIssueIds, projectIssues)) {
+                continue;
+            }
             candidates.add(issueId);
         }
         return new ArrayList<>(candidates);
+    }
+
+    /**
+     * チケットが、指定したチケットのどれかの子孫かどうかを判定します（親チケットを取得済みのチケットの中でたどる）。
+     *
+     * @param issueId 判定するチケットID
+     * @param ancestorIds 祖先かどうかを調べるチケットID
+     * @param issues チケットID → チケット情報（parent を含む）
+     * @return 子孫ならtrue（自分自身は含まない）
+     */
+    public static boolean isDescendant(Long issueId, Collection<Long> ancestorIds,
+            Map<Long, Map<String, Object>> issues) {
+        Set<Long> visited = new HashSet<>();
+        Long current = IssueComparator.nestedId(issues.get(issueId), "parent");
+        while (current != null && visited.add(current)) {
+            if (ancestorIds.contains(current)) {
+                return true;
+            }
+            current = IssueComparator.nestedId(issues.get(current), "parent");
+        }
+        return false;
     }
 
     /**

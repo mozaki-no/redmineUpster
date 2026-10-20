@@ -169,6 +169,16 @@ public class SyncConfigProperties {
 		 * </p>
 		 */
 		private List<String> files = new ArrayList<>();
+
+		/**
+		 * sync.files のファイルごとのルートチケット（{@link #files} と同じパス → RedmineのチケットID）。
+		 * <p>
+		 * {@code files: [{ path: wbs-a.xlsx, rootIssueId: 123 }]} のように書いたファイルだけを含みます。
+		 * ルートチケットがあるファイルの最上位の行（親行がない行。最上位の仮想親を含む）は、
+		 * 親なしではなくルートチケットの子として同期します。
+		 * </p>
+		 */
+		private Map<String, Long> fileRootIssueIds = new HashMap<>();
 	}
 
 	/**
