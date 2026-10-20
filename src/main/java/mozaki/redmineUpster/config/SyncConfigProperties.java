@@ -160,6 +160,11 @@ public class SyncConfigProperties {
 		private VirtualParentsConfig virtualParents;
 
 		/**
+		 * 親チケットの自動完了（子チケットがすべて完了したら親も完了にする）の設定。
+		 */
+		private AutoCloseParentsConfig autoCloseParents;
+
+		/**
 		 * このプロジェクトを更新する Excel/CSV ファイルの一覧（任意。相対パスは設定ファイルのフォルダ基準で、
 		 * 読み込み時に絶対パスへ変換済み）。
 		 * <p>
@@ -179,6 +184,28 @@ public class SyncConfigProperties {
 		 * </p>
 		 */
 		private Map<String, Long> fileRootIssueIds = new HashMap<>();
+	}
+
+	/**
+	 * 親チケットの自動完了の設定クラス。
+	 * <p>
+	 * 有効にすると、同期の最後に、子チケットがすべて完了（Redmine の「終了したチケット」扱いのステータス）に
+	 * なった親チケットを完了にします（孫→子→親の順に再帰的に）。完了した親を未完了に戻すことはしません。
+	 * ルートチケットとその祖先は対象外です。
+	 * </p>
+	 */
+	@Data
+	public static class AutoCloseParentsConfig {
+		/**
+		 * 親チケットを自動で完了にするかどうか（既定: false）。
+		 */
+		private boolean enabled;
+
+		/**
+		 * 完了にするときのステータス（名前またはID）。未設定の場合は statusMap の「完了」→ Redmine の
+		 * 「完了」「終了」→ 最初の終了ステータスの順に決めます。
+		 */
+		private String status;
 	}
 
 	/**

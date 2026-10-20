@@ -103,15 +103,36 @@ public class TicketIdWriter {
 	 */
 	public WriteBackResult writeBack(String filePath, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
 			ExcelSource source, boolean makeBackup) throws IOException {
+		return write(filePath, ticketIdColumn, rowIssueIds, source, makeBackup, true);
+	}
+
+	/**
+	 * 文字列の値（ステータス名など）を書き戻します。列がファイルにない場合は何もしません。
+	 *
+	 * @param filePath 入力ファイルのパス
+	 * @param column 列のヘッダ名
+	 * @param rowValues 行番号 → 値
+	 * @param source Excel の読み込み元（CSV では無視）
+	 * @param makeBackup {@code <file>.bak} を作成（上書き）する場合 true
+	 * @return 結果（列がない・書き込まなかった場合、backup は null）
+	 * @throws IOException 読み書きに失敗した場合
+	 */
+	public WriteBackResult writeValues(String filePath, String column, Map<Integer, String> rowValues,
+			ExcelSource source, boolean makeBackup) throws IOException {
+		return write(filePath, column, rowValues, source, makeBackup, false);
+	}
+
+	private WriteBackResult write(String filePath, String ticketIdColumn, Map<Integer, ?> rowIssueIds,
+			ExcelSource source, boolean makeBackup, boolean appendColumn) throws IOException {
 		Path path = Paths.get(filePath);
 		byte[] original = Files.readAllBytes(path);
 		List<String> notes = new ArrayList<>();
 		List<String> failures = new ArrayList<>();
 		byte[] updated;
 		if (path.getFileName().toString().toLowerCase().endsWith(".csv")) {
-			updated = rewriteCsv(original, ticketIdColumn, rowIssueIds);
+			updated = rewriteCsv(original, ticketIdColumn, rowIssueIds, appendColumn);
 		} else {
-			updated = rewriteExcel(original, ticketIdColumn, rowIssueIds, source, notes, failures);
+			updated = rewriteExcel(original, ticketIdColumn, rowIssueIds, source, notes, failures, appendColumn);
 		}
 		if (updated == null) {
 			return new WriteBackResult(null, notes, failures);
@@ -124,8 +145,8 @@ public class TicketIdWriter {
 		return new WriteBackResult(backup, notes, failures);
 	}
 
-	private byte[] rewriteExcel(byte[] original, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
-			ExcelSource source, List<String> notes, List<String> failures) throws IOException {
+	private byte[] rewriteExcel(byte[] original, String ticketIdColumn, Map<Integer, ?> rowIssueIds,
+			ExcelSource source, List<String> notes, List<String> failures, boolean appendColumn) throws IOException {
 		try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(original))) {
 			ExcelArea area = ExcelArea.resolve(workbook, source);
 			Sheet sheet = area.sheet();
@@ -134,6 +155,9 @@ public class TicketIdWriter {
 				throw new IOException("ヘッダ行が見つかりません（シート「" + area.sheetName() + "」）");
 			}
 			int column = area.findColumn(ticketIdColumn);
+			if (column < 0 && !appendColumn) {
+				return null;
+			}
 			if (column < 0) {
 				if (area.table() != null) {
 					throw new IOException("テーブル「" + area.table().getName() + "」にチケットID列「" + ticketIdColumn
@@ -147,8 +171,10 @@ public class TicketIdWriter {
 				}
 			}
 			int written = 0;
-			for (Map.Entry<Integer, Long> entry : rowIssueIds.entrySet()) {
+			for (Map.Entry<Integer, ?> entry : rowIssueIds.entrySet()) {
 				String label = "シート「" + area.sheetName() + "」行" + entry.getKey();
+				Object value = entry.getValue();
+				String what = value instanceof Long ? "チケット #" + value : "「" + value + "」";
 				int rowIndex = entry.getKey() - 1;
 				Row row = sheet.getRow(rowIndex);
 				if (row == null) {
@@ -158,16 +184,15 @@ public class TicketIdWriter {
 				if (cell == null) {
 					cell = row.createCell(column);
 				}
-				double id = entry.getValue().doubleValue();
 				if (cell.getCellType() != CellType.FORMULA) {
-					cell.setCellValue(id);
+					setValue(cell, value);
 					written++;
 					continue;
 				}
 				ExcelArea.Reference target = followReference(cell);
 				if (target == null) {
-					failures.add(label + ": チケットID列のセルが数式（=" + cell.getCellFormula()
-							+ "）のため書き込めません。チケット #" + entry.getValue() + " を手で入力してください");
+					failures.add(label + ": 「" + ticketIdColumn + "」列のセルが数式（=" + cell.getCellFormula()
+							+ "）のため書き込めません。" + what + " を手で入力してください");
 					continue;
 				}
 				Row targetRow = target.sheet().getRow(target.row());
@@ -178,12 +203,12 @@ public class TicketIdWriter {
 				if (targetCell == null) {
 					targetCell = targetRow.createCell(target.column());
 				}
-				targetCell.setCellValue(id);
+				setValue(targetCell, value);
 				// 数式は残したまま、保存される計算結果も更新する（再計算しなくても次回の読み込みで ID が読める）
-				cell.setCellValue(id);
+				setValue(cell, value);
 				workbook.setForceFormulaRecalculation(true);
-				notes.add(label + ": チケットID列が参照の数式（=" + cell.getCellFormula() + "）のため、チケット #"
-						+ entry.getValue() + " を参照先 " + target.describe() + " に書き込みました");
+				notes.add(label + ": 「" + ticketIdColumn + "」列が参照の数式（=" + cell.getCellFormula() + "）のため、"
+						+ what + " を参照先 " + target.describe() + " に書き込みました");
 				written++;
 			}
 			if (written == 0) {
@@ -192,6 +217,14 @@ public class TicketIdWriter {
 			ByteArrayOutputStream out = new ByteArrayOutputStream();
 			workbook.write(out);
 			return out.toByteArray();
+		}
+	}
+
+	private static void setValue(Cell cell, Object value) {
+		if (value instanceof Number number) {
+			cell.setCellValue(number.doubleValue());
+		} else {
+			cell.setCellValue(String.valueOf(value));
 		}
 	}
 
@@ -211,8 +244,8 @@ public class TicketIdWriter {
 		return null;
 	}
 
-	private byte[] rewriteCsv(byte[] original, String ticketIdColumn, Map<Integer, Long> rowIssueIds)
-			throws IOException {
+	private byte[] rewriteCsv(byte[] original, String ticketIdColumn, Map<Integer, ?> rowIssueIds,
+			boolean appendColumn) throws IOException {
 		CsvFileFormat format = CsvFileFormat.detect(original);
 		List<String[]> records = new ArrayList<>();
 		try (CSVReader reader = SpreadsheetParser.newCsvReader(format.decode(original))) {
@@ -238,11 +271,14 @@ public class TicketIdWriter {
 				break;
 			}
 		}
+		if (column < 0 && !appendColumn) {
+			return null;
+		}
 		if (column < 0) {
 			column = header.length;
 			records.set(0, withValue(header, column, ticketIdColumn));
 		}
-		for (Map.Entry<Integer, Long> entry : rowIssueIds.entrySet()) {
+		for (Map.Entry<Integer, ?> entry : rowIssueIds.entrySet()) {
 			int index = entry.getKey() - 1;
 			if (index <= 0 || index >= records.size()) {
 				throw new IOException("書き戻し対象の行が見つかりません: " + entry.getKey());

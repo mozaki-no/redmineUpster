@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.springframework.stereotype.Component;
 
@@ -27,6 +28,7 @@ import mozaki.redmineUpster.service.SpreadsheetParser;
 import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.service.SyncConfigService;
 import mozaki.redmineUpster.service.TicketIdWriter;
+import mozaki.redmineUpster.util.ColumnDefinitions;
 
 /**
  * 同期実行サービス。
@@ -314,7 +316,12 @@ public class SyncRunner {
                         state, logger);
             }
 
-            // 10. 結果出力
+            // 10. 親チケットの自動完了（子チケットがすべて完了した親を完了にする。設定 sync.autoCloseParents）
+            if (state.ticketsSynced && isAutoCloseEnabled(syncConfig)) {
+                autoCloseParents(jobs, listedFiles, projectConfig, client, dryRun, state, logger);
+            }
+
+            // 11. 結果出力
             logger.info("=== Sync Complete ===");
             for (String line : state.summary) {
                 logger.info(line);
@@ -371,6 +378,8 @@ public class SyncRunner {
         private DiffPlan plan;
         /** ルートチケットのID（null なら最上位の行は親なし） */
         private Long rootIssueId;
+        /** 同期したチケットID → ファイル上の行番号（仮想親を除く。ステータスの書き戻しに使用） */
+        private final Map<Long, Integer> rowByIssueId = new HashMap<>();
 
         private FileJob(String filePath) {
             this.filePath = filePath;
@@ -399,6 +408,15 @@ public class SyncRunner {
         private int total;
         private int success;
         private int ticketErrors;
+        /** 同期したチケットの同期後の状態（親チケットの自動完了に使用） */
+        private final List<SyncResult.PlannedIssue> planned = new ArrayList<>();
+        /** 論理削除したチケット（dry-run では論理削除する予定のチケット）と、そのステータス */
+        private List<Long> deletedIssueIds = List.of();
+        private Integer deletedStatusId;
+        /** 終了ステータスのID（親チケットの自動完了が有効な場合だけ取得。取得できなければ null） */
+        private Set<Long> closedStatusIds;
+        /** 今回の実行でバックアップ（.bak）を作ったファイル */
+        private final Set<Path> backedUp = new HashSet<>();
     }
 
     /**
@@ -739,6 +757,12 @@ public class SyncRunner {
                         + (virtualTotal - virtualExisting) + "。上の CREATE 件数に含まれます）");
             }
 
+            // 親チケットの自動完了が有効な場合、完了済みの親の行はステータス列が空欄なら完了のままにする
+            // （日付から決めたステータスで毎回開き直して、また自動完了する、を繰り返さないため）
+            if (isAutoCloseEnabled(syncConfig)) {
+                items = keepClosedParents(items, projectIssues, closedStatusIds(client, state, logger), logger);
+            }
+
             // Excelの行と、今回も必要な仮想親のチケットは論理削除しない
             for (DiffItem item : items) {
                 if (item.issueId() != null) {
@@ -751,6 +775,14 @@ public class SyncRunner {
             SyncResult result = syncExecutor.execute(items, projectIssues, List.of(), projectConfig, client,
                     dryRun, logger, forceUpdate, job.rootIssueId);
             state.ticketsSynced = true;
+            if (result.plannedIssues() != null) {
+                state.planned.addAll(result.plannedIssues());
+                for (SyncResult.PlannedIssue planned : result.plannedIssues()) {
+                    if (!planned.virtual() && planned.rowNumber() > 0) {
+                        job.rowByIssueId.put(planned.issueId(), planned.rowNumber());
+                    }
+                }
+            }
             state.keepIssueIds.addAll(result.createdIssueIds().values());
             if (result.createdVirtualIssueIds() != null) {
                 state.keepIssueIds.addAll(result.createdVirtualIssueIds());
@@ -770,6 +802,9 @@ public class SyncRunner {
             }
         }
         state.writeBack.failed |= writeBackState.failed;
+        if (writeBackState.backupMade) {
+            state.backedUp.add(normalize(filePath));
+        }
     }
 
     private void writeBackTicketIds(FileJob job, ProjectConfig projectConfig, SyncResult result,
@@ -898,6 +933,10 @@ public class SyncRunner {
                 + "のチケット。Redmineで手動作成したチケットも含みます）");
         SyncResult deleted = syncExecutor.executeLogicalDelete(candidates, issues, projectConfig, client, dryRun,
                 logger);
+        if (deleteStatusId != null) {
+            state.deletedIssueIds = candidates;
+            state.deletedStatusId = deleteStatusId;
+        }
         if (deleted == null) {
             return;
         }
@@ -905,6 +944,191 @@ public class SyncRunner {
         state.success += deleted.successCount();
         state.ticketErrors += deleted.errorCount();
         state.errors.addAll(deleted.errors());
+    }
+
+    private static boolean isAutoCloseEnabled(SyncConfig syncConfig) {
+        return syncConfig != null && syncConfig.getAutoCloseParents() != null
+                && syncConfig.getAutoCloseParents().isEnabled();
+    }
+
+    /** 終了ステータスのIDを取得します（1回の実行で1回だけ。取得できなければ null） */
+    private static Set<Long> closedStatusIds(RedmineClient client, RunState state, FileLogger logger) {
+        if (state.closedStatusIds == null) {
+            try {
+                state.closedStatusIds = client.listClosedIssueStatusIds();
+            } catch (RuntimeException ex) {
+                logger.warn("ステータスの一覧を取得できません（親チケットの自動完了は行いません）: " + ex.getMessage());
+                state.closedStatusIds = Set.of();
+            }
+        }
+        return state.closedStatusIds;
+    }
+
+    /**
+     * Redmine で完了済みの親の行のうち、ステータス列が空欄の行は現在のステータスを送るようにします。
+     */
+    static List<DiffItem> keepClosedParents(List<DiffItem> items, Map<Long, Map<String, Object>> issues,
+            Set<Long> closedStatusIds, FileLogger logger) {
+        if (closedStatusIds.isEmpty()) {
+            return items;
+        }
+        Set<Integer> parentRows = new HashSet<>();
+        items.forEach(item -> {
+            if (item.parentRowNumber() != null) {
+                parentRows.add(item.parentRowNumber());
+            }
+        });
+        List<DiffItem> result = new ArrayList<>(items.size());
+        for (DiffItem item : items) {
+            Long current = item.issueId() == null ? null : IssueComparator.nestedId(issues.get(item.issueId()), "status");
+            if (!item.virtual() && SyncConstants.ACTION_UPDATE.equals(item.action())
+                    && isBlank(item.payload().get("statusCell")) && parentRows.contains(item.rowNumber())
+                    && current != null && closedStatusIds.contains(current)) {
+                logger.debug("keep closed status of parent " + item.label() + " (status_id=" + current + ")");
+                result.add(new DiffItem(item.rowNumber(), item.issueId(), item.subject(), item.levelPath(),
+                        item.depth(), item.parentRowNumber(), item.action(), String.valueOf(current),
+                        item.trackerId(), item.payload(), item.virtual()));
+            } else {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    private static boolean isBlank(Object value) {
+        return value == null || String.valueOf(value).isBlank();
+    }
+
+    /**
+     * 親チケットの自動完了（すべてのファイルの同期と論理削除の後に1回だけ）。
+     * <p>
+     * 子チケットがすべて終了ステータスになった親を、深い階層から順に完了にします（未完了には戻さない）。
+     * 子は同期後の Redmine のチケットすべて（Excelにないチケットを含む）で判定し、dry-run では
+     * 今回の作成・更新・論理削除の予定を反映して判定します。
+     * 対象は今回同期したチケットとその祖先で、ルートチケットとその祖先は完了にしません。
+     * 完了にした親がファイルの行なら、ステータス列（ある場合だけ）にステータス名を書き戻します。
+     * </p>
+     */
+    private void autoCloseParents(List<FileJob> jobs, List<String> listedFiles, ProjectConfig projectConfig,
+            RedmineClient client, boolean dryRun, RunState state, FileLogger logger) {
+        SyncConfig syncConfig = projectConfig.getSync();
+        Set<Long> closedStatusIds = closedStatusIds(client, state, logger);
+        if (closedStatusIds.isEmpty()) {
+            logger.warn("終了ステータスが見つからないため、親チケットの自動完了は行いません");
+            return;
+        }
+        ParentAutoCloser.TargetStatus target;
+        try {
+            target = ParentAutoCloser.resolveTarget(syncConfig.getAutoCloseParents(), syncConfig.getStatus(),
+                    client.listIssueStatuses(), closedStatusIds);
+        } catch (RuntimeException ex) {
+            logger.error("親チケットの自動完了を行いません: " + ex.getMessage());
+            state.errors.add("親チケットの自動完了: " + ex.getMessage());
+            return;
+        }
+        if (target == null) {
+            logger.warn("完了にするステータスが決められないため、親チケットの自動完了は行いません");
+            return;
+        }
+
+        Map<Long, Map<String, Object>> issues = dryRun ? state.lastIssues : client.listProjectIssues();
+        Map<Long, ParentAutoCloser.Node> nodes = ParentAutoCloser.nodes(issues);
+        if (dryRun) {
+            // 今回の作成・更新・論理削除の予定を反映する（作成予定のチケットは負の仮ID）
+            for (SyncResult.PlannedIssue planned : state.planned) {
+                ParentAutoCloser.Node current = nodes.get(planned.issueId());
+                Long status = planned.statusId() != null ? planned.statusId()
+                        : current != null ? current.statusId() : null;
+                nodes.put(planned.issueId(), new ParentAutoCloser.Node(planned.parentId(), status, planned.subject()));
+            }
+            if (state.deletedStatusId != null) {
+                for (Long id : state.deletedIssueIds) {
+                    ParentAutoCloser.Node current = nodes.get(id);
+                    if (current != null) {
+                        nodes.put(id, new ParentAutoCloser.Node(current.parentId(),
+                                state.deletedStatusId.longValue(), current.subject()));
+                    }
+                }
+            }
+        }
+
+        Set<Long> roots = new LinkedHashSet<>();
+        jobs.stream().filter(job -> job.rootIssueId != null).forEach(job -> roots.add(job.rootIssueId));
+        Map<Path, Long> configuredRoots = configuredRootIssueIds(projectConfig);
+        for (String listed : listedFiles) {
+            Long root = configuredRoots.get(normalize(listed));
+            if (root != null) {
+                roots.add(root);
+            }
+        }
+        Set<Long> protectedIds = roots.isEmpty() ? Set.of()
+                : rootsAndAncestors(roots, issues, state.rootIssues, client);
+        Set<Long> synced = new HashSet<>();
+        state.planned.forEach(planned -> synced.add(planned.issueId()));
+        Set<Long> candidates = ParentAutoCloser.candidates(synced, nodes, protectedIds);
+        List<Long> plan = ParentAutoCloser.plan(nodes, closedStatusIds, candidates, protectedIds);
+        logger.info("AUTO_CLOSE candidates: " + plan.size() + "（子チケットがすべて完了した親チケット。ステータス「"
+                + target.label() + "」(status_id=" + target.id() + ") にします）");
+        if (plan.isEmpty()) {
+            return;
+        }
+        ParentAutoCloser.Result result = ParentAutoCloser.execute(plan, nodes, target, client, dryRun, logger);
+        state.total += plan.size();
+        state.success += plan.size() - result.errors().size();
+        state.ticketErrors += result.errors().size();
+        state.errors.addAll(result.errors());
+        if (!dryRun) {
+            writeBackStatuses(jobs, projectConfig, result.completed(), target, state, logger);
+        }
+    }
+
+    /**
+     * 自動完了した親チケットの行のステータス列へ、ステータス名を書き戻します（列がないファイルは何もしない）。
+     */
+    private void writeBackStatuses(List<FileJob> jobs, ProjectConfig projectConfig, List<Long> completed,
+            ParentAutoCloser.TargetStatus target, RunState state, FileLogger logger) {
+        SyncConfig syncConfig = projectConfig.getSync();
+        String statusColumn = syncConfig != null && syncConfig.getColumns() != null
+                ? syncConfig.getColumns().getStatusColumn() : null;
+        if (statusColumn == null || statusColumn.isBlank()) {
+            statusColumn = ColumnDefinitions.COL_STATUS;
+        }
+        for (FileJob job : jobs) {
+            Map<Integer, String> values = new TreeMap<>();
+            for (Long id : completed) {
+                Integer row = job.rowByIssueId.get(id);
+                if (row != null) {
+                    values.put(row, target.label());
+                }
+            }
+            if (values.isEmpty()) {
+                continue;
+            }
+            Path path = normalize(job.filePath);
+            try {
+                TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeValues(job.filePath, statusColumn,
+                        values, job.excelSource, !state.backedUp.contains(path));
+                writeBack.notes().forEach(logger::info);
+                if (writeBack.backup() == null && writeBack.failures().isEmpty()) {
+                    logger.info("「" + statusColumn + "」列がないため、自動完了したステータスは書き戻しません: "
+                            + job.filePath);
+                    continue;
+                }
+                if (writeBack.backup() != null) {
+                    state.backedUp.add(path);
+                    logger.info("Wrote " + (values.size() - writeBack.failures().size()) + " statuses back to "
+                            + job.filePath + " (backup: " + writeBack.backup() + ")");
+                }
+                if (!writeBack.failures().isEmpty()) {
+                    state.writeBack.failed = true;
+                    logger.error("ステータスを書き戻せなかった行があります。手で「" + statusColumn + "」列に入力してください:");
+                    writeBack.failures().forEach(failure -> logger.error("  - " + failure));
+                }
+            } catch (IOException | RuntimeException e) {
+                state.writeBack.failed = true;
+                logger.error("ステータスの書き戻しに失敗しました（" + job.filePath + "）: " + e.getMessage());
+            }
+        }
     }
 
     /**
