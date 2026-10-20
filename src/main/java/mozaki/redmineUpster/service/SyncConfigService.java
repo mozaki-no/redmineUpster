@@ -50,6 +50,9 @@ public class SyncConfigService {
 
 	private List<ProjectConfig> loadedProjects = new ArrayList<>();
 
+	/** 読み込み中の設定ファイルのフォルダ（sync.files の相対パスの基準。クラスパスから読む場合は null） */
+	private Path configBaseDir;
+
 	/**
 	 * コンストラクタ。
 	 *
@@ -97,6 +100,7 @@ public class SyncConfigService {
 			// Try as classpath resource
 			try (InputStream is = getClass().getClassLoader().getResourceAsStream(configPath)) {
 				if (is != null) {
+					configBaseDir = null;
 					loadFromInputStream(is);
 					return;
 				}
@@ -107,6 +111,7 @@ public class SyncConfigService {
 		}
 
 		try (InputStream is = Files.newInputStream(path)) {
+			configBaseDir = path.toAbsolutePath().normalize().getParent();
 			loadFromInputStream(is);
 		} catch (IOException e) {
 			throw new RuntimeException("Failed to load configuration file: " + configPath, e);
@@ -260,7 +265,42 @@ public class SyncConfigService {
 			config.setVirtualParents(virtualParents);
 		}
 
+		config.setFiles(parseFiles(map.get("files")));
+
 		return config;
+	}
+
+	/**
+	 * sync.files（同期するファイルの一覧）を解析します。
+	 * <p>
+	 * 1件だけなら文字列でも書けます。相対パスは設定ファイルのフォルダを基準に絶対パスへ変換します
+	 * （クラスパスから読み込んだ場合はカレントディレクトリ基準のまま）。空欄の要素は無視します。
+	 * </p>
+	 *
+	 * @param value YAMLの値（null・文字列・リスト）
+	 * @return ファイルパスの一覧（書いた順）
+	 */
+	List<String> parseFiles(Object value) {
+		List<String> files = new ArrayList<>();
+		if (value == null) {
+			return files;
+		}
+		List<?> entries = value instanceof List<?> list ? list : List.of(value);
+		for (Object entry : entries) {
+			if (entry == null) {
+				continue;
+			}
+			String file = expandEnvVars(entry.toString()).trim();
+			if (file.isEmpty()) {
+				continue;
+			}
+			Path path = Paths.get(file);
+			if (!path.isAbsolute() && configBaseDir != null) {
+				path = configBaseDir.resolve(path);
+			}
+			files.add(path.isAbsolute() ? path.normalize().toString() : file);
+		}
+		return files;
 	}
 
 	/**

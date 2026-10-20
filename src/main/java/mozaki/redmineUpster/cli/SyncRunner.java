@@ -117,7 +117,7 @@ public class SyncRunner {
      *
      * @param configPath 設定ファイルパス（nullの場合は既定の場所の sync-config.yml）
      * @param projectName プロジェクト名（nullの場合はデフォルトプロジェクトを使用）
-     * @param filePath CSV/Excelファイルパス
+     * @param filePath CSV/Excelファイルパス（null・空欄なら設定 sync.files のファイル）
      * @param dryRun ドライランモードの場合はtrue
      * @param logDir ログ出力ディレクトリ（nullの場合はカレントディレクトリの logs）
      * @param debug デバッグモードの場合はtrue
@@ -130,14 +130,45 @@ public class SyncRunner {
      */
     public int run(String configPath, String projectName, String filePath, boolean dryRun, String logDir, boolean debug,
             boolean forceUpdate, ExcelSource cliExcelSource, Boolean cliVirtualParents, Set<SyncTarget> targets) {
+        List<String> files = filePath == null || filePath.isBlank() ? List.of() : List.of(filePath);
+        return runFiles(configPath, projectName, files, dryRun, logDir, debug, forceUpdate, cliExcelSource,
+                cliVirtualParents, targets);
+    }
+
+    /**
+     * 複数のファイルを指定した順に1つずつ同期します（並列・結合はしません）。
+     * <p>
+     * 先にすべてのファイルを解析・検証し、1つでも検証エラーがあれば Redmine に一切書き込みません。
+     * その後ファイルごとに同期（ユーザー・グループ・チケット、IDの書き戻しと .bak）を行い、
+     * 最後に1回だけ論理削除を行います。論理削除の対象は、今回同期したファイル・設定 sync.files のファイル・
+     * 今回作成したチケット（仮想親を含む）のどれにもないプロジェクト内のチケットだけです。
+     * </p>
+     *
+     * @param configPath 設定ファイルパス（nullの場合は既定の場所の sync-config.yml）
+     * @param projectName プロジェクト名（nullの場合はデフォルトプロジェクトを使用）
+     * @param filePaths CSV/Excelファイルパス（空なら設定 sync.files のファイル）
+     * @param dryRun ドライランモードの場合はtrue
+     * @param logDir ログ出力ディレクトリ（nullの場合はカレントディレクトリの logs）
+     * @param debug デバッグモードの場合はtrue
+     * @param forceUpdate 変更なしスキップを無効化する場合はtrue
+     * @param cliExcelSource CLI の --sheet / --table（null可。設定ファイルの sync.excel より優先）
+     * @param cliVirtualParents CLI の --virtual-parents（true）/ --no-virtual-parents（false）。
+     *        null なら設定 sync.virtualParents.enabled に従う
+     * @param targets 対象（null ならファイルにある表すべて）
+     * @return 成功の場合は0、失敗の場合は1
+     */
+    public int runFiles(String configPath, String projectName, List<String> filePaths, boolean dryRun, String logDir,
+            boolean debug, boolean forceUpdate, ExcelSource cliExcelSource, Boolean cliVirtualParents,
+            Set<SyncTarget> targets) {
         FileLogger logger = null;
         Set<SyncTarget> selected = targets == null ? EnumSet.allOf(SyncTarget.class) : targets;
+        List<String> givenFiles = filePaths == null ? List.of() : filePaths;
         try {
             // 1. ロガーの初期化
             logger = new FileLogger(logDir == null || logDir.isBlank() ? DEFAULT_LOG_DIR : logDir);
             logger.setDebugEnabled(debug);
             logger.info("=== Redmine Sync Started ===");
-            logger.info("File: " + filePath);
+            logger.info("File: " + (givenFiles.isEmpty() ? "(設定 sync.files)" : String.join(", ", givenFiles)));
             logger.info("Dry Run: " + dryRun);
             logger.info("Debug: " + debug);
             logger.info("Force Update: " + forceUpdate);
@@ -162,88 +193,35 @@ public class SyncRunner {
                 logger.debug("Redmine URL: " + projectConfig.getRedmine().getBaseUrl());
                 logger.debug("Project ID: " + projectConfig.getRedmine().getProjectId());
             }
-
-            // 4. ユーザー・グループの表（Excel のみ）を決める
-            boolean isCsv = filePath.toLowerCase().endsWith(".csv");
-            List<String> sheetNames = isCsv ? List.of() : spreadsheetParser.sheetNames(filePath);
             SyncConfig syncConfig = projectConfig.getSync();
-            ExcelSource usersSource = selected.contains(SyncTarget.USERS) && !isCsv
-                    ? directorySource(syncConfig != null ? syncConfig.getUsers() : null,
-                            DirectorySync.DEFAULT_USERS_SHEET, sheetNames)
-                    : null;
-            ExcelSource groupsSource = selected.contains(SyncTarget.GROUPS) && !isCsv
-                    ? directorySource(syncConfig != null ? syncConfig.getGroups() : null,
-                            DirectorySync.DEFAULT_GROUPS_SHEET, sheetNames)
-                    : null;
-            if (isCsv && (targets != null && (selected.contains(SyncTarget.USERS)
-                    || selected.contains(SyncTarget.GROUPS)))) {
-                logger.warn("CSVファイルのため、ユーザー・グループは同期しません（Excel のシートで指定してください）");
-            }
 
-            // 5. チケットの表を解析（階層列の決定・fillDownHierarchy の補完は差分計算で行う）
-            ExcelSource excelSource = resolveExcelSource(projectConfig, cliExcelSource);
-            if (isCsv && !excelSource.isDefault()) {
-                String message = "CSVファイルのため、シート・テーブルの指定（" + excelSource.describe() + "）は無視します";
-                if (cliExcelSource != null && !cliExcelSource.isDefault()) {
-                    logger.warn(message);
-                } else {
-                    // 設定ファイルの sync.excel（配布版の既定は table: 取込表）は CSV では使わないだけなので警告にしない
-                    logger.info(message);
-                }
-                excelSource = ExcelSource.DEFAULT;
-            }
-            boolean doTickets = selected.contains(SyncTarget.TICKETS);
-            if (doTickets && !isCsv && excelSource.isDefault() && !sheetNames.isEmpty()
-                    && isDirectorySheet(sheetNames.get(0), usersSource, groupsSource)) {
-                logger.info("先頭シート「" + sheetNames.get(0) + "」はユーザー・グループの表のため、チケットは同期しません");
-                doTickets = false;
-            }
-            if (doTickets && !isCsv && targets == null && (usersSource != null || groupsSource != null)
-                    && excelSource.table() != null && !hasTable(filePath, excelSource)) {
-                // ユーザー・グループだけの Excel（チケットの表なし）を、既定の table: 取込表 のままで使う場合
-                logger.info("テーブル「" + excelSource.table() + "」がないため、チケットは同期しません");
-                doTickets = false;
-            }
-            if (!doTickets && usersSource == null && groupsSource == null) {
-                logger.error("同期する表がありません（対象: " + selected + "。ユーザー・グループはシート「"
-                        + DirectorySync.DEFAULT_USERS_SHEET + "」「" + DirectorySync.DEFAULT_GROUPS_SHEET + "」）");
+            // 4. 同期するファイルを決める（--file ＞ sync.files）
+            List<String> listedFiles = listedFiles(projectConfig);
+            List<String> files = resolveFiles(givenFiles, listedFiles, logger);
+            if (files.isEmpty()) {
+                logger.error("同期するファイルがありません。--file=<CSV/Excel> を指定するか、設定ファイルの sync.files に"
+                        + "ファイルを書いてください");
                 return 1;
             }
-
-            ParsedSheet parsed = null;
-            String ticketIdColumn = DiffCalculator.getTicketIdColumn(projectConfig);
-            if (doTickets) {
-                logger.info("Parsing file: " + filePath + (isCsv ? "" : "（" + excelSource.describe() + "）"));
-                parsed = spreadsheetParser.parseFromPath(filePath, excelSource);
-                if (parsed.sheetName() != null) {
-                    logger.info("Sheet: " + parsed.sheetName() + "（メッセージの行番号はこのシートの行番号です）");
+            boolean multi = files.size() > 1;
+            if (multi) {
+                logger.info("Files: " + files.size() + "件（この順に1つずつ同期します）");
+                for (int i = 0; i < files.size(); i++) {
+                    logger.info("  " + (i + 1) + ". " + files.get(i));
                 }
-                logger.info("Parsed " + parsed.rows().size() + " rows");
-                if (excelSource.table() != null && !parsed.headers().contains(ticketIdColumn)) {
-                    // テーブルへの列の追加は行わない。Redmine に書き込む前に止める
-                    logger.error("テーブル「" + excelSource.table() + "」にチケットID列「" + ticketIdColumn
-                            + "」がありません。テーブルに列を追加してから実行してください（Redmineは更新していません）");
+            }
+
+            // 5. すべてのファイルを解析（Redmineには接続しない）
+            List<FileJob> jobs = new ArrayList<>();
+            for (String file : files) {
+                FileJob job = parseFile(file, projectConfig, cliExcelSource, targets, selected, logger);
+                if (job == null) {
+                    if (multi) {
+                        logger.error("ファイル「" + file + "」を読み込めないため中止します（Redmineは更新していません）");
+                    }
                     return 1;
                 }
-                if (!parsed.headers().contains(ticketIdColumn)) {
-                    logger.warn("チケットID列「" + ticketIdColumn + "」がファイルにありません。全行を新規作成として扱い、"
-                            + "書き戻し時に列を末尾へ追加します");
-                }
-                if (logger.isDebugEnabled()) {
-                    for (int i = 0; i < parsed.rows().size(); i++) {
-                        logger.debug("Row " + parsed.rowNumbers().get(i) + ": " + parsed.rows().get(i));
-                    }
-                }
-            }
-            ParsedSheet usersSheet = null;
-            if (usersSource != null) {
-                usersSheet = spreadsheetParser.parseFromPath(filePath, usersSource);
-                logger.info("Users: " + usersSource.describe() + " " + usersSheet.rows().size() + " rows");
-            }
-            ParsedSheet groupsSheet = null;
-            if (groupsSource != null) {
-                groupsSheet = spreadsheetParser.parseFromPath(filePath, groupsSource);
-                logger.info("Groups: " + groupsSource.describe() + " " + groupsSheet.rows().size() + " rows");
+                jobs.add(job);
             }
 
             // 6. Redmineクライアント作成（トラッカー名の解決・存在確認に使用）
@@ -252,44 +230,15 @@ public class SyncRunner {
             logger.info("Redmine URL: " + client.getBaseUrl());
             logger.info("Redmine Project: " + client.getProjectId());
 
-            // 7. 検証（エラーがあればRedmineに一切書き込まない）
+            // 7. すべてのファイルを検証（エラーがあればRedmineに一切書き込まない）
             List<String> validationErrors = new ArrayList<>();
-            Map<Long, Map<String, Object>> users = null;
-            Map<Long, Map<String, Object>> groups = null;
-            DirectorySync.Plan<DirectorySync.UserRow> userPlan = null;
-            DirectorySync.Plan<DirectorySync.GroupRow> groupPlan = null;
-            if (usersSheet != null || groupsSheet != null) {
-                logger.info("Fetching users" + (groupsSheet != null ? " and groups" : "")
-                        + " from Redmine（管理者の API キーが必要です）...");
-                users = client.listUsers();
-                logger.info("Fetched " + users.size() + " users");
-            }
-            if (usersSheet != null) {
-                userPlan = DirectorySync.parseUsers(usersSheet, users);
-                validationErrors.addAll(userPlan.errors());
-            }
-            if (groupsSheet != null) {
-                groups = client.listGroups();
-                logger.info("Fetched " + groups.size() + " groups");
-                Set<String> knownLogins = new HashSet<>(DirectorySync.loginIndex(users).keySet());
-                if (userPlan != null) {
-                    userPlan.rows().forEach(row -> knownLogins.add(row.login()));
+            for (FileJob job : jobs) {
+                if (multi) {
+                    logger.info("--- 検証: " + job.filePath + " ---");
                 }
-                groupPlan = DirectorySync.parseGroups(groupsSheet, groups, knownLogins);
-                validationErrors.addAll(groupPlan.errors());
-            }
-
-            DiffPlan plan = null;
-            if (doTickets) {
-                logger.info("Calculating diff...");
-                Map<String, String> trackerMap = syncConfig != null ? syncConfig.getTrackerMap() : Map.of();
-                TrackerResolver trackerResolver = new TrackerResolver(trackerMap, client);
-                boolean virtualParents = cliVirtualParents != null ? cliVirtualParents
-                        : DiffCalculator.isVirtualParentsEnabled(projectConfig);
-                logger.info("Virtual Parents: " + virtualParents
-                        + (cliVirtualParents != null ? "（コマンドライン指定）" : "（設定 sync.virtualParents.enabled）"));
-                plan = diffCalculator.calculate(parsed, projectConfig, trackerResolver, logger, virtualParents);
-                validationErrors.addAll(plan.errors());
+                for (String error : validateFile(job, projectConfig, client, cliVirtualParents, logger)) {
+                    validationErrors.add(multi ? "[" + job.fileName() + "] " + error : error);
+                }
             }
             if (!validationErrors.isEmpty()) {
                 logger.error("入力ファイルの検証エラー: " + validationErrors.size() + "件（Redmineは更新していません）");
@@ -299,132 +248,52 @@ public class SyncRunner {
                 return 1;
             }
 
-            // 8. ユーザー → グループの Upsert と ID の書き戻し
-            WriteBackState writeBackState = new WriteBackState();
-            List<String> resultErrors = new ArrayList<>();
-            List<String> summary = new ArrayList<>();
-            if (userPlan != null) {
-                logger.info("Syncing users...");
-                DirectorySync.Result userResult = directorySync.syncUsers(userPlan.rows(), users, client, dryRun,
-                        logger);
-                summary.add(describe("Users", userResult));
-                resultErrors.addAll(userResult.errors());
-                writeBackIds(filePath, DirectorySync.COL_ID, userResult.writeBackIds(), usersSource, dryRun,
-                        writeBackState, logger);
-            }
-            if (groupPlan != null) {
-                logger.info("Syncing groups...");
-                DirectorySync.Result groupResult = directorySync.syncGroups(groupPlan.rows(), groups, users, client,
-                        dryRun, logger);
-                summary.add(describe("Groups", groupResult));
-                resultErrors.addAll(groupResult.errors());
-                writeBackIds(filePath, DirectorySync.COL_ID, groupResult.writeBackIds(), groupsSource, dryRun,
-                        writeBackState, logger);
-            }
-
-            SyncResult result = null;
-            if (doTickets) {
-                List<DiffItem> items = plan.items();
-                // 担当（ログインID・グループ名）とステータス名をIDに変換
-                Set<String> plannedLogins = new HashSet<>();
-                if (userPlan != null) {
-                    userPlan.rows().stream().filter(row -> row.id() == null)
-                            .forEach(row -> plannedLogins.add(row.login()));
+            // 8. ファイルごとに同期（ユーザー → グループ → チケット、IDの書き戻し）
+            RunState state = new RunState();
+            for (int i = 0; i < jobs.size(); i++) {
+                FileJob job = jobs.get(i);
+                if (multi) {
+                    logger.info("=== File " + (i + 1) + "/" + jobs.size() + ": " + job.filePath + " ===");
                 }
-                items = new TicketValueResolver(client, logger, users, groups, plannedLogins)
-                        .resolve(items, syncConfig != null ? syncConfig.getStatus() : null);
-                long createCount = items.stream().filter(i -> SyncConstants.ACTION_CREATE.equals(i.action())).count();
-                long updateCount = items.stream().filter(i -> SyncConstants.ACTION_UPDATE.equals(i.action())).count();
-                logger.info("Diff items: " + items.size());
-                logger.info("  CREATE: " + createCount);
-                logger.info("  UPDATE: " + updateCount);
-
-                // 9. 同期先プロジェクトのチケットを全件取得（DBの代わりにRedmineの現在の状態を正とする）
-                logger.info("Fetching issues of project " + client.getProjectId() + " from Redmine...");
-                Map<Long, Map<String, Object>> projectIssues = client.listProjectIssues();
-                logger.info("Fetched " + projectIssues.size() + " issues (closed included, subprojects excluded)");
-
-                // 仮想親（ファイルに行がない祖先）を既存チケットに対応付ける（見つからなければ新規作成）
-                Integer deleteStatusId = syncConfig != null && syncConfig.getDeletion() != null
-                        ? syncConfig.getDeletion().getStatusId() : null;
-                if (items.stream().anyMatch(DiffItem::virtual)) {
-                    items = VirtualParentMatcher.match(items, projectIssues, deleteStatusId, logger);
-                    long virtualTotal = items.stream().filter(DiffItem::virtual).count();
-                    long virtualExisting = items.stream().filter(i -> i.virtual() && i.issueId() != null).count();
-                    logger.info("  VIRTUAL_PARENT: " + virtualTotal + "（既存 " + virtualExisting + " / 新規作成 "
-                            + (virtualTotal - virtualExisting) + "。上の CREATE 件数に含まれます）");
-                }
-
-                // Excelの行と、今回も必要な仮想親のチケットは論理削除しない
-                Set<Long> excelIssueIds = new HashSet<>();
-                for (DiffItem item : items) {
-                    if (item.issueId() != null) {
-                        excelIssueIds.add(item.issueId());
+                if (i > 0 && !dryRun) {
+                    // 前のファイルで作成したユーザー・チケット（親など）を反映するため、Redmineの現在の状態で検証し直す
+                    List<String> errors = validateFile(job, projectConfig, client, cliVirtualParents, logger);
+                    if (!errors.isEmpty()) {
+                        state.skippedFile = true;
+                        logger.error("ファイル「" + job.filePath + "」は再検証でエラーになったため同期しません:");
+                        for (String error : errors) {
+                            logger.error("  - " + error);
+                            state.errors.add("[" + job.fileName() + "] " + error);
+                        }
+                        continue;
                     }
                 }
-                List<Long> deleteCandidates = DiffCalculator.findLogicalDeleteCandidates(excelIssueIds, projectIssues,
-                        deleteStatusId);
-                logger.info("  LOGICAL_DELETE candidates: " + deleteCandidates.size()
-                        + "（Excelにないプロジェクト内のチケット。Redmineで手動作成したチケットも含みます）");
-
-                // 10. 同期実行
-                logger.info("Executing sync...");
-                result = syncExecutor.execute(items, projectIssues, deleteCandidates, projectConfig, client,
-                        dryRun, logger, forceUpdate);
-
-                // 11. 新規作成したチケットIDを入力ファイルへ書き戻す
-                if (!dryRun && !result.createdIssueIds().isEmpty()) {
-                    try {
-                        TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeBack(filePath, ticketIdColumn,
-                                result.createdIssueIds(), excelSource, !writeBackState.backupMade);
-                        writeBackState.backupMade |= writeBack.backup() != null;
-                        for (String note : writeBack.notes()) {
-                            logger.info(note);
-                        }
-                        if (writeBack.backup() != null) {
-                            logger.info("Wrote " + (result.createdIssueIds().size() - writeBack.failures().size())
-                                    + " ticket IDs back to " + filePath + " (backup: " + writeBack.backup() + ")");
-                        }
-                        if (!writeBack.failures().isEmpty()) {
-                            writeBackState.failed = true;
-                            logger.error("チケットIDを書き戻せなかった行があります。次回実行で重複作成しないよう、"
-                                    + "以下のチケット番号を手で「" + ticketIdColumn + "」列（または数式の参照先）に入力してください:");
-                            for (String failure : writeBack.failures()) {
-                                logger.error("  - " + failure);
-                            }
-                        }
-                    } catch (IOException | RuntimeException e) {
-                        writeBackState.failed = true;
-                        logger.error("チケットIDの書き戻しに失敗しました: " + e.getMessage());
-                        logger.error("次回実行で重複作成しないよう、以下のIDを手動で「" + ticketIdColumn + "」列に入力してください:");
-                        String sheetLabel = parsed.sheetName() != null ? "シート「" + parsed.sheetName() + "」" : "";
-                        for (Map.Entry<Integer, Long> entry : result.createdIssueIds().entrySet()) {
-                            logger.error("  " + sheetLabel + "行" + entry.getKey() + " -> " + entry.getValue());
-                        }
-                    }
-                }
+                syncFile(job, multi, projectConfig, syncConfig, client, dryRun, forceUpdate, state, logger);
             }
 
-            // 12. 結果出力
+            // 9. 論理削除（すべてのファイルの同期後に1回だけ）
+            if (state.ticketsSynced) {
+                logicalDelete(jobs, listedFiles, projectConfig, cliExcelSource, cliVirtualParents, client, dryRun,
+                        state, logger);
+            }
+
+            // 10. 結果出力
             logger.info("=== Sync Complete ===");
-            for (String line : summary) {
+            for (String line : state.summary) {
                 logger.info(line);
             }
-            int errorCount = resultErrors.size();
-            if (result != null) {
-                logger.info("Total: " + result.totalCount());
-                logger.info("Success: " + result.successCount());
-                logger.info("Errors: " + result.errorCount());
-                errorCount += result.errorCount();
-                resultErrors.addAll(result.errors());
+            if (state.ticketsSynced) {
+                logger.info("Total: " + state.total);
+                logger.info("Success: " + state.success);
+                logger.info("Errors: " + state.ticketErrors);
             }
-            if (!resultErrors.isEmpty()) {
+            if (!state.errors.isEmpty()) {
                 logger.warn("Error details:");
-                for (String error : resultErrors) {
+                for (String error : state.errors) {
                     logger.warn("  - " + error);
                 }
             }
-            return errorCount > 0 || writeBackState.failed ? 1 : 0;
+            return !state.errors.isEmpty() || state.writeBack.failed ? 1 : 0;
 
         } catch (IOException e) {
             if (logger != null) {
@@ -447,7 +316,471 @@ public class SyncRunner {
         }
     }
 
-    /** 1回の実行での書き戻しの状態（バックアップは最初の書き込みの前に1回だけ作る） */
+    /** 1ファイル分の解析・検証結果 */
+    private static final class FileJob {
+        private final String filePath;
+        private boolean isCsv;
+        private ExcelSource excelSource;
+        private ExcelSource usersSource;
+        private ExcelSource groupsSource;
+        private boolean doTickets;
+        private ParsedSheet parsed;
+        private ParsedSheet usersSheet;
+        private ParsedSheet groupsSheet;
+        private Map<Long, Map<String, Object>> users;
+        private Map<Long, Map<String, Object>> groups;
+        private DirectorySync.Plan<DirectorySync.UserRow> userPlan;
+        private DirectorySync.Plan<DirectorySync.GroupRow> groupPlan;
+        private DiffPlan plan;
+
+        private FileJob(String filePath) {
+            this.filePath = filePath;
+        }
+
+        private String fileName() {
+            Path name = Paths.get(filePath).getFileName();
+            return name == null ? filePath : name.toString();
+        }
+    }
+
+    /** 1回の実行全体の状態 */
+    private static final class RunState {
+        private final WriteBackState writeBack = new WriteBackState();
+        private final List<String> summary = new ArrayList<>();
+        private final List<String> errors = new ArrayList<>();
+        /** 論理削除しないチケット（同期したファイルの行・対応付けた仮想親・今回作成したチケット） */
+        private final Set<Long> keepIssueIds = new HashSet<>();
+        /** 最後に取得したプロジェクトのチケット（dry-run の論理削除候補に使用） */
+        private Map<Long, Map<String, Object>> lastIssues = Map.of();
+        private boolean ticketsSynced;
+        /** 再検証エラーで同期しなかったファイルがある（安全のため論理削除しない） */
+        private boolean skippedFile;
+        private int total;
+        private int success;
+        private int ticketErrors;
+    }
+
+    /**
+     * 同期するファイルを決めます（--file があればその順、なければ sync.files）。同じファイルは1回だけ同期します。
+     */
+    static List<String> resolveFiles(List<String> givenFiles, List<String> listedFiles, FileLogger logger) {
+        List<String> source = givenFiles.isEmpty() ? listedFiles : givenFiles;
+        Set<Path> listed = new HashSet<>();
+        listedFiles.forEach(file -> listed.add(normalize(file)));
+        Set<Path> seen = new HashSet<>();
+        List<String> files = new ArrayList<>();
+        for (String file : source) {
+            if (file == null || file.isBlank()) {
+                continue;
+            }
+            if (!seen.add(normalize(file))) {
+                if (logger != null) {
+                    logger.warn("同じファイルが複数回指定されています。1回だけ同期します: " + file);
+                }
+                continue;
+            }
+            if (!givenFiles.isEmpty() && !listed.isEmpty() && !listed.contains(normalize(file)) && logger != null) {
+                logger.warn("ファイル「" + file + "」は設定 sync.files にありません。ほかのファイルを同期したときに"
+                        + "このファイルのチケットが論理削除されないよう、sync.files に追加してください");
+            }
+            files.add(file);
+        }
+        return files;
+    }
+
+    private static List<String> listedFiles(ProjectConfig projectConfig) {
+        SyncConfig syncConfig = projectConfig.getSync();
+        return syncConfig != null && syncConfig.getFiles() != null ? syncConfig.getFiles() : List.of();
+    }
+
+    private static Path normalize(String file) {
+        return Paths.get(file).toAbsolutePath().normalize();
+    }
+
+    /**
+     * 1つのファイルの表（チケット・ユーザー・グループ）を決めて解析します（Redmineには接続しません）。
+     *
+     * @return 解析結果（同期する表がない・テーブルにチケットID列がない場合は null。理由はログに出力済み）
+     */
+    private FileJob parseFile(String filePath, ProjectConfig projectConfig, ExcelSource cliExcelSource,
+            Set<SyncTarget> targets, Set<SyncTarget> selected, FileLogger logger) throws IOException {
+        FileJob job = new FileJob(filePath);
+        // ユーザー・グループの表（Excel のみ）を決める
+        boolean isCsv = filePath.toLowerCase().endsWith(".csv");
+        job.isCsv = isCsv;
+        List<String> sheetNames = isCsv ? List.of() : spreadsheetParser.sheetNames(filePath);
+        SyncConfig syncConfig = projectConfig.getSync();
+        job.usersSource = selected.contains(SyncTarget.USERS) && !isCsv
+                ? directorySource(syncConfig != null ? syncConfig.getUsers() : null,
+                        DirectorySync.DEFAULT_USERS_SHEET, sheetNames)
+                : null;
+        job.groupsSource = selected.contains(SyncTarget.GROUPS) && !isCsv
+                ? directorySource(syncConfig != null ? syncConfig.getGroups() : null,
+                        DirectorySync.DEFAULT_GROUPS_SHEET, sheetNames)
+                : null;
+        if (isCsv && (targets != null && (selected.contains(SyncTarget.USERS)
+                || selected.contains(SyncTarget.GROUPS)))) {
+            logger.warn("CSVファイルのため、ユーザー・グループは同期しません（Excel のシートで指定してください）");
+        }
+
+        // チケットの表を解析（階層列の決定・fillDownHierarchy の補完は差分計算で行う）
+        ExcelSource excelSource = resolveExcelSource(projectConfig, cliExcelSource);
+        if (isCsv && !excelSource.isDefault()) {
+            String message = "CSVファイルのため、シート・テーブルの指定（" + excelSource.describe() + "）は無視します";
+            if (cliExcelSource != null && !cliExcelSource.isDefault()) {
+                logger.warn(message);
+            } else {
+                // 設定ファイルの sync.excel（配布版の既定は table: 取込表）は CSV では使わないだけなので警告にしない
+                logger.info(message);
+            }
+            excelSource = ExcelSource.DEFAULT;
+        }
+        job.excelSource = excelSource;
+        boolean doTickets = selected.contains(SyncTarget.TICKETS);
+        if (doTickets && !isCsv && excelSource.isDefault() && !sheetNames.isEmpty()
+                && isDirectorySheet(sheetNames.get(0), job.usersSource, job.groupsSource)) {
+            logger.info("先頭シート「" + sheetNames.get(0) + "」はユーザー・グループの表のため、チケットは同期しません");
+            doTickets = false;
+        }
+        if (doTickets && !isCsv && targets == null && (job.usersSource != null || job.groupsSource != null)
+                && excelSource.table() != null && !hasTable(filePath, excelSource)) {
+            // ユーザー・グループだけの Excel（チケットの表なし）を、既定の table: 取込表 のままで使う場合
+            logger.info("テーブル「" + excelSource.table() + "」がないため、チケットは同期しません");
+            doTickets = false;
+        }
+        if (!doTickets && job.usersSource == null && job.groupsSource == null) {
+            logger.error("同期する表がありません（対象: " + selected + "。ユーザー・グループはシート「"
+                    + DirectorySync.DEFAULT_USERS_SHEET + "」「" + DirectorySync.DEFAULT_GROUPS_SHEET + "」）");
+            return null;
+        }
+        job.doTickets = doTickets;
+
+        String ticketIdColumn = DiffCalculator.getTicketIdColumn(projectConfig);
+        if (doTickets) {
+            logger.info("Parsing file: " + filePath + (isCsv ? "" : "（" + excelSource.describe() + "）"));
+            ParsedSheet parsed = spreadsheetParser.parseFromPath(filePath, excelSource);
+            if (parsed.sheetName() != null) {
+                logger.info("Sheet: " + parsed.sheetName() + "（メッセージの行番号はこのシートの行番号です）");
+            }
+            logger.info("Parsed " + parsed.rows().size() + " rows");
+            if (excelSource.table() != null && !parsed.headers().contains(ticketIdColumn)) {
+                // テーブルへの列の追加は行わない。Redmine に書き込む前に止める
+                logger.error("テーブル「" + excelSource.table() + "」にチケットID列「" + ticketIdColumn
+                        + "」がありません。テーブルに列を追加してから実行してください（Redmineは更新していません）");
+                return null;
+            }
+            if (!parsed.headers().contains(ticketIdColumn)) {
+                logger.warn("チケットID列「" + ticketIdColumn + "」がファイルにありません。全行を新規作成として扱い、"
+                        + "書き戻し時に列を末尾へ追加します");
+            }
+            if (logger.isDebugEnabled()) {
+                for (int i = 0; i < parsed.rows().size(); i++) {
+                    logger.debug("Row " + parsed.rowNumbers().get(i) + ": " + parsed.rows().get(i));
+                }
+            }
+            job.parsed = parsed;
+        }
+        if (job.usersSource != null) {
+            job.usersSheet = spreadsheetParser.parseFromPath(filePath, job.usersSource);
+            logger.info("Users: " + job.usersSource.describe() + " " + job.usersSheet.rows().size() + " rows");
+        }
+        if (job.groupsSource != null) {
+            job.groupsSheet = spreadsheetParser.parseFromPath(filePath, job.groupsSource);
+            logger.info("Groups: " + job.groupsSource.describe() + " " + job.groupsSheet.rows().size() + " rows");
+        }
+        return job;
+    }
+
+    /**
+     * 1つのファイルを検証し、ユーザー・グループ・チケットの計画を作ります（Redmineには読み取りのみ）。
+     *
+     * @return 検証エラー（なければ空）
+     */
+    private List<String> validateFile(FileJob job, ProjectConfig projectConfig, RedmineClient client,
+            Boolean cliVirtualParents, FileLogger logger) {
+        List<String> validationErrors = new ArrayList<>();
+        job.users = null;
+        job.groups = null;
+        job.userPlan = null;
+        job.groupPlan = null;
+        job.plan = null;
+        if (job.usersSheet != null || job.groupsSheet != null) {
+            logger.info("Fetching users" + (job.groupsSheet != null ? " and groups" : "")
+                    + " from Redmine（管理者の API キーが必要です）...");
+            job.users = client.listUsers();
+            logger.info("Fetched " + job.users.size() + " users");
+        }
+        if (job.usersSheet != null) {
+            job.userPlan = DirectorySync.parseUsers(job.usersSheet, job.users);
+            validationErrors.addAll(job.userPlan.errors());
+        }
+        if (job.groupsSheet != null) {
+            job.groups = client.listGroups();
+            logger.info("Fetched " + job.groups.size() + " groups");
+            Set<String> knownLogins = new HashSet<>(DirectorySync.loginIndex(job.users).keySet());
+            if (job.userPlan != null) {
+                job.userPlan.rows().forEach(row -> knownLogins.add(row.login()));
+            }
+            job.groupPlan = DirectorySync.parseGroups(job.groupsSheet, job.groups, knownLogins);
+            validationErrors.addAll(job.groupPlan.errors());
+        }
+        if (job.doTickets) {
+            logger.info("Calculating diff...");
+            job.plan = calculatePlan(job.parsed, projectConfig, client, cliVirtualParents, logger);
+            validationErrors.addAll(job.plan.errors());
+        }
+        return validationErrors;
+    }
+
+    private DiffPlan calculatePlan(ParsedSheet parsed, ProjectConfig projectConfig, RedmineClient client,
+            Boolean cliVirtualParents, FileLogger logger) {
+        SyncConfig syncConfig = projectConfig.getSync();
+        Map<String, String> trackerMap = syncConfig != null ? syncConfig.getTrackerMap() : Map.of();
+        TrackerResolver trackerResolver = new TrackerResolver(trackerMap, client);
+        boolean virtualParents = cliVirtualParents != null ? cliVirtualParents
+                : DiffCalculator.isVirtualParentsEnabled(projectConfig);
+        logger.info("Virtual Parents: " + virtualParents
+                + (cliVirtualParents != null ? "（コマンドライン指定）" : "（設定 sync.virtualParents.enabled）"));
+        return diffCalculator.calculate(parsed, projectConfig, trackerResolver, logger, virtualParents);
+    }
+
+    private static Integer deleteStatusId(SyncConfig syncConfig) {
+        return syncConfig != null && syncConfig.getDeletion() != null ? syncConfig.getDeletion().getStatusId() : null;
+    }
+
+    /**
+     * 1つのファイルを同期します（ユーザー → グループの Upsert、チケットの作成・更新、IDの書き戻し）。
+     * 論理削除はここでは行いません（すべてのファイルの同期後に1回だけ行う）。
+     */
+    private void syncFile(FileJob job, boolean multi, ProjectConfig projectConfig, SyncConfig syncConfig,
+            RedmineClient client, boolean dryRun, boolean forceUpdate, RunState state, FileLogger logger)
+            throws IOException {
+        String filePath = job.filePath;
+        String prefix = multi ? "[" + job.fileName() + "] " : "";
+        WriteBackState writeBackState = new WriteBackState();
+        // ユーザー → グループの Upsert と ID の書き戻し
+        if (job.userPlan != null) {
+            logger.info("Syncing users...");
+            DirectorySync.Result userResult = directorySync.syncUsers(job.userPlan.rows(), job.users, client, dryRun,
+                    logger);
+            state.summary.add(prefix + describe("Users", userResult));
+            userResult.errors().forEach(error -> state.errors.add(prefix + error));
+            writeBackIds(filePath, DirectorySync.COL_ID, userResult.writeBackIds(), job.usersSource, dryRun,
+                    writeBackState, logger);
+        }
+        if (job.groupPlan != null) {
+            logger.info("Syncing groups...");
+            DirectorySync.Result groupResult = directorySync.syncGroups(job.groupPlan.rows(), job.groups, job.users,
+                    client, dryRun, logger);
+            state.summary.add(prefix + describe("Groups", groupResult));
+            groupResult.errors().forEach(error -> state.errors.add(prefix + error));
+            writeBackIds(filePath, DirectorySync.COL_ID, groupResult.writeBackIds(), job.groupsSource, dryRun,
+                    writeBackState, logger);
+        }
+
+        if (job.doTickets) {
+            List<DiffItem> items = job.plan.items();
+            // 担当（ログインID・グループ名）とステータス名をIDに変換
+            Set<String> plannedLogins = new HashSet<>();
+            if (job.userPlan != null) {
+                job.userPlan.rows().stream().filter(row -> row.id() == null)
+                        .forEach(row -> plannedLogins.add(row.login()));
+            }
+            items = new TicketValueResolver(client, logger, job.users, job.groups, plannedLogins)
+                    .resolve(items, syncConfig != null ? syncConfig.getStatus() : null);
+            long createCount = items.stream().filter(i -> SyncConstants.ACTION_CREATE.equals(i.action())).count();
+            long updateCount = items.stream().filter(i -> SyncConstants.ACTION_UPDATE.equals(i.action())).count();
+            logger.info("Diff items: " + items.size());
+            logger.info("  CREATE: " + createCount);
+            logger.info("  UPDATE: " + updateCount);
+
+            // 同期先プロジェクトのチケットを全件取得（DBの代わりにRedmineの現在の状態を正とする。
+            // 複数ファイルの場合はファイルごとに取得し直し、前のファイルで作成したチケットも見えるようにする）
+            logger.info("Fetching issues of project " + client.getProjectId() + " from Redmine...");
+            Map<Long, Map<String, Object>> projectIssues = client.listProjectIssues();
+            logger.info("Fetched " + projectIssues.size() + " issues (closed included, subprojects excluded)");
+            state.lastIssues = projectIssues;
+
+            // 仮想親（ファイルに行がない祖先）を既存チケットに対応付ける（見つからなければ新規作成）
+            Integer deleteStatusId = deleteStatusId(syncConfig);
+            if (items.stream().anyMatch(DiffItem::virtual)) {
+                items = VirtualParentMatcher.match(items, projectIssues, deleteStatusId, logger);
+                long virtualTotal = items.stream().filter(DiffItem::virtual).count();
+                long virtualExisting = items.stream().filter(i -> i.virtual() && i.issueId() != null).count();
+                logger.info("  VIRTUAL_PARENT: " + virtualTotal + "（既存 " + virtualExisting + " / 新規作成 "
+                        + (virtualTotal - virtualExisting) + "。上の CREATE 件数に含まれます）");
+            }
+
+            // Excelの行と、今回も必要な仮想親のチケットは論理削除しない
+            for (DiffItem item : items) {
+                if (item.issueId() != null) {
+                    state.keepIssueIds.add(item.issueId());
+                }
+            }
+
+            // 同期実行（論理削除は全ファイルの同期後）
+            logger.info("Executing sync...");
+            SyncResult result = syncExecutor.execute(items, projectIssues, List.of(), projectConfig, client,
+                    dryRun, logger, forceUpdate);
+            state.ticketsSynced = true;
+            state.keepIssueIds.addAll(result.createdIssueIds().values());
+            if (result.createdVirtualIssueIds() != null) {
+                state.keepIssueIds.addAll(result.createdVirtualIssueIds());
+            }
+            state.total += result.totalCount();
+            state.success += result.successCount();
+            state.ticketErrors += result.errorCount();
+            result.errors().forEach(error -> state.errors.add(prefix + error));
+            if (multi) {
+                state.summary.add(prefix + "Tickets: total=" + result.totalCount() + " success="
+                        + result.successCount() + " errors=" + result.errorCount());
+            }
+
+            // 新規作成したチケットIDを入力ファイルへ書き戻す
+            if (!dryRun && !result.createdIssueIds().isEmpty()) {
+                writeBackTicketIds(job, projectConfig, result, writeBackState, logger);
+            }
+        }
+        state.writeBack.failed |= writeBackState.failed;
+    }
+
+    private void writeBackTicketIds(FileJob job, ProjectConfig projectConfig, SyncResult result,
+            WriteBackState writeBackState, FileLogger logger) {
+        String filePath = job.filePath;
+        String ticketIdColumn = DiffCalculator.getTicketIdColumn(projectConfig);
+        try {
+            TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeBack(filePath, ticketIdColumn,
+                    result.createdIssueIds(), job.excelSource, !writeBackState.backupMade);
+            writeBackState.backupMade |= writeBack.backup() != null;
+            for (String note : writeBack.notes()) {
+                logger.info(note);
+            }
+            if (writeBack.backup() != null) {
+                logger.info("Wrote " + (result.createdIssueIds().size() - writeBack.failures().size())
+                        + " ticket IDs back to " + filePath + " (backup: " + writeBack.backup() + ")");
+            }
+            if (!writeBack.failures().isEmpty()) {
+                writeBackState.failed = true;
+                logger.error("チケットIDを書き戻せなかった行があります。次回実行で重複作成しないよう、"
+                        + "以下のチケット番号を手で「" + ticketIdColumn + "」列（または数式の参照先）に入力してください:");
+                for (String failure : writeBack.failures()) {
+                    logger.error("  - " + failure);
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            writeBackState.failed = true;
+            logger.error("チケットIDの書き戻しに失敗しました（" + filePath + "）: " + e.getMessage());
+            logger.error("次回実行で重複作成しないよう、以下のIDを手動で「" + ticketIdColumn + "」列に入力してください:");
+            String sheetLabel = job.parsed.sheetName() != null ? "シート「" + job.parsed.sheetName() + "」" : "";
+            for (Map.Entry<Integer, Long> entry : result.createdIssueIds().entrySet()) {
+                logger.error("  " + sheetLabel + "行" + entry.getKey() + " -> " + entry.getValue());
+            }
+        }
+    }
+
+    /**
+     * 論理削除を行います（すべてのファイルの同期後に1回だけ）。
+     * <p>
+     * 対象は、同期先プロジェクトのチケットのうち、次のどれにも含まれないものです。
+     * <ul>
+     *   <li>今回同期したファイルの行のチケットIDと、対応付けた仮想親</li>
+     *   <li>今回作成したチケット（仮想親を含む）</li>
+     *   <li>設定 sync.files のファイル（今回同期しなかったものも読み込み、行のチケットIDと必要な仮想親を除外）</li>
+     * </ul>
+     * sync.files のファイルを読めない・検証エラーがある場合や、同期しなかったファイルがある場合は、
+     * 安全のため論理削除を行いません。
+     * </p>
+     */
+    private void logicalDelete(List<FileJob> jobs, List<String> listedFiles, ProjectConfig projectConfig,
+            ExcelSource cliExcelSource, Boolean cliVirtualParents, RedmineClient client, boolean dryRun,
+            RunState state, FileLogger logger) {
+        if (state.skippedFile) {
+            logger.warn("同期しなかったファイルがあるため、論理削除は行いません");
+            return;
+        }
+        SyncConfig syncConfig = projectConfig.getSync();
+        Integer deleteStatusId = deleteStatusId(syncConfig);
+        // 作成したチケットも含めて判定するため、取得し直す（dry-run では何も作成していないので最後に取得した一覧）
+        Map<Long, Map<String, Object>> issues = state.lastIssues;
+        if (!dryRun) {
+            logger.info("Fetching issues of project " + client.getProjectId() + " from Redmine (logical delete)...");
+            issues = client.listProjectIssues();
+        }
+        Set<Long> keep = new HashSet<>(state.keepIssueIds);
+        Set<Path> processed = new HashSet<>();
+        jobs.forEach(job -> processed.add(normalize(job.filePath)));
+        for (String listed : listedFiles) {
+            if (processed.contains(normalize(listed))) {
+                continue;
+            }
+            logger.info("論理削除の対象外にするため、sync.files のファイルを読み込みます（同期はしません）: " + listed);
+            try {
+                Set<Long> ids = listedFileIssueIds(listed, projectConfig, cliExcelSource, cliVirtualParents, client,
+                        issues, deleteStatusId, logger);
+                if (ids == null) {
+                    logger.warn("sync.files のファイル「" + listed + "」を読み込めないため、安全のため論理削除は行いません");
+                    return;
+                }
+                logger.info("  チケット " + ids.size() + "件を論理削除の対象外にします");
+                keep.addAll(ids);
+            } catch (IOException | RuntimeException e) {
+                logger.warn("sync.files のファイル「" + listed + "」を読み込めないため、安全のため論理削除は行いません: "
+                        + e.getMessage());
+                return;
+            }
+        }
+        List<Long> candidates = DiffCalculator.findLogicalDeleteCandidates(keep, issues, deleteStatusId);
+        logger.info("LOGICAL_DELETE candidates: " + candidates.size()
+                + "（同期したファイル" + (listedFiles.isEmpty() ? "" : "・sync.files のファイル")
+                + "のどれにもないプロジェクト内のチケット。Redmineで手動作成したチケットも含みます）");
+        SyncResult deleted = syncExecutor.executeLogicalDelete(candidates, issues, projectConfig, client, dryRun,
+                logger);
+        if (deleted == null) {
+            return;
+        }
+        state.total += deleted.totalCount();
+        state.success += deleted.successCount();
+        state.ticketErrors += deleted.errorCount();
+        state.errors.addAll(deleted.errors());
+    }
+
+    /**
+     * 今回同期しない sync.files のファイルから、論理削除しないチケットID（行のチケットIDと必要な仮想親）を集めます。
+     *
+     * @return チケットID（ファイルを読めない・検証エラーがある場合は null）
+     */
+    Set<Long> listedFileIssueIds(String filePath, ProjectConfig projectConfig, ExcelSource cliExcelSource,
+            Boolean cliVirtualParents, RedmineClient client, Map<Long, Map<String, Object>> issues,
+            Integer deleteStatusId, FileLogger logger) throws IOException {
+        if (!Files.isRegularFile(Paths.get(filePath))) {
+            logger.warn("ファイルがありません: " + filePath);
+            return null;
+        }
+        FileJob job = parseFile(filePath, projectConfig, cliExcelSource, null, EnumSet.allOf(SyncTarget.class),
+                logger);
+        if (job == null) {
+            return null;
+        }
+        Set<Long> ids = new HashSet<>();
+        if (!job.doTickets) {
+            return ids;
+        }
+        DiffPlan plan = calculatePlan(job.parsed, projectConfig, client, cliVirtualParents, logger);
+        if (!plan.errors().isEmpty()) {
+            logger.warn("ファイル「" + filePath + "」に検証エラーがあります（" + plan.errors().size() + "件。例: "
+                    + plan.errors().get(0) + "）");
+            return null;
+        }
+        List<DiffItem> items = VirtualParentMatcher.match(plan.items(), issues, deleteStatusId, logger);
+        for (DiffItem item : items) {
+            if (item.issueId() != null) {
+                ids.add(item.issueId());
+            }
+        }
+        return ids;
+    }
+
+    /** 1ファイルでの書き戻しの状態（バックアップは最初の書き込みの前に1回だけ作る） */
     private static final class WriteBackState {
         private boolean backupMade;
         private boolean failed;
