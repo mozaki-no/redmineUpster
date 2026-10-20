@@ -757,10 +757,10 @@ public class SyncRunner {
                         + (virtualTotal - virtualExisting) + "。上の CREATE 件数に含まれます）");
             }
 
-            // 親チケットの自動完了が有効な場合、完了済みの親の行はステータス列が空欄なら完了のままにする
-            // （日付から決めたステータスで毎回開き直して、また自動完了する、を繰り返さないため）
+            // 親チケットの自動完了が有効な場合、親の行はステータス列が空欄なら Redmine の現在のステータスのままにする
+            // （日付から決めたステータスで毎回戻して、また自動で完了・進行中にする、を繰り返さないため）
             if (isAutoCloseEnabled(syncConfig)) {
-                items = keepClosedParents(items, projectIssues, closedStatusIds(client, state, logger), logger);
+                items = keepParentStatuses(items, projectIssues, logger);
             }
 
             // Excelの行と、今回も必要な仮想親のチケットは論理削除しない
@@ -965,13 +965,11 @@ public class SyncRunner {
     }
 
     /**
-     * Redmine で完了済みの親の行のうち、ステータス列が空欄の行は現在のステータスを送るようにします。
+     * 親の行のうち、ステータス列が空欄の行は Redmine の現在のステータスを送るようにします
+     * （親のステータスは子から決めるため）。
      */
-    static List<DiffItem> keepClosedParents(List<DiffItem> items, Map<Long, Map<String, Object>> issues,
-            Set<Long> closedStatusIds, FileLogger logger) {
-        if (closedStatusIds.isEmpty()) {
-            return items;
-        }
+    static List<DiffItem> keepParentStatuses(List<DiffItem> items, Map<Long, Map<String, Object>> issues,
+            FileLogger logger) {
         Set<Integer> parentRows = new HashSet<>();
         items.forEach(item -> {
             if (item.parentRowNumber() != null) {
@@ -983,8 +981,8 @@ public class SyncRunner {
             Long current = item.issueId() == null ? null : IssueComparator.nestedId(issues.get(item.issueId()), "status");
             if (!item.virtual() && SyncConstants.ACTION_UPDATE.equals(item.action())
                     && isBlank(item.payload().get("statusCell")) && parentRows.contains(item.rowNumber())
-                    && current != null && closedStatusIds.contains(current)) {
-                logger.debug("keep closed status of parent " + item.label() + " (status_id=" + current + ")");
+                    && current != null) {
+                logger.debug("keep status of parent " + item.label() + " (status_id=" + current + ")");
                 result.add(new DiffItem(item.rowNumber(), item.issueId(), item.subject(), item.levelPath(),
                         item.depth(), item.parentRowNumber(), item.action(), String.valueOf(current),
                         item.trackerId(), item.payload(), item.virtual()));
@@ -1066,27 +1064,54 @@ public class SyncRunner {
         Set<Long> synced = new HashSet<>();
         state.planned.forEach(planned -> synced.add(planned.issueId()));
         Set<Long> candidates = ParentAutoCloser.candidates(synced, nodes, protectedIds);
-        List<Long> plan = ParentAutoCloser.plan(nodes, closedStatusIds, candidates, protectedIds);
-        logger.info("AUTO_CLOSE candidates: " + plan.size() + "（子チケットがすべて完了した親チケット。ステータス「"
+        List<ParentAutoCloser.Change> changes = new ArrayList<>();
+        List<Long> closing = ParentAutoCloser.plan(nodes, closedStatusIds, candidates, protectedIds);
+        closing.forEach(id -> changes.add(new ParentAutoCloser.Change(id, target, true)));
+        logger.info("AUTO_CLOSE candidates: " + closing.size() + "（子チケットがすべて完了した親チケット。ステータス「"
                 + target.label() + "」(status_id=" + target.id() + ") にします）");
-        if (plan.isEmpty()) {
+        if (syncConfig.getAutoCloseParents().isInProgress()) {
+            Map<String, Long> statuses = client.listIssueStatuses();
+            Long newStatusId = ParentAutoCloser.newStatusId(statuses, closedStatusIds);
+            ParentAutoCloser.TargetStatus inProgress;
+            try {
+                inProgress = ParentAutoCloser.resolveInProgress(syncConfig.getAutoCloseParents(),
+                        syncConfig.getStatus(), statuses, closedStatusIds);
+            } catch (RuntimeException ex) {
+                logger.error("親チケットを進行中にする処理を行いません: " + ex.getMessage());
+                state.errors.add("親チケットの進行中: " + ex.getMessage());
+                inProgress = null;
+            }
+            if (inProgress == null || newStatusId == null) {
+                logger.info("進行中のステータスが見つからないため、親チケットを進行中にする処理は行いません"
+                        + "（autoCloseParents.inProgressStatus で指定できます）");
+            } else {
+                List<Long> starting = ParentAutoCloser.planInProgress(nodes, newStatusId, closing, candidates,
+                        protectedIds);
+                for (Long id : starting) {
+                    changes.add(new ParentAutoCloser.Change(id, inProgress, false));
+                }
+                logger.info("AUTO_IN_PROGRESS candidates: " + starting.size() + "（子チケットに着手済みのものがある新規の"
+                        + "親チケット。ステータス「" + inProgress.label() + "」(status_id=" + inProgress.id() + ") にします）");
+            }
+        }
+        if (changes.isEmpty()) {
             return;
         }
-        ParentAutoCloser.Result result = ParentAutoCloser.execute(plan, nodes, target, client, dryRun, logger);
-        state.total += plan.size();
-        state.success += plan.size() - result.errors().size();
+        ParentAutoCloser.Result result = ParentAutoCloser.execute(changes, nodes, client, dryRun, logger);
+        state.total += changes.size();
+        state.success += changes.size() - result.errors().size();
         state.ticketErrors += result.errors().size();
         state.errors.addAll(result.errors());
         if (!dryRun) {
-            writeBackStatuses(jobs, projectConfig, result.completed(), target, state, logger);
+            writeBackStatuses(jobs, projectConfig, result.completed(), state, logger);
         }
     }
 
     /**
      * 自動完了した親チケットの行のステータス列へ、ステータス名を書き戻します（列がないファイルは何もしない）。
      */
-    private void writeBackStatuses(List<FileJob> jobs, ProjectConfig projectConfig, List<Long> completed,
-            ParentAutoCloser.TargetStatus target, RunState state, FileLogger logger) {
+    private void writeBackStatuses(List<FileJob> jobs, ProjectConfig projectConfig,
+            List<ParentAutoCloser.Change> completed, RunState state, FileLogger logger) {
         SyncConfig syncConfig = projectConfig.getSync();
         String statusColumn = syncConfig != null && syncConfig.getColumns() != null
                 ? syncConfig.getColumns().getStatusColumn() : null;
@@ -1095,10 +1120,10 @@ public class SyncRunner {
         }
         for (FileJob job : jobs) {
             Map<Integer, String> values = new TreeMap<>();
-            for (Long id : completed) {
-                Integer row = job.rowByIssueId.get(id);
+            for (ParentAutoCloser.Change change : completed) {
+                Integer row = job.rowByIssueId.get(change.issueId());
                 if (row != null) {
-                    values.put(row, target.label());
+                    values.put(row, change.target().label());
                 }
             }
             if (values.isEmpty()) {
@@ -1110,7 +1135,7 @@ public class SyncRunner {
                         values, job.excelSource, !state.backedUp.contains(path));
                 writeBack.notes().forEach(logger::info);
                 if (writeBack.backup() == null && writeBack.failures().isEmpty()) {
-                    logger.info("「" + statusColumn + "」列がないため、自動完了したステータスは書き戻しません: "
+                    logger.info("「" + statusColumn + "」列がないため、自動で変更したステータスは書き戻しません: "
                             + job.filePath);
                     continue;
                 }

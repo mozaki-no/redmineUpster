@@ -277,6 +277,14 @@ public class SyncConfigService {
 			if (status != null && !expandEnvVars(status.toString()).isBlank()) {
 				autoClose.setStatus(expandEnvVars(status.toString()).trim());
 			}
+			Object inProgressStatus = autoCloseMap.get("inProgressStatus");
+			if (inProgressStatus != null && !expandEnvVars(inProgressStatus.toString()).isBlank()) {
+				autoClose.setInProgressStatus(expandEnvVars(inProgressStatus.toString()).trim());
+			}
+			Object inProgress = autoCloseMap.get("inProgress");
+			if (inProgress != null) {
+				autoClose.setInProgress(Boolean.parseBoolean(expandEnvVars(inProgress.toString()).trim()));
+			}
 			config.setAutoCloseParents(autoClose);
 		}
 

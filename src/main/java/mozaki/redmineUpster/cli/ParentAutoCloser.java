@@ -22,11 +22,17 @@ import mozaki.redmineUpster.service.RedmineClient;
  * 完了にできないため、この順で送ります）。子は Redmine の同期先プロジェクトのチケットすべて
  * （Excelにないチケットを含む）で判定します。完了した親を未完了に戻すことはしません。
  * </p>
+ * <p>
+ * また、新規（Redmine のステータス一覧で最初の未完了ステータス）の親のうち、子に新規でないチケット
+ * （進行中・完了など）があるものを進行中にします（これも再帰的。進行中・完了の親を新規に戻すことはしません）。
+ * </p>
  */
 public final class ParentAutoCloser {
 
     /** 自動完了の目安にするステータス名（statusMap のキー・Redmine のステータス名） */
     static final List<String> DEFAULT_STATUS_NAMES = List.of("完了", "終了");
+    /** 進行中の目安にするステータス名（statusMap のキー・Redmine のステータス名） */
+    static final List<String> DEFAULT_IN_PROGRESS_NAMES = List.of("進行中", "作業中");
 
     private ParentAutoCloser() {
     }
@@ -48,6 +54,16 @@ public final class ParentAutoCloser {
      * @param label Excel のステータス列へ書き戻す値
      */
     public record TargetStatus(long id, String label) {
+    }
+
+    /**
+     * 親チケット1件のステータス変更。
+     *
+     * @param issueId チケットID
+     * @param target 変更後のステータス
+     * @param close 完了にする場合はtrue（進行中にする場合はfalse）
+     */
+    public record Change(long issueId, TargetStatus target, boolean close) {
     }
 
     /**
@@ -110,6 +126,108 @@ public final class ParentAutoCloser {
     }
 
     /**
+     * 進行中にする親チケットを返します。
+     * <p>
+     * 新規の親で、子に新規でないチケットがあるものが対象です（完了にする親を除く。進行中にした親も
+     * 「新規でない子」として数えるので再帰的）。
+     * </p>
+     *
+     * @param nodes チケットの状態（同期後）
+     * @param newStatusId 新規のステータスID
+     * @param closing 完了にする親（{@link #plan} の結果）
+     * @param candidates 変更してよいチケット
+     * @param protectedIds 変更しないチケット
+     * @return 進行中にするチケットID（深い階層から）
+     */
+    public static List<Long> planInProgress(Map<Long, Node> nodes, long newStatusId, List<Long> closing,
+            Set<Long> candidates, Set<Long> protectedIds) {
+        Map<Long, List<Long>> children = new HashMap<>();
+        Set<Long> started = new HashSet<>(closing);
+        nodes.forEach((id, node) -> {
+            if (node.parentId() != null && nodes.containsKey(node.parentId())) {
+                children.computeIfAbsent(node.parentId(), key -> new ArrayList<>()).add(id);
+            }
+            if (node.statusId() != null && node.statusId() != newStatusId) {
+                started.add(id);
+            }
+        });
+        List<Long> result = new ArrayList<>();
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            List<Long> round = new ArrayList<>();
+            for (Map.Entry<Long, List<Long>> entry : children.entrySet()) {
+                Long parent = entry.getKey();
+                if (started.contains(parent) || !candidates.contains(parent) || protectedIds.contains(parent)) {
+                    continue;
+                }
+                if (entry.getValue().stream().anyMatch(started::contains)) {
+                    round.add(parent);
+                }
+            }
+            round.sort(null);
+            if (!round.isEmpty()) {
+                started.addAll(round);
+                result.addAll(round);
+                changed = true;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 新規のステータスID（Redmine のステータス一覧で最初の未完了ステータス）を返します。
+     *
+     * @return ステータスID（見つからない場合は null）
+     */
+    public static Long newStatusId(Map<String, Long> statuses, Set<Long> closedStatusIds) {
+        return statuses.values().stream().filter(id -> !closedStatusIds.contains(id)).findFirst().orElse(null);
+    }
+
+    /**
+     * 進行中にするステータスを決めます。
+     * <p>
+     * 設定 autoCloseParents.inProgressStatus（名前またはID）→ statusMap の「進行中」「作業中」→
+     * Redmine の「進行中」「作業中」の順です。
+     * </p>
+     *
+     * @return ステータス（見つからない・新規と同じ場合は null）
+     * @throws IllegalArgumentException 設定したステータスが見つからない・終了ステータスの場合
+     */
+    public static TargetStatus resolveInProgress(AutoCloseParentsConfig config, StatusConfig statusConfig,
+            Map<String, Long> statuses, Set<Long> closedStatusIds) {
+        Map<String, String> statusMap = statusConfig != null && statusConfig.getStatusMap() != null
+                ? statusConfig.getStatusMap() : Map.of();
+        String configured = config != null ? config.getInProgressStatus() : null;
+        Long id = null;
+        if (configured != null && !configured.isBlank()) {
+            id = statusId(configured.trim(), statusMap, statuses);
+            if (id == null) {
+                throw new IllegalArgumentException("autoCloseParents.inProgressStatus「" + configured
+                        + "」が Redmine のステータスにありません");
+            }
+            if (closedStatusIds.contains(id)) {
+                throw new IllegalArgumentException("autoCloseParents.inProgressStatus「" + configured
+                        + "」は終了したチケット扱いのステータスです");
+            }
+        } else {
+            for (String name : DEFAULT_IN_PROGRESS_NAMES) {
+                Long found = statusId(name, statusMap, statuses);
+                if (found != null && !closedStatusIds.contains(found)) {
+                    id = found;
+                    break;
+                }
+            }
+        }
+        if (id == null || id.equals(newStatusId(statuses, closedStatusIds))) {
+            return null;
+        }
+        String label = configured != null && !configured.isBlank() && !isNumeric(configured.trim())
+                ? configured.trim() : label(id, statusMap, statuses, DEFAULT_IN_PROGRESS_NAMES);
+        return new TargetStatus(id, label);
+    }
+
+    /**
      * 今回同期したチケットとその祖先を返します（自動完了の対象。ルートチケットより上には進まない）。
      */
     public static Set<Long> candidates(Set<Long> syncedIds, Map<Long, Node> nodes, Set<Long> protectedIds) {
@@ -168,7 +286,7 @@ public final class ParentAutoCloser {
                     + "）は Redmine で終了したチケット扱いのステータスではありません");
         }
         if (label == null) {
-            label = label(id, statusMap, statuses);
+            label = label(id, statusMap, statuses, DEFAULT_STATUS_NAMES);
         }
         return new TargetStatus(id, label);
     }
@@ -191,8 +309,9 @@ public final class ParentAutoCloser {
     }
 
     /** Excel へ書き戻す名前（statusMap でそのIDになる名前 → Redmine のステータス名） */
-    private static String label(long id, Map<String, String> statusMap, Map<String, Long> statuses) {
-        for (String name : DEFAULT_STATUS_NAMES) {
+    private static String label(long id, Map<String, String> statusMap, Map<String, Long> statuses,
+            List<String> preferred) {
+        for (String name : preferred) {
             String mapped = statusMap.get(name);
             if (mapped != null && mapped.trim().equals(String.valueOf(id))) {
                 return name;
@@ -212,23 +331,25 @@ public final class ParentAutoCloser {
     }
 
     /**
-     * 親チケットを完了にします（dry-run ではログだけ）。
+     * 親チケットのステータスを変更します（dry-run ではログだけ）。
      * <p>
-     * 子の完了に失敗した場合、その親は完了にしません（Redmine が受け付けないため）。
+     * 子の変更に失敗した場合、その親は変更しません（未完了の子がある親は Redmine が完了にできないため）。
      * </p>
      *
-     * @param plan 完了にするチケットID（{@link #plan} の順）
-     * @return 結果（completed は実際に完了にしたチケットID）
+     * @param changes 変更（完了 → 進行中の順。それぞれ深い階層から）
+     * @return 結果（completed は実際に変更したもの）
      */
-    public static Result execute(List<Long> plan, Map<Long, Node> nodes, TargetStatus target, RedmineClient client,
+    public static Result execute(List<Change> changes, Map<Long, Node> nodes, RedmineClient client,
             boolean dryRun, FileLogger logger) {
         List<String> errors = new ArrayList<>();
-        List<Long> completed = new ArrayList<>();
+        List<Change> completed = new ArrayList<>();
         Set<Long> failed = new HashSet<>();
-        for (Long id : plan) {
+        for (Change change : changes) {
+            Long id = change.issueId();
             Node node = nodes.get(id);
             String label = "#" + id + (node != null && node.subject() != null ? " 「" + node.subject() + "」" : "");
-            boolean childFailed = nodes.entrySet().stream()
+            String reason = change.close() ? "子チケットがすべて完了" : "子チケットに着手済みのものがある";
+            boolean childFailed = change.close() && nodes.entrySet().stream()
                     .anyMatch(entry -> id.equals(entry.getValue().parentId()) && failed.contains(entry.getKey()));
             if (childFailed) {
                 failed.add(id);
@@ -237,20 +358,23 @@ public final class ParentAutoCloser {
                 logger.error(message);
                 continue;
             }
+            String action = change.close() ? "AUTO_CLOSE" : "AUTO_IN_PROGRESS";
             if (dryRun) {
-                logger.info("DRY_RUN AUTO_CLOSE " + label + " status_id=" + target.id() + "（子チケットがすべて完了）");
-                completed.add(id);
+                logger.info("DRY_RUN " + action + " " + label + " status_id=" + change.target().id() + "（" + reason
+                        + "）");
+                completed.add(change);
                 continue;
             }
             try {
                 Map<String, Object> payload = new HashMap<>();
-                payload.put("status_id", target.id());
+                payload.put("status_id", change.target().id());
                 client.updateIssue(id, payload);
-                logger.info("auto-closed parent " + label + " (status_id=" + target.id() + "。子チケットがすべて完了)");
-                completed.add(id);
+                logger.info((change.close() ? "auto-closed" : "auto-started") + " parent " + label + " (status_id="
+                        + change.target().id() + "。" + reason + ")");
+                completed.add(change);
             } catch (RuntimeException ex) {
                 failed.add(id);
-                String message = "親チケットの自動完了に失敗: " + label + " 理由=" + ex.getMessage();
+                String message = "親チケットのステータス変更に失敗: " + label + " 理由=" + ex.getMessage();
                 errors.add(message);
                 logger.error(message);
             }
@@ -261,9 +385,9 @@ public final class ParentAutoCloser {
     /**
      * 自動完了の結果。
      *
-     * @param completed 完了にした（dry-run では完了にする予定の）チケットID
+     * @param completed 変更した（dry-run では変更する予定の）親チケット
      * @param errors エラー
      */
-    public record Result(List<Long> completed, List<String> errors) {
+    public record Result(List<Change> completed, List<String> errors) {
     }
 }

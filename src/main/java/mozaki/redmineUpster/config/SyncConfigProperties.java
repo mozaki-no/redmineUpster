@@ -206,6 +206,17 @@ public class SyncConfigProperties {
 		 * 「完了」「終了」→ 最初の終了ステータスの順に決めます。
 		 */
 		private String status;
+
+		/**
+		 * 子に着手済み（新規でない）のチケットがある新規の親を進行中にするときのステータス（名前またはID）。
+		 * 未設定の場合は statusMap の「進行中」「作業中」→ Redmine の「進行中」「作業中」。
+		 */
+		private String inProgressStatus;
+
+		/**
+		 * 子に着手済みのチケットがある新規の親を進行中にするかどうか（既定: true）。
+		 */
+		private boolean inProgress = true;
 	}
 
 	/**

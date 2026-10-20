@@ -126,7 +126,9 @@ redmineUpster.exe --sync --config=sync-config.yml --file=WBS.xlsx
 - 「完了」は Redmine で「終了したチケット」扱いのステータス（削除扱いのステータスを含む）。Excel にない子チケットも数えます。
 - 完了にするステータスは `status:`（省略時は `statusMap` の「完了」→ Redmine の「完了」「終了」）。完了にした親を未完了に戻すことはしません。
 - ルートチケット（`rootIssueId` / `--root-issue`）とその上は完了にしません。
-- 完了にした親の行に「ステータス」列があれば、ステータス名を書き戻します。dry-run では `DRY_RUN AUTO_CLOSE #12 「設計」` のように表示するだけです。
+- 子に着手済み（新規でない）のチケットがある「新規」の親は「進行中」にします（これも上へ順に。`inProgressStatus:` で変更、`inProgress: false` で無効）。進行中・完了の親を新規に戻すことはしません。
+- 親の行の「ステータス」列が空欄なら、親のステータスは日付から決めず Redmine の現在値のままにします。
+- 完了にした親の行に「ステータス」列があれば、ステータス名を書き戻します。dry-run では `DRY_RUN AUTO_CLOSE #12 「設計」` / `DRY_RUN AUTO_IN_PROGRESS #12 「設計」` のように表示するだけです。
 
 ## Excel 出力とユーザー・グループ
 

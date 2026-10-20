@@ -43,6 +43,7 @@ import mozaki.redmineUpster.service.TicketIdWriter;
 class AutoCloseParentsTests {
 
 	private static final long OPEN = 1L;
+	private static final long IN_PROGRESS = 2L;
 	private static final long DONE = 5L;
 	private static final long DELETE_STATUS = 99L;
 	private static final long ROOT = 50L;
@@ -65,8 +66,12 @@ class AutoCloseParentsTests {
 		client = Mockito.mock(RedmineClient.class);
 		when(client.getProjectId()).thenReturn("p");
 		when(client.getBaseUrl()).thenReturn("http://redmine.local");
-		when(client.listIssueStatuses()).thenReturn(new LinkedHashMap<>(Map.of("新規", OPEN, "終了", DONE,
-				"却下", DELETE_STATUS)));
+		Map<String, Long> statuses = new LinkedHashMap<>();
+		statuses.put("新規", OPEN);
+		statuses.put("進行中", IN_PROGRESS);
+		statuses.put("終了", DONE);
+		statuses.put("却下", DELETE_STATUS);
+		when(client.listIssueStatuses()).thenReturn(statuses);
 		when(client.listClosedIssueStatusIds()).thenReturn(Set.of(DONE, DELETE_STATUS));
 		when(client.listProjectIssues()).thenAnswer(invocation -> {
 			Map<Long, Map<String, Object>> copy = new LinkedHashMap<>();
@@ -191,7 +196,7 @@ class AutoCloseParentsTests {
 	}
 
 	@Test
-	@DisplayName("Excelにない子チケット（Redmineだけのチケット）が未完了なら、親は完了にしない")
+	@DisplayName("Excelにない子チケット（Redmineだけのチケット）が未完了なら、親は完了にしない（進行中にする）")
 	void redmineOnlyOpenChild_keepsParentOpen() throws IOException {
 		redmine.put(1L, issue(1, "A", null, OPEN));
 		redmine.put(2L, issue(2, "B", 1L, OPEN));
@@ -205,8 +210,51 @@ class AutoCloseParentsTests {
 		int exit = run(config, false, null);
 
 		assertThat(exit).isEqualTo(0);
-		assertThat(status(2)).isEqualTo(OPEN);
+		assertThat(status(2)).isEqualTo(IN_PROGRESS);
+		assertThat(status(1)).isEqualTo(IN_PROGRESS);
+	}
+
+	@Test
+	@DisplayName("子に進行中のチケットがあれば、新規の親を再帰的に進行中にし、ステータス列に書き戻す")
+	void inProgressChild_startsParentsRecursively() throws IOException {
+		redmine.put(1L, issue(1, "A", null, OPEN));
+		redmine.put(2L, issue(2, "B", 1L, OPEN));
+		redmine.put(3L, issue(3, "t1", 2L, OPEN));
+		redmine.put(4L, issue(4, "t2", 2L, OPEN));
+		redmine.put(5L, issue(5, "C", 1L, DONE));
+		csv(HEADER, "1,タスク,A,,,", "2,タスク,A,B,,", "3,タスク,A,B,t1,進行中", "4,タスク,A,B,t2,", "5,タスク,A,C,,完了");
+
+		int exit = run(config(true), false, null);
+
+		assertThat(exit).isEqualTo(0);
+		assertThat(status(2)).isEqualTo(IN_PROGRESS);
+		assertThat(status(1)).isEqualTo(IN_PROGRESS);
+		assertThat(status(4)).isEqualTo(OPEN);
+		assertThat(Files.readString(tempDir.resolve("a.csv"))).contains("1,タスク,A,,,進行中")
+				.contains("2,タスク,A,B,,進行中");
+
+		statusChanges.clear();
+		assertThat(run(config(true), false, null)).isEqualTo(0);
+		assertThat(statusChanges).isEmpty();
+	}
+
+	@Test
+	@DisplayName("inProgress: false なら親を進行中にしない。完了・進行中の親を新規に戻さない")
+	void inProgressDisabled_andNoDowngrade() throws IOException {
+		redmine.put(1L, issue(1, "A", null, OPEN));
+		redmine.put(2L, issue(2, "t1", 1L, IN_PROGRESS));
+		redmine.put(3L, issue(3, "B", null, IN_PROGRESS));
+		redmine.put(4L, issue(4, "t2", 3L, OPEN));
+		csv(HEADER, "1,タスク,A,,,", "2,タスク,A,,t1,進行中", "3,タスク,B,,,", "4,タスク,B,,t2,");
+		Path config = config(false, "      autoCloseParents: { enabled: true, inProgress: false }");
+
+		assertThat(run(config, false, null)).isEqualTo(0);
 		assertThat(status(1)).isEqualTo(OPEN);
+
+		Path enabled = config(true);
+		assertThat(run(enabled, false, null)).isEqualTo(0);
+		assertThat(status(1)).isEqualTo(IN_PROGRESS);
+		assertThat(status(3)).isEqualTo(IN_PROGRESS);
 	}
 
 	@Test
@@ -295,7 +343,11 @@ class AutoCloseParentsTests {
 	void resolveTarget() {
 		StatusConfig statusConfig = new StatusConfig();
 		statusConfig.setStatusMap(Map.of("完了", "5"));
-		Map<String, Long> statuses = new LinkedHashMap<>(Map.of("新規", 1L, "終了", 5L, "却下", 99L));
+		Map<String, Long> statuses = new LinkedHashMap<>();
+		statuses.put("新規", 1L);
+		statuses.put("進行中", 2L);
+		statuses.put("終了", 5L);
+		statuses.put("却下", 99L);
 		Set<Long> closed = Set.of(5L, 99L);
 
 		assertThat(ParentAutoCloser.resolveTarget(new AutoCloseParentsConfig(), statusConfig, statuses, closed))
@@ -310,17 +362,29 @@ class AutoCloseParentsTests {
 		open.setStatus("新規");
 		assertThatThrownBy(() -> ParentAutoCloser.resolveTarget(open, statusConfig, statuses, closed))
 				.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("終了したチケット扱い");
+
+		assertThat(ParentAutoCloser.newStatusId(statuses, closed)).isEqualTo(1L);
+		assertThat(ParentAutoCloser.resolveInProgress(new AutoCloseParentsConfig(), statusConfig, statuses, closed))
+				.isEqualTo(new ParentAutoCloser.TargetStatus(2L, "進行中"));
+		AutoCloseParentsConfig closedInProgress = new AutoCloseParentsConfig();
+		closedInProgress.setInProgressStatus("終了");
+		assertThatThrownBy(() -> ParentAutoCloser.resolveInProgress(closedInProgress, statusConfig, statuses, closed))
+				.isInstanceOf(IllegalArgumentException.class);
 	}
 
 	@Test
 	@DisplayName("設定 autoCloseParents を読み込む")
 	void config_parsed() throws IOException {
-		Path config = config(false, "      autoCloseParents: { enabled: true, status: 完了 }");
+		Path config = config(false,
+				"      autoCloseParents: { enabled: true, status: 完了, inProgressStatus: 進行中, inProgress: false }");
 		SyncConfigService service = new SyncConfigService(new SyncConfigProperties());
 		service.loadConfig(config.toString());
 
 		AutoCloseParentsConfig autoClose = service.getProjectByName("t").orElseThrow().getSync().getAutoCloseParents();
 		assertThat(autoClose.isEnabled()).isTrue();
 		assertThat(autoClose.getStatus()).isEqualTo("完了");
+		assertThat(autoClose.getInProgressStatus()).isEqualTo("進行中");
+		assertThat(autoClose.isInProgress()).isFalse();
+		assertThat(new AutoCloseParentsConfig().isInProgress()).isTrue();
 	}
 }
