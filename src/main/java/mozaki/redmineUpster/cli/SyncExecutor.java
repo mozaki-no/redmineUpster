@@ -18,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientResponseException;
@@ -44,6 +45,9 @@ import mozaki.redmineUpster.util.DateParser;
  */
 @Component
 public class SyncExecutor {
+
+    /** dry-run で作成予定のチケットに付ける仮ID（負の値。実行をまたいでも重複しない） */
+    private final AtomicLong nextPlaceholderId = new AtomicLong(-1);
 
     /**
      * 同期を実行します。
@@ -133,6 +137,9 @@ public class SyncExecutor {
         }
         Set<Integer> failedRows = new HashSet<>();
         Set<Integer> plannedCreates = new HashSet<>();
+        // dry-run で作成予定の行の仮ID（行番号 → 仮ID）と、同期後の状態（親チケットの自動完了に使用）
+        Map<Integer, Long> placeholderIds = new HashMap<>();
+        List<SyncResult.PlannedIssue> planned = new ArrayList<>();
 
         for (DiffItem item : ordered) {
             try {
@@ -167,6 +174,10 @@ public class SyncExecutor {
                 if (ACTION_CREATE.equalsIgnoreCase(item.action())) {
                     if (dryRun) {
                         plannedCreates.add(item.rowNumber());
+                        long placeholder = nextPlaceholderId.getAndDecrement();
+                        placeholderIds.put(item.rowNumber(), placeholder);
+                        planned.add(planned(item, placeholder, issuePayload, rowIssueIds, placeholderIds,
+                                rootIssueId));
                         logger.info("DRY_RUN CREATE " + item.label() + " subject=" + item.subject()
                                 + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths, rootIssueId));
                         successCount++;
@@ -185,6 +196,7 @@ public class SyncExecutor {
                         continue;
                     }
                     rowIssueIds.put(item.rowNumber(), issueId);
+                    planned.add(planned(item, issueId, issuePayload, rowIssueIds, placeholderIds, rootIssueId));
                     if (item.virtual()) {
                         createdVirtualIssueIds.add(issueId);
                     } else {
@@ -207,6 +219,7 @@ public class SyncExecutor {
                     // dry-runで親が新規作成予定の場合（親IDは本実行で確定する）
                     changed.add("parent_issue_id");
                 }
+                planned.add(planned(item, issueId, issuePayload, rowIssueIds, placeholderIds, rootIssueId));
                 if (!forceUpdate && changed.isEmpty()) {
                     logger.info("skipped update for " + item.label() + " (no changes)");
                     successCount++;
@@ -227,6 +240,7 @@ public class SyncExecutor {
                 successCount++;
             } catch (RuntimeException ex) {
                 failedRows.add(item.rowNumber());
+                planned.removeIf(p -> p.rowNumber() == item.rowNumber());
                 addError(errors, logger, formatError(item.label(), ex));
             }
         }
@@ -239,7 +253,26 @@ public class SyncExecutor {
         errors.addAll(deleted.errors());
 
         return new SyncResult(totalCount, successCount, errors.size(), errors, createdIssueIds,
-                createdVirtualIssueIds);
+                createdVirtualIssueIds, planned);
+    }
+
+    /**
+     * 同期後の状態（親・送信したステータス）を返します。
+     */
+    private static SyncResult.PlannedIssue planned(DiffItem item, long issueId, Map<String, Object> issuePayload,
+            Map<Integer, Long> rowIssueIds, Map<Integer, Long> placeholderIds, Long rootIssueId) {
+        Long parentId;
+        if (item.parentRowNumber() != null) {
+            parentId = rowIssueIds.get(item.parentRowNumber());
+            if (parentId == null) {
+                parentId = placeholderIds.get(item.parentRowNumber());
+            }
+        } else {
+            parentId = rootIssueId;
+        }
+        Long statusId = issuePayload.get("status_id") instanceof Number number ? number.longValue() : null;
+        return new SyncResult.PlannedIssue(issueId, item.rowNumber(), item.virtual(), parentId, statusId,
+                item.subject());
     }
 
     /**

@@ -4,6 +4,8 @@ import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -303,6 +305,31 @@ public class RedmineClient {
 		}
 		debugLog("Issue statuses: " + statuses);
 		return statuses;
+	}
+
+	/**
+	 * 終了したチケット扱い（is_closed=true）のステータスIDを取得します（GET /issue_statuses.json）。
+	 *
+	 * @return ステータスID（ID順）
+	 */
+	@SuppressWarnings("rawtypes")
+	public Set<Long> listClosedIssueStatusIds() {
+		String url = baseUrl + "/issue_statuses.json";
+		debugLog("Request URL: GET " + url);
+		ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, buildEntity(null), Map.class);
+		Set<Long> closed = new TreeSet<>();
+		Map body = response.getBody();
+		if (body == null || !(body.get("issue_statuses") instanceof List<?> list)) {
+			return closed;
+		}
+		for (Object element : list) {
+			if (element instanceof Map status && status.get("id") instanceof Number id
+					&& Boolean.TRUE.equals(status.get("is_closed"))) {
+				closed.add(id.longValue());
+			}
+		}
+		debugLog("Closed issue statuses: " + closed);
+		return closed;
 	}
 
 	/**

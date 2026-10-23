@@ -20,6 +20,7 @@ import jakarta.annotation.PostConstruct;
 import mozaki.redmineUpster.config.SyncConfigProperties;
 import mozaki.redmineUpster.config.SyncConfigProperties.ExcelConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.AutoCloseParentsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.DeletionConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
@@ -263,6 +264,28 @@ public class SyncConfigService {
 				virtualParents.setTracker(expandEnvVars(tracker.toString()).trim());
 			}
 			config.setVirtualParents(virtualParents);
+		}
+
+		Map<String, Object> autoCloseMap = (Map<String, Object>) map.get("autoCloseParents");
+		if (autoCloseMap != null) {
+			AutoCloseParentsConfig autoClose = new AutoCloseParentsConfig();
+			Object enabled = autoCloseMap.get("enabled");
+			if (enabled != null) {
+				autoClose.setEnabled(Boolean.parseBoolean(expandEnvVars(enabled.toString()).trim()));
+			}
+			Object status = autoCloseMap.get("status");
+			if (status != null && !expandEnvVars(status.toString()).isBlank()) {
+				autoClose.setStatus(expandEnvVars(status.toString()).trim());
+			}
+			Object inProgressStatus = autoCloseMap.get("inProgressStatus");
+			if (inProgressStatus != null && !expandEnvVars(inProgressStatus.toString()).isBlank()) {
+				autoClose.setInProgressStatus(expandEnvVars(inProgressStatus.toString()).trim());
+			}
+			Object inProgress = autoCloseMap.get("inProgress");
+			if (inProgress != null) {
+				autoClose.setInProgress(Boolean.parseBoolean(expandEnvVars(inProgress.toString()).trim()));
+			}
+			config.setAutoCloseParents(autoClose);
 		}
 
 		List<FileEntry> fileEntries = parseFileEntries(map.get("files"));

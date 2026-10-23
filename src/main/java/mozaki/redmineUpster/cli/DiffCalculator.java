@@ -718,6 +718,8 @@ public class DiffCalculator {
         payload.put("dueDate", rowData.duePlan);
         payload.put("startActual", rowData.startActual);
         payload.put("dueActual", rowData.dueActual);
+        // ステータス列の値（空欄なら日付などから決めたステータス。親チケットの自動完了で使用）
+        payload.put("statusCell", rowData.statusValue);
         if (rowData.progress != null) {
             payload.put("progress", rowData.progress);
         }

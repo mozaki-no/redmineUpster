@@ -39,6 +39,16 @@ projects:
       # virtualParents:
       #   enabled: true
       #   trackerId: "サマリ"   # 仮想親のトラッカー（名前または番号。省略時は「サマリ」）
+      # 子チケットがすべて完了した親チケットを、同期の最後に自動で完了にする（孫→子→親と再帰的に）。
+      # 親の行の「ステータス」列が空欄なら、親のステータスは Redmine の現在値のまま（日付からは決めない）。
+      # 行頭の # を外すと有効（既定は無効）。子は Redmine 上のチケットすべて（Excel にないものも含む）で判定し、
+      # 完了した親を未完了に戻すことはしない。ルートチケット（rootIssueId）は完了にしない。
+      # 完了にした親の行に「ステータス」列があれば、そのステータス名を書き戻す
+      # autoCloseParents:
+      #   enabled: true
+      #   status: "完了"   # 完了にするステータス（名前または番号。省略時は statusMap の「完了」→ Redmine の「完了」「終了」）
+      #   # 子に着手済み（新規でない）のチケットがある新規の親は「進行中」にする（inProgress: false で無効）
+      #   inProgressStatus: "進行中"   # 省略時は statusMap の「進行中」→ Redmine の「進行中」
       status:
         enabled: true
         mode: "BY_DATES"   # 着手実績・完了実績の有無からステータスを決める
