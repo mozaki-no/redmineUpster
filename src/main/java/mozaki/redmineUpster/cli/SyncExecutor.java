@@ -102,6 +102,7 @@ public class SyncExecutor {
         List<String> errors = new ArrayList<>();
         Map<Integer, Long> createdIssueIds = new LinkedHashMap<>();
         Set<Long> createdVirtualIssueIds = new LinkedHashSet<>();
+        Map<Integer, RowOutcome> outcomes = new LinkedHashMap<>();
 
         Map<Long, Map<String, Object>> currentIssues = projectIssues == null ? Map.of() : projectIssues;
         Map<String, String> customFieldMap = getCustomFieldMap(projectConfig);
@@ -140,15 +141,17 @@ public class SyncExecutor {
                 if (item.parentRowNumber() != null) {
                     if (failedRows.contains(item.parentRowNumber())) {
                         failedRows.add(item.rowNumber());
-                        addError(errors, logger, "同期失敗: " + item.label() + " 理由=親" + parentName(item, virtualPaths)
-                                + "の同期に失敗したためスキップしました");
+                        String reason = "親" + parentName(item, virtualPaths) + "の同期に失敗したためスキップしました";
+                        addError(errors, logger, "同期失敗: " + item.label() + " 理由=" + reason);
+                        outcome(outcomes, item, RowOutcome.Status.NOT_RUN, reason);
                         continue;
                     }
                     parentIssueId = rowIssueIds.get(item.parentRowNumber());
                     if (parentIssueId == null && !(dryRun && plannedCreates.contains(item.parentRowNumber()))) {
                         failedRows.add(item.rowNumber());
-                        addError(errors, logger, "同期失敗: " + item.label() + " 理由=親" + parentName(item, virtualPaths)
-                                + "のチケットIDが確定していません");
+                        String reason = "親" + parentName(item, virtualPaths) + "のチケットIDが確定していません";
+                        addError(errors, logger, "同期失敗: " + item.label() + " 理由=" + reason);
+                        outcome(outcomes, item, RowOutcome.Status.NOT_RUN, reason);
                         continue;
                     }
                 } else if (rootIssueId != null) {
@@ -169,6 +172,7 @@ public class SyncExecutor {
                         plannedCreates.add(item.rowNumber());
                         logger.info("DRY_RUN CREATE " + item.label() + " subject=" + item.subject()
                                 + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths, rootIssueId));
+                        outcome(outcomes, item, RowOutcome.Status.CREATED, null);
                         successCount++;
                         continue;
                     }
@@ -182,6 +186,7 @@ public class SyncExecutor {
                     if (issueId == null) {
                         failedRows.add(item.rowNumber());
                         addError(errors, logger, "作成失敗: " + item.label() + " (レスポンスにissue idがありません)");
+                        outcome(outcomes, item, RowOutcome.Status.ERROR, "作成失敗（レスポンスにissue idがありません）");
                         continue;
                     }
                     rowIssueIds.put(item.rowNumber(), issueId);
@@ -191,6 +196,7 @@ public class SyncExecutor {
                         createdIssueIds.put(item.rowNumber(), issueId);
                     }
                     logger.info("created issue " + issueId + " for " + item.label());
+                    outcome(outcomes, item, RowOutcome.Status.CREATED, null);
                     successCount++;
                     continue;
                 }
@@ -199,7 +205,9 @@ public class SyncExecutor {
                 Map<String, Object> current = currentIssues.get(issueId);
                 if (current == null) {
                     failedRows.add(item.rowNumber());
-                    addError(errors, logger, "更新失敗: " + item.label() + " 理由=" + describeMissing(client, issueId));
+                    String reason = describeMissing(client, issueId);
+                    addError(errors, logger, "更新失敗: " + item.label() + " 理由=" + reason);
+                    outcome(outcomes, item, RowOutcome.Status.ERROR, reason);
                     continue;
                 }
                 List<String> changed = new ArrayList<>(IssueComparator.changedFields(issuePayload, current));
@@ -209,6 +217,7 @@ public class SyncExecutor {
                 }
                 if (!forceUpdate && changed.isEmpty()) {
                     logger.info("skipped update for " + item.label() + " (no changes)");
+                    outcome(outcomes, item, RowOutcome.Status.UNCHANGED, null);
                     successCount++;
                     continue;
                 }
@@ -217,6 +226,7 @@ public class SyncExecutor {
                     logger.info("DRY_RUN UPDATE " + item.label() + " subject=" + item.subject()
                             + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths, rootIssueId)
                             + " changes=" + changes);
+                    outcome(outcomes, item, RowOutcome.Status.UPDATED, null);
                     successCount++;
                     continue;
                 }
@@ -224,10 +234,12 @@ public class SyncExecutor {
                 logger.debug("Request body: " + formatPayloadForLog(issuePayload));
                 client.updateIssue(issueId, issuePayload);
                 logger.info("updated issue " + issueId + " for " + item.label() + " changes=" + changes);
+                outcome(outcomes, item, RowOutcome.Status.UPDATED, null);
                 successCount++;
             } catch (RuntimeException ex) {
                 failedRows.add(item.rowNumber());
                 addError(errors, logger, formatError(item.label(), ex));
+                outcome(outcomes, item, RowOutcome.Status.ERROR, errorReason(ex));
             }
         }
 
@@ -239,7 +251,17 @@ public class SyncExecutor {
         errors.addAll(deleted.errors());
 
         return new SyncResult(totalCount, successCount, errors.size(), errors, createdIssueIds,
-                createdVirtualIssueIds);
+                createdVirtualIssueIds, outcomes);
+    }
+
+    /**
+     * ファイルの行の結果を記録します（仮想親はファイルに行がないため記録しない）。
+     */
+    private static void outcome(Map<Integer, RowOutcome> outcomes, DiffItem item, RowOutcome.Status status,
+            String message) {
+        if (!item.virtual()) {
+            outcomes.put(item.rowNumber(), new RowOutcome(status, message));
+        }
     }
 
     /**
@@ -594,13 +616,19 @@ public class SyncExecutor {
     }
 
     private String formatError(String label, RuntimeException ex) {
+        return "同期失敗: " + label + " 理由=" + errorReason(ex);
+    }
+
+    /**
+     * 例外の理由（ログの「理由=」以降と同じ文字列）。
+     */
+    static String errorReason(RuntimeException ex) {
         if (ex instanceof RestClientResponseException responseEx) {
             String body = responseEx.getResponseBodyAsString();
             String reason = responseEx.getStatusText();
-            return "同期失敗: " + label + " 理由=" + responseEx.getStatusCode().value() + " "
-                    + (reason == null ? "" : reason) + " " + body;
+            return responseEx.getStatusCode().value() + " " + (reason == null ? "" : reason) + " " + body;
         }
         String message = ex.getMessage();
-        return "同期失敗: " + label + " 理由=" + (message == null ? ex.getClass().getSimpleName() : message);
+        return message == null ? ex.getClass().getSimpleName() : message;
     }
 }

@@ -44,6 +44,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --sheet} / {@code --table}: Excel の読み込み元（シート名・番号／テーブル名。設定 sync.excel より優先）</li>
  *   <li>{@code --virtual-parents} / {@code --no-virtual-parents}: 親行がない行の祖先を仮想親チケットとして
  *       作成する／しない（設定 sync.virtualParents.enabled より優先）</li>
+ *   <li>{@code --no-result-columns}: 同期結果（最終同期日時・同期結果・エラー理由）を入力ファイルに書き込まない
+ *       （設定 sync.resultColumns.enabled より優先）</li>
  *   <li>{@code --root-issue}: ルートチケットのID。今回同期するすべてのファイルの最上位の行を、このチケットの子にする
  *       （設定 sync.files の rootIssueId より優先）</li>
  *   <li>{@code --targets}: 同期・出力する対象（tickets,users,groups のカンマ区切り。省略時はファイルにある表すべて）</li>
@@ -130,7 +132,7 @@ public class SyncCommand implements CommandLineRunner {
         // --file は省略可（省略時は設定 sync.files のファイル。どちらもなければ SyncRunner がエラーにする）
         // 同期実行（複数ファイルは指定した順に1つずつ）
         int exitCode = syncRunner.runFiles(configPath, projectName, filePaths, dryRun, logDir, debug, forceUpdate,
-                excelSource, parseVirtualParents(args), targets, rootIssueId);
+                excelSource, parseVirtualParents(args), targets, rootIssueId, hasArg(args, "--no-result-columns"));
         System.exit(exitCode);
     }
 
@@ -252,6 +254,8 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --table=<name>          Excel table to read (default: sync.excel.table; overrides --sheet)");
         System.out.println("  --virtual-parents       Auto-create missing ancestor rows as virtual parent tickets");
         System.out.println("  --no-virtual-parents    Treat missing parent rows as errors (overrides sync.virtualParents)");
+        System.out.println("  --no-result-columns     Do not write the sync result columns (最終同期日時/同期結果/エラー理由)");
+        System.out.println("                          back to the input file (overrides sync.resultColumns.enabled)");
         System.out.println("  --root-issue=<id>       Root ticket: top-level rows of every file in this run become");
         System.out.println("                          children of this Redmine issue (overrides rootIssueId in sync.files)");
         System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: all sheets in the file)");

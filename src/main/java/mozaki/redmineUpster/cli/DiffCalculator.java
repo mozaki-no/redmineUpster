@@ -85,6 +85,7 @@ public class DiffCalculator {
         List<Map<String, String>> rows = sheet.rows();
         List<Integer> rowNumbers = sheet.rowNumbers();
         List<String> errors = new ArrayList<>();
+        Map<Integer, List<String>> rowErrors = new LinkedHashMap<>();
 
         Set<String> availableColumns = new HashSet<>(sheet.headers());
         if (availableColumns.isEmpty() && !rows.isEmpty()) {
@@ -126,14 +127,15 @@ public class DiffCalculator {
                 }
             }
             if (deepest < 0) {
-                errors.add("行" + rowNumber + ": 階層列（" + String.join("/", hierarchyColumns) + "）がすべて空です");
+                rowError(errors, rowErrors, rowNumber, "行" + rowNumber,
+                        "階層列（" + String.join("/", hierarchyColumns) + "）がすべて空です");
                 continue;
             }
             if (cells.get(0).isBlank()) {
                 // 一番浅い階層列が空欄の行は、前行の値を引き継ぐ前提のシート（セル結合なし）の可能性が高いため、
                 // 最上位として作成せずエラーにする
-                errors.add("行" + rowNumber + " [" + joinPath(cells) + "]: " + hierarchyColumns.get(0)
-                        + "が空欄です（同じ値が続く場合は各行に入力するかセル結合してください。"
+                rowError(errors, rowErrors, rowNumber, "行" + rowNumber + " [" + joinPath(cells) + "]",
+                        hierarchyColumns.get(0) + "が空欄です（同じ値が続く場合は各行に入力するかセル結合してください。"
                         + "空欄を前行の値で補うには sync.columns.fillDownHierarchy: true）");
                 continue;
             }
@@ -148,7 +150,8 @@ public class DiffCalculator {
             if (!rawId.isBlank()) {
                 issueId = parseTicketId(rawId);
                 if (issueId == null) {
-                    errors.add("行" + rowNumber + " [" + levelPath + "]: チケットIDが数値ではありません: " + rawId);
+                    rowError(errors, rowErrors, rowNumber, "行" + rowNumber + " [" + levelPath + "]",
+                            "チケットIDが数値ではありません: " + rawId);
                     continue;
                 }
             }
@@ -164,15 +167,15 @@ public class DiffCalculator {
         for (RowData data : parsed) {
             RowData samePath = byKey.putIfAbsent(data.key, data);
             if (samePath != null) {
-                errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 階層パスが行" + samePath.rowNumber
-                        + "と重複しています");
+                rowError(errors, rowErrors, data.rowNumber, data.label(),
+                        "階層パスが行" + samePath.rowNumber + "と重複しています");
                 invalid.add(data);
             }
             if (data.issueId != null) {
                 RowData sameId = byIssueId.putIfAbsent(data.issueId, data);
                 if (sameId != null) {
-                    errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: チケットID " + data.issueId
-                            + " が行" + sameId.rowNumber + "と重複しています");
+                    rowError(errors, rowErrors, data.rowNumber, data.label(),
+                            "チケットID " + data.issueId + " が行" + sameId.rowNumber + "と重複しています");
                     invalid.add(data);
                 }
             }
@@ -198,7 +201,7 @@ public class DiffCalculator {
                 } else if (virtualParents) {
                     parentRowNumber = virtuals.ensure(data.parentCells);
                 } else {
-                    errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 親行 [" + data.parentPath
+                    rowError(errors, rowErrors, data.rowNumber, data.label(), "親行 [" + data.parentPath
                             + "] がファイルにありません（祖先を仮想親チケットとして自動作成するには"
                             + " sync.virtualParents.enabled: true または --virtual-parents）");
                     continue;
@@ -211,19 +214,19 @@ public class DiffCalculator {
             if (!trackerValue.isBlank()) {
                 trackerId = resolver.resolve(trackerValue);
                 if (trackerId == null) {
-                    errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: トラッカー「" + trackerValue
+                    rowError(errors, rowErrors, data.rowNumber, data.label(), "トラッカー「" + trackerValue
                             + "」が見つかりません（trackerMap / Redmineのトラッカー名を確認してください）");
                     continue;
                 }
             } else if (defaultTracker != null) {
                 trackerId = resolver.resolve(defaultTracker);
                 if (trackerId == null) {
-                    errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 既定トラッカー「" + defaultTracker
+                    rowError(errors, rowErrors, data.rowNumber, data.label(), "既定トラッカー「" + defaultTracker
                             + "」（sync.tracker.value）が見つかりません");
                     continue;
                 }
             } else if (ACTION_CREATE.equals(action)) {
-                errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 新規作成する行のトラッカー（"
+                rowError(errors, rowErrors, data.rowNumber, data.label(), "新規作成する行のトラッカー（"
                         + names.trackerColumn + "列）が空です");
                 continue;
             }
@@ -266,7 +269,7 @@ public class DiffCalculator {
         }
 
         items.sort(Comparator.comparingInt(DiffItem::depth).thenComparingInt(DiffItem::rowNumber));
-        return new DiffPlan(items, withSheetName(errors, sheet.sheetName()));
+        return new DiffPlan(items, withSheetName(errors, sheet.sheetName()), rowErrors);
     }
 
     /** 仮想親の行番号（負の仮番号）の開始値 */
@@ -630,6 +633,15 @@ public class DiffCalculator {
         return result;
     }
 
+    /**
+     * 行に結び付く検証エラーを追加します（ログ用の errors には「ラベル: 理由」、書き戻し用の rowErrors には理由）。
+     */
+    private static void rowError(List<String> errors, Map<Integer, List<String>> rowErrors, int rowNumber,
+            String label, String reason) {
+        errors.add(label + ": " + reason);
+        rowErrors.computeIfAbsent(rowNumber, k -> new ArrayList<>()).add(reason);
+    }
+
     private static void trimTrailingBlanks(List<String> cells) {
         while (!cells.isEmpty() && cells.get(cells.size() - 1).isBlank()) {
             cells.remove(cells.size() - 1);
@@ -817,6 +829,11 @@ public class DiffCalculator {
         private final Integer progress;
         private final String description;
         private final List<String> parentCells;
+
+        /** メッセージ用のラベル（例: 行12 [大分類 > 中分類]） */
+        private String label() {
+            return "行" + rowNumber + " [" + levelPath + "]";
+        }
 
         private RowData(int rowNumber, Map<String, String> row, Long issueId, int depth, String levelPath,
                 String key, String parentKey, String parentPath, String subject, ColumnNames names,

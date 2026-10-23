@@ -26,6 +26,7 @@ import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.TrackerConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.ResultColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.VirtualParentsConfig;
 
 /**
@@ -265,6 +266,16 @@ public class SyncConfigService {
 			config.setVirtualParents(virtualParents);
 		}
 
+		Map<String, Object> resultColumnsMap = (Map<String, Object>) map.get("resultColumns");
+		if (resultColumnsMap != null) {
+			ResultColumnsConfig resultColumns = new ResultColumnsConfig();
+			Object enabled = resultColumnsMap.get("enabled");
+			if (enabled != null) {
+				resultColumns.setEnabled(Boolean.parseBoolean(expandEnvVars(enabled.toString()).trim()));
+			}
+			config.setResultColumns(resultColumns);
+		}
+
 		List<FileEntry> fileEntries = parseFileEntries(map.get("files"));
 		List<String> files = new ArrayList<>();
 		Map<String, Long> fileRootIssueIds = new HashMap<>();
@@ -429,6 +440,21 @@ public class SyncConfigService {
 		String descriptionColumn = (String) map.get("descriptionColumn");
 		if (descriptionColumn != null && !descriptionColumn.isBlank()) {
 			config.setDescriptionColumn(descriptionColumn);
+		}
+
+		String lastSyncedAtColumn = (String) map.get("lastSyncedAtColumn");
+		if (lastSyncedAtColumn != null && !lastSyncedAtColumn.isBlank()) {
+			config.setLastSyncedAtColumn(lastSyncedAtColumn.trim());
+		}
+
+		String syncResultColumn = (String) map.get("syncResultColumn");
+		if (syncResultColumn != null && !syncResultColumn.isBlank()) {
+			config.setSyncResultColumn(syncResultColumn.trim());
+		}
+
+		String syncErrorColumn = (String) map.get("syncErrorColumn");
+		if (syncErrorColumn != null && !syncErrorColumn.isBlank()) {
+			config.setSyncErrorColumn(syncErrorColumn.trim());
 		}
 
 		Object fillDownHierarchy = map.get("fillDownHierarchy");

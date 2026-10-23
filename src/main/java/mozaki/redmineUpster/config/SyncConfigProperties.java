@@ -159,6 +159,8 @@ public class SyncConfigProperties {
 		 */
 		private VirtualParentsConfig virtualParents;
 
+		private ResultColumnsConfig resultColumns;
+
 		/**
 		 * このプロジェクトを更新する Excel/CSV ファイルの一覧（任意。相対パスは設定ファイルのフォルダ基準で、
 		 * 読み込み時に絶対パスへ変換済み）。
@@ -210,6 +212,15 @@ public class SyncConfigProperties {
 	 * 優先順位は table ＞ sheet ＞ 先頭シート。CLI の --table / --sheet で上書きできます。
 	 * </p>
 	 */
+	/**
+	 * 同期結果（最終同期日時・同期結果・エラー理由）の書き戻し設定。
+	 */
+	@Data
+	public static class ResultColumnsConfig {
+		/** 書き戻す場合 true（既定） */
+		private boolean enabled = true;
+	}
+
 	@Data
 	public static class ExcelConfig {
 		/**
@@ -304,6 +315,15 @@ public class SyncConfigProperties {
 		 * </p>
 		 */
 		private boolean fillDownHierarchy = false;
+
+		/** 書き戻し: 最終同期日時の列 */
+		private String lastSyncedAtColumn = "最終同期日時";
+
+		/** 書き戻し: 同期結果（作成／更新／変更なし／エラー／未実行）の列 */
+		private String syncResultColumn = "同期結果";
+
+		/** 書き戻し: エラー理由の列 */
+		private String syncErrorColumn = "エラー理由";
 	}
 
 	/**

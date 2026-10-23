@@ -295,7 +295,9 @@ class RootIssueTests {
 		assertThat(exit).isEqualTo(1);
 		verify(client, never()).createIssue(anyMap());
 		verify(client, never()).updateIssue(anyLong(), anyMap());
-		assertThat(tempDir.resolve("a.csv.bak")).doesNotExist();
+		// 行に結び付かないエラーはログだけ。行には未実行を書く
+		assertThat(Files.readString(tempDir.resolve("a.csv"), StandardCharsets.UTF_8))
+				.contains("未実行," + SyncRunner.ABORTED_BY_INPUT_ERROR);
 		assertThat(logText()).contains("ルートチケット #999 が見つかりません");
 	}
 
