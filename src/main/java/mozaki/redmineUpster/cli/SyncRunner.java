@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 
 import org.springframework.stereotype.Component;
 
@@ -32,6 +33,7 @@ import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.service.SyncConfigService;
 import mozaki.redmineUpster.service.TicketIdWriter;
 import mozaki.redmineUpster.util.StringUtils;
+import mozaki.redmineUpster.util.ColumnDefinitions;
 
 /**
  * 同期実行サービス。
@@ -264,6 +266,7 @@ public class SyncRunner {
             }
             SyncConfig syncConfig = projectConfig.getSync();
             state.resultColumns = resultColumns(projectConfig, noResultColumns, logger);
+            state.projectConfig = projectConfig;
 
             // 4. 同期するファイルを決める（--file ＞ sync.files）
             List<String> listedFiles = listedFiles(projectConfig);
@@ -357,7 +360,15 @@ public class SyncRunner {
                         state, logger);
             }
 
-            // 10. 結果出力
+            // 10. 親チケットの自動完了（子チケットがすべて完了した親を完了にする。設定 sync.autoCloseParents）
+            ParentAutoCloser.Result autoClosed = null;
+            if (state.ticketsSynced && isAutoCloseEnabled(syncConfig)) {
+                autoClosed = autoCloseParents(jobs, listedFiles, projectConfig, client, dryRun, state, logger);
+            }
+            // 自動完了のために後回しにした書き戻し（チケットID・同期結果・ステータス）をファイルごとに1回で書く
+            flushPendingWriteBacks(jobs, projectConfig, autoClosed, state, logger);
+
+            // 11. 結果出力
             logger.info("=== Sync Complete ===");
             for (String line : state.summary) {
                 logger.info(line);
@@ -422,6 +433,12 @@ public class SyncRunner {
         private boolean resultsWritten;
         /** 書き戻しの状態（ユーザー・グループ・チケットで .bak は1回） */
         private final WriteBackState writeBack = new WriteBackState();
+        /** 同期したチケットID → ファイル上の行番号（仮想親を除く。ステータスの書き戻しに使用） */
+        private final Map<Long, Integer> rowByIssueId = new HashMap<>();
+        /** 親チケットの自動完了の後に書き戻す、新規作成したチケットID（後回しにしていない場合は null） */
+        private Map<Integer, Long> pendingCreatedIssueIds;
+        /** 親チケットの自動完了の後に書き戻す、行ごとの結果（後回しにしていない場合は null） */
+        private Map<Integer, RowOutcome> pendingOutcomes;
 
         private FileJob(String filePath) {
             this.filePath = filePath;
@@ -452,9 +469,18 @@ public class SyncRunner {
         private int ticketErrors;
         /** 同期結果の列（書き戻さない場合は null） */
         private ResultColumnNames resultColumns;
+        /** プロジェクト設定（中止時の書き戻しに使用） */
+        private ProjectConfig projectConfig;
         /** 最終同期日時（この実行のすべての行で同じ値） */
         private String syncedAt;
         private boolean dryRun;
+        /** 同期したチケットの同期後の状態（親チケットの自動完了に使用） */
+        private final List<SyncResult.PlannedIssue> planned = new ArrayList<>();
+        /** 論理削除したチケット（dry-run では論理削除する予定のチケット）と、そのステータス */
+        private List<Long> deletedIssueIds = List.of();
+        private Integer deletedStatusId;
+        /** 終了ステータスのID（親チケットの自動完了が有効な場合だけ取得。取得できなければ null） */
+        private Set<Long> closedStatusIds;
     }
 
     /**
@@ -802,6 +828,12 @@ public class SyncRunner {
                         + (virtualTotal - virtualExisting) + "。上の CREATE 件数に含まれます）");
             }
 
+            // 親チケットの自動完了が有効な場合、親の行はステータス列が空欄なら Redmine の現在のステータスのままにする
+            // （日付から決めたステータスで毎回戻して、また自動で完了・進行中にする、を繰り返さないため）
+            if (isAutoCloseEnabled(syncConfig)) {
+                items = keepParentStatuses(items, projectIssues, logger);
+            }
+
             // Excelの行と、今回も必要な仮想親のチケットは論理削除しない
             for (DiffItem item : items) {
                 if (item.issueId() != null) {
@@ -814,6 +846,14 @@ public class SyncRunner {
             SyncResult result = syncExecutor.execute(items, projectIssues, List.of(), projectConfig, client,
                     dryRun, logger, forceUpdate, job.rootIssueId);
             state.ticketsSynced = true;
+            if (result.plannedIssues() != null) {
+                state.planned.addAll(result.plannedIssues());
+                for (SyncResult.PlannedIssue planned : result.plannedIssues()) {
+                    if (!planned.virtual() && planned.rowNumber() > 0) {
+                        job.rowByIssueId.put(planned.issueId(), planned.rowNumber());
+                    }
+                }
+            }
             state.keepIssueIds.addAll(result.createdIssueIds().values());
             if (result.createdVirtualIssueIds() != null) {
                 state.keepIssueIds.addAll(result.createdVirtualIssueIds());
@@ -828,9 +868,13 @@ public class SyncRunner {
             }
 
             // 新規作成したチケットIDと同期結果を入力ファイルへ書き戻す（1回の書き込み）
-            if (!dryRun) {
+            if (!dryRun && isAutoCloseEnabled(syncConfig)) {
+                // 親チケットの自動完了の後に、変更したステータスと合わせて1回で書き戻す
+                job.pendingCreatedIssueIds = new HashMap<>(result.createdIssueIds());
+                job.pendingOutcomes = new HashMap<>(result.rowOutcomes() != null ? result.rowOutcomes() : Map.of());
+            } else if (!dryRun) {
                 writeBackTicketIds(job, projectConfig, result.createdIssueIds(),
-                        syncResults(job, result.rowOutcomes(), state, null), writeBackState, logger);
+                        syncResults(job, result.rowOutcomes(), state, null), null, writeBackState, logger);
             } else if (state.resultColumns != null) {
                 logger.info("dry-run のため、チケットID・同期結果は入力ファイルに書き込みません");
             }
@@ -839,16 +883,20 @@ public class SyncRunner {
     }
 
     private void writeBackTicketIds(FileJob job, ProjectConfig projectConfig, Map<Integer, Long> createdIssueIds,
-            TicketIdWriter.SyncResults syncResults, WriteBackState writeBackState, FileLogger logger) {
+            TicketIdWriter.SyncResults syncResults, TicketIdWriter.ColumnValues statusValues,
+            WriteBackState writeBackState, FileLogger logger) {
         String filePath = job.filePath;
         String ticketIdColumn = DiffCalculator.getTicketIdColumn(projectConfig);
         job.resultsWritten = true;
-        if (createdIssueIds.isEmpty() && syncResults == null) {
+        if (createdIssueIds.isEmpty() && syncResults == null && statusValues == null) {
             return;
         }
         try {
-            TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeBack(filePath, ticketIdColumn,
-                    createdIssueIds, job.excelSource, !writeBackState.backupMade, syncResults);
+            TicketIdWriter.WriteBackResult writeBack = statusValues == null
+                    ? ticketIdWriter.writeBack(filePath, ticketIdColumn, createdIssueIds, job.excelSource,
+                            !writeBackState.backupMade, syncResults)
+                    : ticketIdWriter.writeBack(filePath, ticketIdColumn, createdIssueIds, job.excelSource,
+                            !writeBackState.backupMade, syncResults, statusValues);
             writeBackState.backupMade |= writeBack.backup() != null;
             for (String note : writeBack.notes()) {
                 logger.info(note);
@@ -866,10 +914,16 @@ public class SyncRunner {
                             + syncResults.rows().size() + "行に書き込みました: " + filePath + "（最終同期日時 "
                             + syncResults.syncedAt() + "、backup: " + writeBack.backup() + "）");
                 }
+                if (statusValues != null) {
+                    logger.info("Wrote " + (statusValues.rows().size() - writeBack.failures().size())
+                            + " statuses back to " + filePath + " (backup: " + writeBack.backup() + ")");
+                }
             }
             if (!writeBack.failures().isEmpty()) {
                 writeBackState.failed = true;
-                logger.error("チケットIDを書き戻せなかった行があります。次回実行で重複作成しないよう、"
+                logger.error(createdIssueIds.isEmpty()
+                        ? "ステータスを書き戻せなかった行があります。手で入力してください:"
+                        : "チケットIDを書き戻せなかった行があります。次回実行で重複作成しないよう、"
                         + "以下のチケット番号を手で「" + ticketIdColumn + "」列（または数式の参照先）に入力してください:");
                 for (String failure : writeBack.failures()) {
                     logger.error("  - " + failure);
@@ -878,8 +932,8 @@ public class SyncRunner {
         } catch (IOException | RuntimeException e) {
             String hint = "（Excel などでファイルを開いている場合は閉じてください）";
             if (createdIssueIds.isEmpty()) {
-                // 同期結果だけの書き込みの失敗は、Redmine への同期結果（ログ）には影響しない
-                logger.error("同期結果を入力ファイルに書き込めませんでした（" + filePath + "）: " + e.getMessage() + hint
+                // 同期結果・ステータスだけの書き込みの失敗は、Redmine への同期結果（ログ）には影響しない
+                logger.error("同期結果" + (statusValues != null ? "・ステータス" : "") + "を入力ファイルに書き込めませんでした（" + filePath + "）: " + e.getMessage() + hint
                         + "。Redmine への同期は完了しています。各行の結果はログを確認してください");
                 return;
             }
@@ -993,14 +1047,27 @@ public class SyncRunner {
      */
     private void writeNotRunResults(List<FileJob> jobs, ProjectConfig projectConfig, String reason, RunState state,
             FileLogger logger) {
-        if (state.dryRun || state.resultColumns == null) {
+        if (state.dryRun) {
             return;
         }
+        if (projectConfig == null) {
+            projectConfig = state.projectConfig;
+        }
         for (FileJob job : jobs) {
-            if (job.resultsWritten || !job.doTickets || job.parsed == null) {
+            if (job.pendingOutcomes != null) {
+                // 同期済みのファイル（自動完了のために書き戻しを後回しにしていた）はその結果を書く
+                Map<Integer, Long> createdIssueIds = job.pendingCreatedIssueIds;
+                Map<Integer, RowOutcome> outcomes = job.pendingOutcomes;
+                job.pendingOutcomes = null;
+                job.pendingCreatedIssueIds = null;
+                writeBackTicketIds(job, projectConfig, createdIssueIds, syncResults(job, outcomes, state, reason),
+                        null, job.writeBack, logger);
                 continue;
             }
-            writeBackTicketIds(job, projectConfig, Map.of(), syncResults(job, Map.of(), state, reason),
+            if (state.resultColumns == null || job.resultsWritten || !job.doTickets || job.parsed == null) {
+                continue;
+            }
+            writeBackTicketIds(job, projectConfig, Map.of(), syncResults(job, Map.of(), state, reason), null,
                     job.writeBack, logger);
         }
     }
@@ -1097,6 +1164,10 @@ public class SyncRunner {
                 + "のチケット。Redmineで手動作成したチケットも含みます）");
         SyncResult deleted = syncExecutor.executeLogicalDelete(candidates, issues, projectConfig, client, dryRun,
                 logger);
+        if (deleteStatusId != null) {
+            state.deletedIssueIds = candidates;
+            state.deletedStatusId = deleteStatusId;
+        }
         if (deleted == null) {
             return;
         }
@@ -1104,6 +1175,230 @@ public class SyncRunner {
         state.success += deleted.successCount();
         state.ticketErrors += deleted.errorCount();
         state.errors.addAll(deleted.errors());
+    }
+
+    private static boolean isAutoCloseEnabled(SyncConfig syncConfig) {
+        return syncConfig != null && syncConfig.getAutoCloseParents() != null
+                && syncConfig.getAutoCloseParents().isEnabled();
+    }
+
+    /** 終了ステータスのIDを取得します（1回の実行で1回だけ。取得できなければ null） */
+    private static Set<Long> closedStatusIds(RedmineClient client, RunState state, FileLogger logger) {
+        if (state.closedStatusIds == null) {
+            try {
+                state.closedStatusIds = client.listClosedIssueStatusIds();
+            } catch (RuntimeException ex) {
+                logger.warn("ステータスの一覧を取得できません（親チケットの自動完了は行いません）: " + ex.getMessage());
+                state.closedStatusIds = Set.of();
+            }
+        }
+        return state.closedStatusIds;
+    }
+
+    /**
+     * 親の行のうち、ステータス列が空欄の行は Redmine の現在のステータスを送るようにします
+     * （親のステータスは子から決めるため）。
+     */
+    static List<DiffItem> keepParentStatuses(List<DiffItem> items, Map<Long, Map<String, Object>> issues,
+            FileLogger logger) {
+        Set<Integer> parentRows = new HashSet<>();
+        items.forEach(item -> {
+            if (item.parentRowNumber() != null) {
+                parentRows.add(item.parentRowNumber());
+            }
+        });
+        List<DiffItem> result = new ArrayList<>(items.size());
+        for (DiffItem item : items) {
+            Long current = item.issueId() == null ? null : IssueComparator.nestedId(issues.get(item.issueId()), "status");
+            if (!item.virtual() && SyncConstants.ACTION_UPDATE.equals(item.action())
+                    && isBlank(item.payload().get("statusCell")) && parentRows.contains(item.rowNumber())
+                    && current != null) {
+                logger.debug("keep status of parent " + item.label() + " (status_id=" + current + ")");
+                result.add(new DiffItem(item.rowNumber(), item.issueId(), item.subject(), item.levelPath(),
+                        item.depth(), item.parentRowNumber(), item.action(), String.valueOf(current),
+                        item.trackerId(), item.payload(), item.virtual()));
+            } else {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
+    private static boolean isBlank(Object value) {
+        return value == null || String.valueOf(value).isBlank();
+    }
+
+    /**
+     * 親チケットの自動完了（すべてのファイルの同期と論理削除の後に1回だけ）。
+     * <p>
+     * 子チケットがすべて終了ステータスになった親を、深い階層から順に完了にします（未完了には戻さない）。
+     * 子は同期後の Redmine のチケットすべて（Excelにないチケットを含む）で判定し、dry-run では
+     * 今回の作成・更新・論理削除の予定を反映して判定します。
+     * 対象は今回同期したチケットとその祖先で、ルートチケットとその祖先は完了にしません。
+     * 完了にした親がファイルの行なら、ステータス列（ある場合だけ）にステータス名を書き戻します。
+     * </p>
+     */
+    private ParentAutoCloser.Result autoCloseParents(List<FileJob> jobs, List<String> listedFiles,
+            ProjectConfig projectConfig, RedmineClient client, boolean dryRun, RunState state, FileLogger logger) {
+        SyncConfig syncConfig = projectConfig.getSync();
+        Set<Long> closedStatusIds = closedStatusIds(client, state, logger);
+        if (closedStatusIds.isEmpty()) {
+            logger.warn("終了ステータスが見つからないため、親チケットの自動完了は行いません");
+            return null;
+        }
+        ParentAutoCloser.TargetStatus target;
+        try {
+            target = ParentAutoCloser.resolveTarget(syncConfig.getAutoCloseParents(), syncConfig.getStatus(),
+                    client.listIssueStatuses(), closedStatusIds);
+        } catch (RuntimeException ex) {
+            logger.error("親チケットの自動完了を行いません: " + ex.getMessage());
+            state.errors.add("親チケットの自動完了: " + ex.getMessage());
+            return null;
+        }
+        if (target == null) {
+            logger.warn("完了にするステータスが決められないため、親チケットの自動完了は行いません");
+            return null;
+        }
+
+        Map<Long, Map<String, Object>> issues = dryRun ? state.lastIssues : client.listProjectIssues();
+        Map<Long, ParentAutoCloser.Node> nodes = ParentAutoCloser.nodes(issues);
+        if (dryRun) {
+            // 今回の作成・更新・論理削除の予定を反映する（作成予定のチケットは負の仮ID）
+            for (SyncResult.PlannedIssue planned : state.planned) {
+                ParentAutoCloser.Node current = nodes.get(planned.issueId());
+                Long status = planned.statusId() != null ? planned.statusId()
+                        : current != null ? current.statusId() : null;
+                nodes.put(planned.issueId(), new ParentAutoCloser.Node(planned.parentId(), status, planned.subject()));
+            }
+            if (state.deletedStatusId != null) {
+                for (Long id : state.deletedIssueIds) {
+                    ParentAutoCloser.Node current = nodes.get(id);
+                    if (current != null) {
+                        nodes.put(id, new ParentAutoCloser.Node(current.parentId(),
+                                state.deletedStatusId.longValue(), current.subject()));
+                    }
+                }
+            }
+        }
+
+        Set<Long> roots = new LinkedHashSet<>();
+        jobs.stream().filter(job -> job.rootIssueId != null).forEach(job -> roots.add(job.rootIssueId));
+        Map<Path, Long> configuredRoots = configuredRootIssueIds(projectConfig);
+        for (String listed : listedFiles) {
+            Long root = configuredRoots.get(normalize(listed));
+            if (root != null) {
+                roots.add(root);
+            }
+        }
+        Set<Long> protectedIds = roots.isEmpty() ? Set.of()
+                : rootsAndAncestors(roots, issues, state.rootIssues, client);
+        Set<Long> synced = new HashSet<>();
+        state.planned.forEach(planned -> synced.add(planned.issueId()));
+        Set<Long> candidates = ParentAutoCloser.candidates(synced, nodes, protectedIds);
+        List<ParentAutoCloser.Change> changes = new ArrayList<>();
+        List<Long> closing = ParentAutoCloser.plan(nodes, closedStatusIds, candidates, protectedIds);
+        closing.forEach(id -> changes.add(new ParentAutoCloser.Change(id, target, true)));
+        logger.info("AUTO_CLOSE candidates: " + closing.size() + "（子チケットがすべて完了した親チケット。ステータス「"
+                + target.label() + "」(status_id=" + target.id() + ") にします）");
+        if (syncConfig.getAutoCloseParents().isInProgress()) {
+            Map<String, Long> statuses = client.listIssueStatuses();
+            Long newStatusId = ParentAutoCloser.newStatusId(statuses, closedStatusIds);
+            ParentAutoCloser.TargetStatus inProgress;
+            try {
+                inProgress = ParentAutoCloser.resolveInProgress(syncConfig.getAutoCloseParents(),
+                        syncConfig.getStatus(), statuses, closedStatusIds);
+            } catch (RuntimeException ex) {
+                logger.error("親チケットを進行中にする処理を行いません: " + ex.getMessage());
+                state.errors.add("親チケットの進行中: " + ex.getMessage());
+                inProgress = null;
+            }
+            if (inProgress == null || newStatusId == null) {
+                logger.info("進行中のステータスが見つからないため、親チケットを進行中にする処理は行いません"
+                        + "（autoCloseParents.inProgressStatus で指定できます）");
+            } else {
+                List<Long> starting = ParentAutoCloser.planInProgress(nodes, newStatusId, closing, candidates,
+                        protectedIds);
+                for (Long id : starting) {
+                    changes.add(new ParentAutoCloser.Change(id, inProgress, false));
+                }
+                logger.info("AUTO_IN_PROGRESS candidates: " + starting.size() + "（子チケットに着手済みのものがある新規の"
+                        + "親チケット。ステータス「" + inProgress.label() + "」(status_id=" + inProgress.id() + ") にします）");
+            }
+        }
+        if (changes.isEmpty()) {
+            return null;
+        }
+        ParentAutoCloser.Result result = ParentAutoCloser.execute(changes, nodes, client, dryRun, logger);
+        state.total += changes.size();
+        state.success += changes.size() - result.errors().size();
+        state.ticketErrors += result.errors().size();
+        state.errors.addAll(result.errors());
+        return dryRun ? null : result;
+    }
+
+    /**
+     * 親チケットの自動完了のために後回しにした書き戻しを行います（ファイルごとに1回の書き込み・.bak も1つ）。
+     * <p>
+     * 新規作成したチケットID・同期結果に加えて、自動でステータスを変えた親の行はステータス列（ある場合だけ）に
+     * ステータス名を書き、同期結果を「更新」（作成・更新の行はそのまま）にします。ステータスの変更に失敗した
+     * 行は「エラー」と理由にします。
+     * </p>
+     *
+     * @param autoClosed 自動完了の結果（行わなかった場合は null）
+     */
+    private void flushPendingWriteBacks(List<FileJob> jobs, ProjectConfig projectConfig,
+            ParentAutoCloser.Result autoClosed, RunState state, FileLogger logger) {
+        String statusColumn = statusColumn(projectConfig);
+        for (FileJob job : jobs) {
+            if (job.pendingOutcomes == null) {
+                continue;
+            }
+            Map<Integer, RowOutcome> outcomes = new HashMap<>(job.pendingOutcomes);
+            Map<Integer, String> statuses = new TreeMap<>();
+            if (autoClosed != null) {
+                for (ParentAutoCloser.Change change : autoClosed.completed()) {
+                    Integer row = job.rowByIssueId.get(change.issueId());
+                    if (row == null) {
+                        continue;
+                    }
+                    statuses.put(row, change.target().label());
+                    RowOutcome current = outcomes.get(row);
+                    if (current == null || current.status() == RowOutcome.Status.UNCHANGED) {
+                        outcomes.put(row, RowOutcome.of(RowOutcome.Status.UPDATED));
+                    }
+                }
+                autoClosed.failures().forEach((issueId, reason) -> {
+                    Integer row = job.rowByIssueId.get(issueId);
+                    if (row != null) {
+                        outcomes.put(row, new RowOutcome(RowOutcome.Status.ERROR, reason));
+                    }
+                });
+            }
+            TicketIdWriter.ColumnValues statusValues = null;
+            if (!statuses.isEmpty()) {
+                if (job.parsed != null && job.parsed.headers().contains(statusColumn)) {
+                    statusValues = new TicketIdWriter.ColumnValues(statusColumn, statuses);
+                    logger.info("自動で変更したステータスを「" + statusColumn + "」列の " + statuses.size() + "行に書き戻します: "
+                            + job.filePath);
+                } else {
+                    logger.info("「" + statusColumn + "」列がないため、自動で変更したステータスは書き戻しません: "
+                            + job.filePath);
+                }
+            }
+            Map<Integer, Long> createdIssueIds = job.pendingCreatedIssueIds;
+            job.pendingOutcomes = null;
+            job.pendingCreatedIssueIds = null;
+            writeBackTicketIds(job, projectConfig, createdIssueIds, syncResults(job, outcomes, state, null),
+                    statusValues, job.writeBack, logger);
+            state.writeBack.failed |= job.writeBack.failed;
+        }
+    }
+
+    private static String statusColumn(ProjectConfig projectConfig) {
+        SyncConfig syncConfig = projectConfig != null ? projectConfig.getSync() : null;
+        String statusColumn = syncConfig != null && syncConfig.getColumns() != null
+                ? syncConfig.getColumns().getStatusColumn() : null;
+        return statusColumn == null || statusColumn.isBlank() ? ColumnDefinitions.COL_STATUS : statusColumn;
     }
 
     /**
