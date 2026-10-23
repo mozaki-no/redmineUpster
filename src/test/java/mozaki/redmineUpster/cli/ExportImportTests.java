@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -192,6 +193,30 @@ class ExportImportTests {
 		assertThat(resolved.get(1).status()).isEqualTo("New"); // BY_DATES の既定値はそのまま
 		assertThat(resolved.get(2).payload()).containsEntry("assignee", "20");
 		assertThat(resolved.get(2)).isNotSameAs(items.get(2));
+	}
+
+	@Test
+	@DisplayName("担当のメールアドレス（大文字小文字を区別しない）をユーザーIDに変換し、重複・不明は変更しない")
+	void ticketValueResolver_mail() {
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listGroups()).thenReturn(groups());
+		Map<Long, Map<String, Object>> users = users();
+		users.put(6L, new LinkedHashMap<>(Map.of("id", 6, "login", "sato", "lastname", "佐藤", "firstname", "花子",
+				"mail", "Shared@Example.com")));
+		users.put(7L, new LinkedHashMap<>(Map.of("id", 7, "login", "suzuki", "lastname", "鈴木", "firstname", "一郎",
+				"mail", "shared@example.com")));
+		List<DiffItem> items = new ArrayList<>();
+		int row = 2;
+		for (String value : List.of(" TANAKA@example.com ", "shared@example.com", "nobody@example.com")) {
+			items.add(new DiffItem(row, (long) row, "s", "s", 0, null, SyncConstants.ACTION_UPDATE, "2", 2L,
+					new LinkedHashMap<>(Map.of("assignee", value))));
+			row++;
+		}
+		List<DiffItem> resolved = new TicketValueResolver(client, logger, users, null, Set.of())
+				.resolve(items, config(null).getSync().getStatus());
+		assertThat(resolved.get(0).payload()).containsEntry("assignee", "5");
+		assertThat(resolved.get(1).payload()).containsEntry("assignee", "");
+		assertThat(resolved.get(2).payload()).containsEntry("assignee", "");
 	}
 
 	@Test

@@ -38,8 +38,12 @@ final class TicketValueResolver {
     private Map<Long, Map<String, Object>> users;
     private Map<Long, Map<String, Object>> groups;
     private Map<String, Long> assigneeIndex;
+    /** メールアドレス（小文字）→ ユーザーID。複数のユーザーに当たるものは {@link #AMBIGUOUS} */
+    private final Map<String, Long> mailIndex = new HashMap<>();
     private Map<String, Long> statusIndex;
     private final Set<String> warned = new HashSet<>();
+
+    private static final Long AMBIGUOUS = -1L;
 
     /**
      * @param client クライアント
@@ -99,6 +103,17 @@ final class TicketValueResolver {
             assigneeIndex = buildAssigneeIndex();
         }
         String key = normalize(assignee);
+        if (key.contains("@")) {
+            Long byMail = mailIndex.get(key);
+            if (AMBIGUOUS.equals(byMail)) {
+                warnOnce("assignee:" + key, "担当「" + assignee + "」のメールアドレスが複数のユーザーに当たります（" + item.label()
+                        + " など）。その行の担当は変更しません");
+                return null;
+            }
+            if (byMail != null) {
+                return byMail;
+            }
+        }
         Long id = assigneeIndex.get(key);
         if (id == null) {
             id = assigneeIndex.get(key.replaceAll("\\s+", ""));
@@ -110,7 +125,7 @@ final class TicketValueResolver {
             logger.info(item.label() + ": 担当「" + assignee + "」は今回作成するユーザーのため、dry-run では設定しません");
         } else {
             warnOnce("assignee:" + key, "担当「" + assignee + "」に当たるユーザー・グループが見つかりません（" + item.label()
-                    + " など。ユーザーID・ログインID・氏名・グループ名で指定）。その行の担当は変更しません");
+                    + " など。ユーザーID・ログインID・氏名・メールアドレス・グループ名で指定）。その行の担当は変更しません");
         }
         return null;
     }
@@ -145,6 +160,10 @@ final class TicketValueResolver {
                 String login = text(entry.getValue().get("login"));
                 if (!login.isEmpty()) {
                     index.put(normalize(login), entry.getKey());
+                }
+                String mail = text(entry.getValue().get("mail"));
+                if (!mail.isEmpty()) {
+                    mailIndex.merge(normalize(mail), entry.getKey(), (a, b) -> a.equals(b) ? a : AMBIGUOUS);
                 }
             }
         } catch (RuntimeException ex) {
