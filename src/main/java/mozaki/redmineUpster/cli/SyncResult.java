@@ -13,6 +13,7 @@ import java.util.Set;
  * @param errors エラーメッセージのリスト
  * @param createdIssueIds 今回新規作成したチケット（行番号 → チケットID）。Excelへの書き戻しに使用
  * @param createdVirtualIssueIds 今回新規作成した仮想親チケットのID（書き戻しはしない。論理削除の対象外にするために使用）
+ * @param rowOutcomes ファイルの行ごとの結果（行番号 → 結果。仮想親は含まない）。「同期結果」列への書き戻しに使用
  * @param plannedIssues 同期したチケットの同期後の状態（親・ステータス。dry-run の作成予定は負の仮ID）。
  *        親チケットの自動完了に使用
  */
@@ -23,6 +24,7 @@ public record SyncResult(
     List<String> errors,
     Map<Integer, Long> createdIssueIds,
     Set<Long> createdVirtualIssueIds,
+    Map<Integer, RowOutcome> rowOutcomes,
     List<PlannedIssue> plannedIssues
 ) {
 
@@ -45,7 +47,8 @@ public record SyncResult(
      */
     public SyncResult(int totalCount, int successCount, int errorCount, List<String> errors,
             Map<Integer, Long> createdIssueIds, Set<Long> createdVirtualIssueIds) {
-        this(totalCount, successCount, errorCount, errors, createdIssueIds, createdVirtualIssueIds, List.of());
+        this(totalCount, successCount, errorCount, errors, createdIssueIds, createdVirtualIssueIds, Map.of(),
+                List.of());
     }
 
     /**

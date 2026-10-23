@@ -20,7 +20,8 @@ import mozaki.redmineUpster.service.RedmineClient;
  * 子チケットがすべて完了（Redmine で is_closed のステータス）になった親チケットを完了にします。
  * 孫→子→親の順に再帰的に判定するので、深い階層から順に閉じていきます（Redmine は未完了の子がある親を
  * 完了にできないため、この順で送ります）。子は Redmine の同期先プロジェクトのチケットすべて
- * （Excelにないチケットを含む）で判定します。完了した親を未完了に戻すことはしません。
+ * （Excelにないチケットを含む）で判定します（設定 autoCloseParents.ignoreNotInExcel が true なら、
+ * Excel で管理しているチケットだけで判定し、Excelにない子は無視します）。完了した親を未完了に戻すことはしません。
  * </p>
  * <p>
  * また、新規（Redmine のステータス一覧で最初の未完了ステータス）の親のうち、子に新規でないチケット
@@ -91,12 +92,20 @@ public final class ParentAutoCloser {
      */
     public static List<Long> plan(Map<Long, Node> nodes, Set<Long> closedStatusIds, Set<Long> candidates,
             Set<Long> protectedIds) {
-        Map<Long, List<Long>> children = new HashMap<>();
+        return plan(nodes, closedStatusIds, candidates, protectedIds, null);
+    }
+
+    /**
+     * 完了にする親チケットを返します（判定に使う子を Excel で管理しているチケットに限る場合）。
+     *
+     * @param managedIds 判定に使う子チケット（null はすべての子。子がすべてこれ以外の親は完了にしない）
+     * @see #plan(Map, Set, Set, Set)
+     */
+    public static List<Long> plan(Map<Long, Node> nodes, Set<Long> closedStatusIds, Set<Long> candidates,
+            Set<Long> protectedIds, Set<Long> managedIds) {
+        Map<Long, List<Long>> children = children(nodes, managedIds);
         Set<Long> closed = new HashSet<>();
         nodes.forEach((id, node) -> {
-            if (node.parentId() != null && nodes.containsKey(node.parentId())) {
-                children.computeIfAbsent(node.parentId(), key -> new ArrayList<>()).add(id);
-            }
             if (node.statusId() != null && closedStatusIds.contains(node.statusId())) {
                 closed.add(id);
             }
@@ -141,12 +150,20 @@ public final class ParentAutoCloser {
      */
     public static List<Long> planInProgress(Map<Long, Node> nodes, long newStatusId, List<Long> closing,
             Set<Long> candidates, Set<Long> protectedIds) {
-        Map<Long, List<Long>> children = new HashMap<>();
+        return planInProgress(nodes, newStatusId, closing, candidates, protectedIds, null);
+    }
+
+    /**
+     * 進行中にする親チケットを返します（判定に使う子を Excel で管理しているチケットに限る場合）。
+     *
+     * @param managedIds 判定に使う子チケット（null はすべての子）
+     * @see #planInProgress(Map, long, List, Set, Set)
+     */
+    public static List<Long> planInProgress(Map<Long, Node> nodes, long newStatusId, List<Long> closing,
+            Set<Long> candidates, Set<Long> protectedIds, Set<Long> managedIds) {
+        Map<Long, List<Long>> children = children(nodes, managedIds);
         Set<Long> started = new HashSet<>(closing);
         nodes.forEach((id, node) -> {
-            if (node.parentId() != null && nodes.containsKey(node.parentId())) {
-                children.computeIfAbsent(node.parentId(), key -> new ArrayList<>()).add(id);
-            }
             if (node.statusId() != null && node.statusId() != newStatusId) {
                 started.add(id);
             }
@@ -173,6 +190,20 @@ public final class ParentAutoCloser {
             }
         }
         return result;
+    }
+
+    /**
+     * 親チケットID → 子チケットID（managedIds があれば、それに含まれる子だけ。判定に使う子がない親は含めない）。
+     */
+    private static Map<Long, List<Long>> children(Map<Long, Node> nodes, Set<Long> managedIds) {
+        Map<Long, List<Long>> children = new HashMap<>();
+        nodes.forEach((id, node) -> {
+            if (node.parentId() != null && nodes.containsKey(node.parentId())
+                    && (managedIds == null || managedIds.contains(id))) {
+                children.computeIfAbsent(node.parentId(), key -> new ArrayList<>()).add(id);
+            }
+        });
+        return children;
     }
 
     /**
@@ -344,6 +375,7 @@ public final class ParentAutoCloser {
         List<String> errors = new ArrayList<>();
         List<Change> completed = new ArrayList<>();
         Set<Long> failed = new HashSet<>();
+        Map<Long, String> failures = new LinkedHashMap<>();
         for (Change change : changes) {
             Long id = change.issueId();
             Node node = nodes.get(id);
@@ -355,6 +387,7 @@ public final class ParentAutoCloser {
                 failed.add(id);
                 String message = "親チケットの自動完了をスキップ: " + label + " 理由=子チケットを完了にできませんでした";
                 errors.add(message);
+                failures.put(id, "親チケットの自動完了をスキップしました（子チケットを完了にできませんでした）");
                 logger.error(message);
                 continue;
             }
@@ -376,10 +409,12 @@ public final class ParentAutoCloser {
                 failed.add(id);
                 String message = "親チケットのステータス変更に失敗: " + label + " 理由=" + ex.getMessage();
                 errors.add(message);
+                failures.put(id, "親チケットの" + (change.close() ? "自動完了" : "進行中への変更") + "に失敗しました: "
+                        + ex.getMessage());
                 logger.error(message);
             }
         }
-        return new Result(completed, errors);
+        return new Result(completed, errors, failures);
     }
 
     /**
@@ -387,7 +422,8 @@ public final class ParentAutoCloser {
      *
      * @param completed 変更した（dry-run では変更する予定の）親チケット
      * @param errors エラー
+     * @param failures 変更できなかった親チケット（チケットID → 理由。「エラー理由」列に書く）
      */
-    public record Result(List<Change> completed, List<String> errors) {
+    public record Result(List<Change> completed, List<String> errors, Map<Long, String> failures) {
     }
 }

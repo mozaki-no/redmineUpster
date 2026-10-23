@@ -290,7 +290,13 @@ class MultiFileSyncTests {
 		assertThat(exit).isEqualTo(1);
 		verify(client, never()).createIssue(anyMap());
 		verify(client, never()).updateIssue(anyLong(), anyMap());
-		assertThat(tempDir.resolve("a.csv.bak")).doesNotExist();
+		// Redmine には書き込まないが、各ファイルの行には同期結果を書く（エラーの行は理由、ほかは未実行）
+		String a = Files.readString(tempDir.resolve("a.csv"), StandardCharsets.UTF_8);
+		assertThat(a.split("\n")[0]).isEqualTo("チケットID,トラッカー,大分類,タスク,最終同期日時,同期結果,エラー理由");
+		assertThat(a).contains("未実行," + SyncRunner.ABORTED_BY_INPUT_ERROR).doesNotContain(",エラー,");
+		String c = Files.readString(tempDir.resolve("c.csv"), StandardCharsets.UTF_8);
+		assertThat(c).contains(",エラー,トラッカー「不明なトラッカー」が見つかりません");
+		assertThat(tempDir.resolve("a.csv.bak")).hasContent("チケットID,トラッカー,大分類,タスク\n1,サマリ,A,\n,タスク,A,a-task");
 	}
 
 	@Test

@@ -46,7 +46,72 @@ public class TicketIdWriter {
 	 * @param notes 情報（数式の参照先へ書き込んだ行など）
 	 * @param failures 書き込めなかった行（数式のセルなど。ユーザーが手で入力する必要がある）
 	 */
-	public record WriteBackResult(Path backup, List<String> notes, List<String> failures) {
+	public record WriteBackResult(Path backup, List<String> notes, List<String> failures, List<String> warnings) {
+		/**
+		 * 警告なしで作成します。
+		 */
+		public WriteBackResult(Path backup, List<String> notes, List<String> failures) {
+			this(backup, notes, failures, List.of());
+		}
+	}
+
+	/**
+	 * 1行の同期結果（「同期結果」「エラー理由」列に書く値）。
+	 *
+	 * @param result 同期結果（作成／更新／変更なし／エラー／未実行）
+	 * @param error エラー理由（成功時は空。空ならセルを空にして前回のエラーを消す）
+	 */
+	public record RowResult(String result, String error) {
+		/**
+		 * 値を正規化して生成します（null は空文字）。
+		 */
+		public RowResult {
+			result = result == null ? "" : result;
+			error = error == null ? "" : error;
+		}
+	}
+
+	/**
+	 * 同期結果の書き戻し内容。
+	 *
+	 * @param lastSyncedAtColumn 最終同期日時の列名
+	 * @param resultColumn 同期結果の列名
+	 * @param errorColumn エラー理由の列名
+	 * @param syncedAt 最終同期日時（文字列として書く。全行同じ値）
+	 * @param rows 行番号 → 結果
+	 */
+	public record SyncResults(String lastSyncedAtColumn, String resultColumn, String errorColumn, String syncedAt,
+			Map<Integer, RowResult> rows) {
+
+		/**
+		 * 列名（最終同期日時・同期結果・エラー理由の順）。
+		 *
+		 * @return 列名
+		 */
+		public List<String> columns() {
+			return List.of(lastSyncedAtColumn, resultColumn, errorColumn);
+		}
+
+		private String[] values(RowResult row) {
+			return new String[] { syncedAt, row.result(), truncate(row.error()) };
+		}
+	}
+
+	/**
+	 * 既存の列に書く文字列の値（自動で変更したステータス名など）。列がファイルにない場合は書きません。
+	 *
+	 * @param column 列のヘッダ名
+	 * @param rows 行番号 → 値
+	 */
+	public record ColumnValues(String column, Map<Integer, String> rows) {
+	}
+
+	/** エラー理由の最大文字数（Redmine のエラー応答が長い場合に切り詰める。Excel のセルは 32767 文字まで） */
+	static final int MAX_ERROR_LENGTH = 1000;
+
+	private static String truncate(String value) {
+		String oneLine = value.replace("\r\n", " ").replace('\r', ' ').replace('\n', ' ').trim();
+		return oneLine.length() <= MAX_ERROR_LENGTH ? oneLine : oneLine.substring(0, MAX_ERROR_LENGTH) + "…";
 	}
 
 	/**
@@ -103,7 +168,29 @@ public class TicketIdWriter {
 	 */
 	public WriteBackResult writeBack(String filePath, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
 			ExcelSource source, boolean makeBackup) throws IOException {
-		return write(filePath, ticketIdColumn, rowIssueIds, source, makeBackup, true);
+		return writeBack(filePath, ticketIdColumn, rowIssueIds, source, makeBackup, null);
+	}
+
+	/**
+	 * 新規作成したIDと同期結果（最終同期日時・同期結果・エラー理由）を1回で書き戻します（.bak も1回）。
+	 * <p>
+	 * 同期結果の列がなければヘッダの末尾に追加します（Excel のテーブルはテーブルを右に1列ずつ広げる。
+	 * テーブルのすぐ右の列が使われている場合は追加せず warnings に記録）。同期結果の列のセルが数式の場合は
+	 * 上書きせず warnings に記録します。
+	 * </p>
+	 *
+	 * @param filePath 入力ファイルのパス
+	 * @param ticketIdColumn ID列のヘッダ名
+	 * @param rowIssueIds 行番号 → ID（空なら ID は書かない）
+	 * @param source Excel の読み込み元（CSV では無視）
+	 * @param makeBackup {@code <file>.bak} を作成（上書き）する場合 true
+	 * @param results 同期結果（null なら書かない）
+	 * @return 結果（何も書かなかった場合 backup は null）
+	 * @throws IOException 読み書きに失敗した場合
+	 */
+	public WriteBackResult writeBack(String filePath, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
+			ExcelSource source, boolean makeBackup, SyncResults results) throws IOException {
+		return writeBack(filePath, ticketIdColumn, rowIssueIds, source, makeBackup, results, null);
 	}
 
 	/**
@@ -119,34 +206,57 @@ public class TicketIdWriter {
 	 */
 	public WriteBackResult writeValues(String filePath, String column, Map<Integer, String> rowValues,
 			ExcelSource source, boolean makeBackup) throws IOException {
-		return write(filePath, column, rowValues, source, makeBackup, false);
+		return writeBack(filePath, column, Map.of(), source, makeBackup, null, new ColumnValues(column, rowValues));
 	}
 
-	private WriteBackResult write(String filePath, String ticketIdColumn, Map<Integer, ?> rowIssueIds,
-			ExcelSource source, boolean makeBackup, boolean appendColumn) throws IOException {
+	/**
+	 * 新規作成したID・同期結果・既存の列の値（自動で変更したステータス名など）を1回で書き戻します（.bak も1回）。
+	 *
+	 * @param filePath 入力ファイルのパス
+	 * @param ticketIdColumn ID列のヘッダ名
+	 * @param rowIssueIds 行番号 → ID（空なら ID は書かない）
+	 * @param source Excel の読み込み元（CSV では無視）
+	 * @param makeBackup {@code <file>.bak} を作成（上書き）する場合 true
+	 * @param results 同期結果（null なら書かない）
+	 * @param values 既存の列に書く値（null なら書かない。列がファイルにない場合は書かない）
+	 * @return 結果（何も書かなかった場合 backup は null）
+	 * @throws IOException 読み書きに失敗した場合
+	 */
+	public WriteBackResult writeBack(String filePath, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
+			ExcelSource source, boolean makeBackup, SyncResults results, ColumnValues values) throws IOException {
 		Path path = Paths.get(filePath);
 		byte[] original = Files.readAllBytes(path);
 		List<String> notes = new ArrayList<>();
 		List<String> failures = new ArrayList<>();
+		List<String> warnings = new ArrayList<>();
+		Map<Integer, Long> ids = rowIssueIds == null ? Map.of() : rowIssueIds;
+		SyncResults syncResults = results != null && !results.rows().isEmpty() ? results : null;
+		ColumnValues columnValues = values != null && values.rows() != null && !values.rows().isEmpty() ? values
+				: null;
+		if (ids.isEmpty() && syncResults == null && columnValues == null) {
+			return new WriteBackResult(null, notes, failures, warnings);
+		}
 		byte[] updated;
 		if (path.getFileName().toString().toLowerCase().endsWith(".csv")) {
-			updated = rewriteCsv(original, ticketIdColumn, rowIssueIds, appendColumn);
+			updated = rewriteCsv(original, ticketIdColumn, ids, syncResults, columnValues);
 		} else {
-			updated = rewriteExcel(original, ticketIdColumn, rowIssueIds, source, notes, failures, appendColumn);
+			updated = rewriteExcel(original, ticketIdColumn, ids, source, notes, failures, syncResults, warnings,
+					columnValues);
 		}
 		if (updated == null) {
-			return new WriteBackResult(null, notes, failures);
+			return new WriteBackResult(null, notes, failures, warnings);
 		}
 		Path backup = path.resolveSibling(path.getFileName().toString() + ".bak");
 		if (makeBackup) {
 			Files.copy(path, backup, StandardCopyOption.REPLACE_EXISTING);
 		}
 		Files.write(path, updated);
-		return new WriteBackResult(backup, notes, failures);
+		return new WriteBackResult(backup, notes, failures, warnings);
 	}
 
-	private byte[] rewriteExcel(byte[] original, String ticketIdColumn, Map<Integer, ?> rowIssueIds,
-			ExcelSource source, List<String> notes, List<String> failures, boolean appendColumn) throws IOException {
+	private byte[] rewriteExcel(byte[] original, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
+			ExcelSource source, List<String> notes, List<String> failures, SyncResults results,
+			List<String> warnings, ColumnValues columnValues) throws IOException {
 		try (Workbook workbook = WorkbookFactory.create(new ByteArrayInputStream(original))) {
 			ExcelArea area = ExcelArea.resolve(workbook, source);
 			Sheet sheet = area.sheet();
@@ -154,62 +264,15 @@ public class TicketIdWriter {
 			if (header == null) {
 				throw new IOException("ヘッダ行が見つかりません（シート「" + area.sheetName() + "」）");
 			}
-			int column = area.findColumn(ticketIdColumn);
-			if (column < 0 && !appendColumn) {
-				return null;
-			}
-			if (column < 0) {
-				if (area.table() != null) {
-					throw new IOException("テーブル「" + area.table().getName() + "」にチケットID列「" + ticketIdColumn
-							+ "」がありません");
-				}
-				column = Math.max(header.getLastCellNum(), 0);
-				Cell headerCell = header.createCell(column, CellType.STRING);
-				headerCell.setCellValue(ticketIdColumn);
-				if (column > 0 && header.getCell(column - 1) != null) {
-					headerCell.setCellStyle(header.getCell(column - 1).getCellStyle());
-				}
-			}
 			int written = 0;
-			for (Map.Entry<Integer, ?> entry : rowIssueIds.entrySet()) {
-				String label = "シート「" + area.sheetName() + "」行" + entry.getKey();
-				Object value = entry.getValue();
-				String what = value instanceof Long ? "チケット #" + value : "「" + value + "」";
-				int rowIndex = entry.getKey() - 1;
-				Row row = sheet.getRow(rowIndex);
-				if (row == null) {
-					row = sheet.createRow(rowIndex);
-				}
-				Cell cell = row.getCell(column);
-				if (cell == null) {
-					cell = row.createCell(column);
-				}
-				if (cell.getCellType() != CellType.FORMULA) {
-					setValue(cell, value);
-					written++;
-					continue;
-				}
-				ExcelArea.Reference target = followReference(cell);
-				if (target == null) {
-					failures.add(label + ": 「" + ticketIdColumn + "」列のセルが数式（=" + cell.getCellFormula()
-							+ "）のため書き込めません。" + what + " を手で入力してください");
-					continue;
-				}
-				Row targetRow = target.sheet().getRow(target.row());
-				if (targetRow == null) {
-					targetRow = target.sheet().createRow(target.row());
-				}
-				Cell targetCell = targetRow.getCell(target.column());
-				if (targetCell == null) {
-					targetCell = targetRow.createCell(target.column());
-				}
-				setValue(targetCell, value);
-				// 数式は残したまま、保存される計算結果も更新する（再計算しなくても次回の読み込みで ID が読める）
-				setValue(cell, value);
-				workbook.setForceFormulaRecalculation(true);
-				notes.add(label + ": 「" + ticketIdColumn + "」列が参照の数式（=" + cell.getCellFormula() + "）のため、"
-						+ what + " を参照先 " + target.describe() + " に書き込みました");
-				written++;
+			if (!rowIssueIds.isEmpty()) {
+				written += writeExcelIds(workbook, area, header, ticketIdColumn, rowIssueIds, notes, failures);
+			}
+			if (results != null) {
+				written += writeExcelResults(area, header, results, warnings);
+			}
+			if (columnValues != null) {
+				written += writeExcelValues(workbook, area, columnValues, notes, failures);
 			}
 			if (written == 0) {
 				return null;
@@ -220,12 +283,257 @@ public class TicketIdWriter {
 		}
 	}
 
+	/**
+	 * 既存の列に文字列の値を書き込みます（列がない場合は書かない）。単一セル参照の数式は参照先へ書き込み、
+	 * それ以外の数式のセルは上書きせず failures に記録します。
+	 *
+	 * @return 書き込んだセルの数
+	 */
+	private static int writeExcelValues(Workbook workbook, ExcelArea area, ColumnValues values, List<String> notes,
+			List<String> failures) throws IOException {
+		Sheet sheet = area.sheet();
+		int column = area.findColumn(values.column());
+		if (column < 0) {
+			return 0;
+		}
+		int written = 0;
+		for (Map.Entry<Integer, String> entry : values.rows().entrySet()) {
+			String label = "シート「" + area.sheetName() + "」行" + entry.getKey();
+			String value = entry.getValue();
+			int rowIndex = entry.getKey() - 1;
+			if (rowIndex <= area.headerRowIndex()) {
+				continue;
+			}
+			Row row = sheet.getRow(rowIndex);
+			if (row == null) {
+				row = sheet.createRow(rowIndex);
+			}
+			Cell cell = row.getCell(column);
+			if (cell == null) {
+				cell = row.createCell(column);
+			}
+			if (cell.getCellType() != CellType.FORMULA) {
+				setValue(cell, value);
+				written++;
+				continue;
+			}
+			ExcelArea.Reference target = followReference(cell);
+			if (target == null) {
+				failures.add(label + ": 「" + values.column() + "」列のセルが数式（=" + cell.getCellFormula()
+						+ "）のため書き込めません。「" + value + "」を手で入力してください");
+				continue;
+			}
+			Row targetRow = target.sheet().getRow(target.row());
+			if (targetRow == null) {
+				targetRow = target.sheet().createRow(target.row());
+			}
+			Cell targetCell = targetRow.getCell(target.column());
+			if (targetCell == null) {
+				targetCell = targetRow.createCell(target.column());
+			}
+			setValue(targetCell, value);
+			// 数式は残したまま、保存される計算結果も更新する
+			setValue(cell, value);
+			workbook.setForceFormulaRecalculation(true);
+			notes.add(label + ": 「" + values.column() + "」列が参照の数式（=" + cell.getCellFormula() + "）のため、「"
+					+ value + "」を参照先 " + target.describe() + " に書き込みました");
+			written++;
+		}
+		return written;
+	}
+
 	private static void setValue(Cell cell, Object value) {
 		if (value instanceof Number number) {
 			cell.setCellValue(number.doubleValue());
 		} else {
 			cell.setCellValue(String.valueOf(value));
 		}
+	}
+
+	/**
+	 * 同期結果の列（なければ追加）に値を書き込みます。
+	 *
+	 * @return 書き込んだセルの数
+	 */
+	private static int writeExcelResults(ExcelArea area, Row header, SyncResults results, List<String> warnings) {
+		Sheet sheet = area.sheet();
+		List<String> names = results.columns();
+		int[] columns = new int[names.size()];
+		for (int i = 0; i < names.size(); i++) {
+			columns[i] = area.findColumn(names.get(i));
+		}
+		int tableLastColumn = area.table() != null ? area.table().getEndCellReference().getCol() : -1;
+		int written = 0;
+		boolean tableBlocked = false;
+		for (int i = 0; i < names.size(); i++) {
+			if (columns[i] >= 0) {
+				continue;
+			}
+			if (area.table() != null) {
+				if (tableBlocked) {
+					continue;
+				}
+				columns[i] = appendTableColumn(area, tableLastColumn + 1, names.get(i), warnings);
+				if (columns[i] >= 0) {
+					tableLastColumn = columns[i];
+					written++;
+				} else {
+					tableBlocked = true;
+				}
+			} else {
+				int column = Math.max(header.getLastCellNum(), 0);
+				createHeaderCell(header, column, names.get(i));
+				columns[i] = column;
+				written++;
+			}
+		}
+		int[] formulaRows = new int[names.size()];
+		for (Map.Entry<Integer, RowResult> entry : results.rows().entrySet()) {
+			int rowIndex = entry.getKey() - 1;
+			if (rowIndex <= area.headerRowIndex()) {
+				continue;
+			}
+			Row row = sheet.getRow(rowIndex);
+			if (row == null) {
+				row = sheet.createRow(rowIndex);
+			}
+			String[] values = results.values(entry.getValue());
+			for (int i = 0; i < names.size(); i++) {
+				if (columns[i] < 0) {
+					continue;
+				}
+				Cell cell = row.getCell(columns[i]);
+				if (cell != null && cell.getCellType() == CellType.FORMULA) {
+					formulaRows[i]++;
+					continue;
+				}
+				if (values[i].isEmpty()) {
+					if (cell != null && cell.getCellType() != CellType.BLANK) {
+						cell.setBlank();
+						written++;
+					}
+					continue;
+				}
+				if (cell == null) {
+					cell = row.createCell(columns[i]);
+				}
+				cell.setCellValue(values[i]);
+				written++;
+			}
+		}
+		for (int i = 0; i < names.size(); i++) {
+			if (formulaRows[i] > 0) {
+				warnings.add("シート「" + area.sheetName() + "」の「" + names.get(i) + "」列は数式のセルのため、"
+						+ formulaRows[i] + "行に書き込みませんでした（同期結果の列には数式を入れないでください）");
+			}
+		}
+		return written;
+	}
+
+	/**
+	 * テーブルの右に列を追加します（テーブルの範囲・オートフィルタも広げる）。
+	 *
+	 * @return 追加した列（追加できない場合は -1）
+	 */
+	private static int appendTableColumn(ExcelArea area, int column, String name, List<String> warnings) {
+		org.apache.poi.xssf.usermodel.XSSFTable table = area.table();
+		Sheet sheet = area.sheet();
+		int firstRow = table.getStartCellReference().getRow();
+		int lastRow = table.getEndCellReference().getRow();
+		for (int r = firstRow; r <= lastRow; r++) {
+			Row row = sheet.getRow(r);
+			Cell cell = row == null ? null : row.getCell(column);
+			if (cell != null && (cell.getCellType() == CellType.FORMULA
+					|| !SpreadsheetParser.getCellString(cell).isBlank())) {
+				warnings.add("テーブル「" + table.getName() + "」に「" + name + "」列がなく、すぐ右の列（"
+						+ org.apache.poi.ss.util.CellReference.convertNumToColString(column)
+						+ "列）が使われているため追加できません。テーブルに「" + name + "」列を追加してください");
+				return -1;
+			}
+		}
+		for (org.apache.poi.xssf.usermodel.XSSFTable other : ((org.apache.poi.xssf.usermodel.XSSFSheet) sheet)
+				.getTables()) {
+			if (other != table && other.getStartCellReference().getCol() <= column
+					&& other.getEndCellReference().getCol() >= column
+					&& other.getStartCellReference().getRow() <= lastRow
+					&& other.getEndCellReference().getRow() >= firstRow) {
+				warnings.add("テーブル「" + table.getName() + "」のすぐ右にテーブル「" + other.getName() + "」があるため、「"
+						+ name + "」列を追加できません。テーブルに「" + name + "」列を追加してください");
+				return -1;
+			}
+		}
+		Row header = sheet.getRow(firstRow);
+		createHeaderCell(header, column, name);
+		table.createColumn(name);
+		return column;
+	}
+
+	private static void createHeaderCell(Row header, int column, String name) {
+		Cell headerCell = header.createCell(column, CellType.STRING);
+		headerCell.setCellValue(name);
+		if (column > 0 && header.getCell(column - 1) != null) {
+			headerCell.setCellStyle(header.getCell(column - 1).getCellStyle());
+		}
+	}
+
+	/**
+	 * チケットIDを書き込みます。
+	 *
+	 * @return 書き込んだ行の数
+	 */
+	private static int writeExcelIds(Workbook workbook, ExcelArea area, Row header, String ticketIdColumn,
+			Map<Integer, Long> rowIssueIds, List<String> notes, List<String> failures) throws IOException {
+		Sheet sheet = area.sheet();
+		int column = area.findColumn(ticketIdColumn);
+		if (column < 0) {
+			if (area.table() != null) {
+				throw new IOException("テーブル「" + area.table().getName() + "」にチケットID列「" + ticketIdColumn
+						+ "」がありません");
+			}
+			column = Math.max(header.getLastCellNum(), 0);
+			createHeaderCell(header, column, ticketIdColumn);
+		}
+		int written = 0;
+		for (Map.Entry<Integer, Long> entry : rowIssueIds.entrySet()) {
+			String label = "シート「" + area.sheetName() + "」行" + entry.getKey();
+			int rowIndex = entry.getKey() - 1;
+			Row row = sheet.getRow(rowIndex);
+			if (row == null) {
+				row = sheet.createRow(rowIndex);
+			}
+			Cell cell = row.getCell(column);
+			if (cell == null) {
+				cell = row.createCell(column);
+			}
+			double id = entry.getValue().doubleValue();
+			if (cell.getCellType() != CellType.FORMULA) {
+				cell.setCellValue(id);
+				written++;
+				continue;
+			}
+			ExcelArea.Reference target = followReference(cell);
+			if (target == null) {
+				failures.add(label + ": チケットID列のセルが数式（=" + cell.getCellFormula()
+						+ "）のため書き込めません。チケット #" + entry.getValue() + " を手で入力してください");
+				continue;
+			}
+			Row targetRow = target.sheet().getRow(target.row());
+			if (targetRow == null) {
+				targetRow = target.sheet().createRow(target.row());
+			}
+			Cell targetCell = targetRow.getCell(target.column());
+			if (targetCell == null) {
+				targetCell = targetRow.createCell(target.column());
+			}
+			targetCell.setCellValue(id);
+			// 数式は残したまま、保存される計算結果も更新する（再計算しなくても次回の読み込みで ID が読める）
+			cell.setCellValue(id);
+			workbook.setForceFormulaRecalculation(true);
+			notes.add(label + ": チケットID列が参照の数式（=" + cell.getCellFormula() + "）のため、チケット #"
+					+ entry.getValue() + " を参照先 " + target.describe() + " に書き込みました");
+			written++;
+		}
+		return written;
 	}
 
 	/**
@@ -244,8 +552,8 @@ public class TicketIdWriter {
 		return null;
 	}
 
-	private byte[] rewriteCsv(byte[] original, String ticketIdColumn, Map<Integer, ?> rowIssueIds,
-			boolean appendColumn) throws IOException {
+	private byte[] rewriteCsv(byte[] original, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
+			SyncResults results, ColumnValues columnValues) throws IOException {
 		CsvFileFormat format = CsvFileFormat.detect(original);
 		List<String[]> records = new ArrayList<>();
 		try (CSVReader reader = SpreadsheetParser.newCsvReader(format.decode(original))) {
@@ -259,31 +567,49 @@ public class TicketIdWriter {
 		if (records.isEmpty()) {
 			throw new IOException("ヘッダ行が見つかりません");
 		}
-		String[] header = records.get(0);
-		int column = -1;
-		for (int i = 0; i < header.length; i++) {
-			String name = header[i] == null ? "" : header[i];
-			if (i == 0 && !name.isEmpty() && name.charAt(0) == '﻿') {
-				name = name.substring(1);
-			}
-			if (ticketIdColumn.equals(name.trim())) {
-				column = i;
-				break;
+		if (!rowIssueIds.isEmpty()) {
+			int column = csvColumn(records, ticketIdColumn);
+			for (Map.Entry<Integer, Long> entry : rowIssueIds.entrySet()) {
+				int index = entry.getKey() - 1;
+				if (index <= 0 || index >= records.size()) {
+					throw new IOException("書き戻し対象の行が見つかりません: " + entry.getKey());
+				}
+				records.set(index, withValue(records.get(index), column, String.valueOf(entry.getValue())));
 			}
 		}
-		if (column < 0 && !appendColumn) {
-			return null;
-		}
-		if (column < 0) {
-			column = header.length;
-			records.set(0, withValue(header, column, ticketIdColumn));
-		}
-		for (Map.Entry<Integer, ?> entry : rowIssueIds.entrySet()) {
-			int index = entry.getKey() - 1;
-			if (index <= 0 || index >= records.size()) {
-				throw new IOException("書き戻し対象の行が見つかりません: " + entry.getKey());
+		if (results != null) {
+			List<String> names = results.columns();
+			int[] columns = new int[names.size()];
+			for (int i = 0; i < names.size(); i++) {
+				columns[i] = csvColumn(records, names.get(i));
 			}
-			records.set(index, withValue(records.get(index), column, String.valueOf(entry.getValue())));
+			for (Map.Entry<Integer, RowResult> entry : results.rows().entrySet()) {
+				int index = entry.getKey() - 1;
+				if (index <= 0 || index >= records.size()) {
+					continue;
+				}
+				String[] values = results.values(entry.getValue());
+				String[] record = records.get(index);
+				for (int i = 0; i < names.size(); i++) {
+					record = withValue(record, columns[i], values[i]);
+				}
+				records.set(index, record);
+			}
+		}
+		if (columnValues != null) {
+			int column = findCsvColumn(records.get(0), columnValues.column());
+			if (column >= 0) {
+				for (Map.Entry<Integer, String> entry : columnValues.rows().entrySet()) {
+					int index = entry.getKey() - 1;
+					if (index <= 0 || index >= records.size()) {
+						continue;
+					}
+					records.set(index, withValue(records.get(index), column, entry.getValue()));
+				}
+			} else if (rowIssueIds.isEmpty() && results == null) {
+				// 列がなく、ほかに書くものもない
+				return null;
+			}
 		}
 
 		StringWriter buffer = new StringWriter();
@@ -300,7 +626,39 @@ public class TicketIdWriter {
 		return format.encode(text);
 	}
 
-	private String[] withValue(String[] record, int column, String value) {
+	/**
+	 * ヘッダの列を探し、なければヘッダの末尾に追加します。
+	 *
+	 * @return 列（0始まり）
+	 */
+	private static int csvColumn(List<String[]> records, String columnName) {
+		String[] header = records.get(0);
+		int found = findCsvColumn(header, columnName);
+		if (found >= 0) {
+			return found;
+		}
+		int column = header.length;
+		records.set(0, withValue(header, column, columnName));
+		return column;
+	}
+
+	/**
+	 * ヘッダの列を探します（ない場合は -1）。
+	 */
+	private static int findCsvColumn(String[] header, String columnName) {
+		for (int i = 0; i < header.length; i++) {
+			String name = header[i] == null ? "" : header[i];
+			if (i == 0 && !name.isEmpty() && name.charAt(0) == '\uFEFF') {
+				name = name.substring(1);
+			}
+			if (columnName.equals(name.trim())) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	private static String[] withValue(String[] record, int column, String value) {
 		String[] copy = record.length > column ? record.clone() : Arrays.copyOf(record, column + 1);
 		for (int i = 0; i < copy.length; i++) {
 			if (copy[i] == null) {

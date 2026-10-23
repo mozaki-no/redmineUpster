@@ -150,6 +150,9 @@ class DiffCalculatorTests {
 				.contains("行3")
 				.contains("A > B > C")
 				.contains("親行 [A > B]");
+		// 書き戻し用の行ごとの理由（行番号・階層パスのラベルなし）
+		assertThat(plan.rowErrors()).containsOnlyKeys(3);
+		assertThat(plan.rowErrors().get(3)).singleElement().asString().startsWith("親行 [A > B] がファイルにありません");
 	}
 
 	@Test
@@ -176,6 +179,8 @@ class DiffCalculatorTests {
 		assertThat(plan.errors()).hasSize(2);
 		assertThat(plan.errors().get(0)).contains("行2").contains("数値ではありません");
 		assertThat(plan.errors().get(1)).contains("行4").contains("チケットID 20").contains("行3");
+		assertThat(plan.rowErrors()).containsOnlyKeys(2, 4);
+		assertThat(plan.rowErrors().get(2)).containsExactly("チケットIDが数値ではありません: abc");
 	}
 
 	@Test
