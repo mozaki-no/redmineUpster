@@ -127,6 +127,7 @@ redmineUpster.exe --sync --config=sync-config.yml --file=WBS.xlsx
 `sync-config.yml` の `autoCloseParents:` の `enabled: true` を有効にすると、同期の最後に、子チケットがすべて完了した親チケットを完了にします（タスクがすべて完了なら成果物、成果物がすべて完了なら小分類…と上へ順に）。
 
 - 「完了」は Redmine で「終了したチケット」扱いのステータス（削除扱いのステータスを含む）。Excel にない子チケットも数えます。
+- Redmine で手動で作った子チケット（Excel にないチケット）を数えたくない場合は `ignoreNotInExcel: true` にします。Excel にあるチケット（`files:` のファイルを含む）と今回作ったチケットだけで判定し、手動の子チケットは無視します（変更もしません）。子が手動のチケットだけの親は完了にしません。
 - 完了にするステータスは `status:`（省略時は `statusMap` の「完了」→ Redmine の「完了」「終了」）。完了にした親を未完了に戻すことはしません。
 - ルートチケット（`rootIssueId` / `--root-issue`）とその上は完了にしません。
 - 子に着手済み（新規でない）のチケットがある「新規」の親は「進行中」にします（これも上へ順に。`inProgressStatus:` で変更、`inProgress: false` で無効）。進行中・完了の親を新規に戻すことはしません。

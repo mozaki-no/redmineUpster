@@ -53,6 +53,8 @@ projects:
       #   status: "完了"   # 完了にするステータス（名前または番号。省略時は statusMap の「完了」→ Redmine の「完了」「終了」）
       #   # 子に着手済み（新規でない）のチケットがある新規の親は「進行中」にする（inProgress: false で無効）
       #   inProgressStatus: "進行中"   # 省略時は statusMap の「進行中」→ Redmine の「進行中」
+      #   # true: Excel にない子チケット（Redmine で手動作成したものなど）を無視して判定する（既定 false。無視した子は変更しない）
+      #   ignoreNotInExcel: false
       status:
         enabled: true
         mode: "BY_DATES"  # BY_DATES | FIXED

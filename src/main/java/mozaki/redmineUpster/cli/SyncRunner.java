@@ -363,7 +363,8 @@ public class SyncRunner {
             // 10. 親チケットの自動完了（子チケットがすべて完了した親を完了にする。設定 sync.autoCloseParents）
             ParentAutoCloser.Result autoClosed = null;
             if (state.ticketsSynced && isAutoCloseEnabled(syncConfig)) {
-                autoClosed = autoCloseParents(jobs, listedFiles, projectConfig, client, dryRun, state, logger);
+                autoClosed = autoCloseParents(jobs, listedFiles, projectConfig, cliExcelSource, cliVirtualParents,
+                        client, dryRun, state, logger);
             }
             // 自動完了のために後回しにした書き戻し（チケットID・同期結果・ステータス）をファイルごとに1回で書く
             flushPendingWriteBacks(jobs, projectConfig, autoClosed, state, logger);
@@ -481,6 +482,8 @@ public class SyncRunner {
         private Integer deletedStatusId;
         /** 終了ステータスのID（親チケットの自動完了が有効な場合だけ取得。取得できなければ null） */
         private Set<Long> closedStatusIds;
+        /** 論理削除のために読み込んだ（同期しない）sync.files のファイルのチケットID（親チケットの自動完了でも使用） */
+        private final Map<Path, Set<Long>> listedIssueIds = new HashMap<>();
     }
 
     /**
@@ -1150,6 +1153,7 @@ public class SyncRunner {
                     return;
                 }
                 logger.info("  チケット " + ids.size() + "件を論理削除の対象外にします");
+                state.listedIssueIds.put(normalize(listed), ids);
                 keep.addAll(ids);
             } catch (IOException | RuntimeException e) {
                 logger.warn("sync.files のファイル「" + listed + "」を読み込めないため、安全のため論理削除は行いません: "
@@ -1239,7 +1243,8 @@ public class SyncRunner {
      * </p>
      */
     private ParentAutoCloser.Result autoCloseParents(List<FileJob> jobs, List<String> listedFiles,
-            ProjectConfig projectConfig, RedmineClient client, boolean dryRun, RunState state, FileLogger logger) {
+            ProjectConfig projectConfig, ExcelSource cliExcelSource, Boolean cliVirtualParents, RedmineClient client,
+            boolean dryRun, RunState state, FileLogger logger) {
         SyncConfig syncConfig = projectConfig.getSync();
         Set<Long> closedStatusIds = closedStatusIds(client, state, logger);
         if (closedStatusIds.isEmpty()) {
@@ -1295,8 +1300,19 @@ public class SyncRunner {
         Set<Long> synced = new HashSet<>();
         state.planned.forEach(planned -> synced.add(planned.issueId()));
         Set<Long> candidates = ParentAutoCloser.candidates(synced, nodes, protectedIds);
+        boolean ignoreNotInExcel = syncConfig.getAutoCloseParents().isIgnoreNotInExcel();
+        Set<Long> managed = ignoreNotInExcel ? excelManagedIssueIds(jobs, listedFiles, projectConfig, cliExcelSource,
+                cliVirtualParents, client, issues, state, logger) : null;
+        if (ignoreNotInExcel) {
+            if (managed == null) {
+                return null;
+            }
+            long ignored = nodes.keySet().stream().filter(id -> !managed.contains(id)).count();
+            logger.info("autoCloseParents.ignoreNotInExcel: Excelにないチケット " + ignored
+                    + "件を子チケットの判定に使いません（変更もしません）");
+        }
         List<ParentAutoCloser.Change> changes = new ArrayList<>();
-        List<Long> closing = ParentAutoCloser.plan(nodes, closedStatusIds, candidates, protectedIds);
+        List<Long> closing = ParentAutoCloser.plan(nodes, closedStatusIds, candidates, protectedIds, managed);
         closing.forEach(id -> changes.add(new ParentAutoCloser.Change(id, target, true)));
         logger.info("AUTO_CLOSE candidates: " + closing.size() + "（子チケットがすべて完了した親チケット。ステータス「"
                 + target.label() + "」(status_id=" + target.id() + ") にします）");
@@ -1317,7 +1333,7 @@ public class SyncRunner {
                         + "（autoCloseParents.inProgressStatus で指定できます）");
             } else {
                 List<Long> starting = ParentAutoCloser.planInProgress(nodes, newStatusId, closing, candidates,
-                        protectedIds);
+                        protectedIds, managed);
                 for (Long id : starting) {
                     changes.add(new ParentAutoCloser.Change(id, inProgress, false));
                 }
@@ -1334,6 +1350,46 @@ public class SyncRunner {
         state.ticketErrors += result.errors().size();
         state.errors.addAll(result.errors());
         return dryRun ? null : result;
+    }
+
+    /**
+     * Excel で管理しているチケット（同期したファイル・sync.files のファイルにあるチケットと、今回作成したチケット。
+     * 仮想親を含む）を返します（autoCloseParents.ignoreNotInExcel 用）。
+     *
+     * @return チケットID（sync.files のファイルを読めない場合は null。安全のため自動完了しない）
+     */
+    private Set<Long> excelManagedIssueIds(List<FileJob> jobs, List<String> listedFiles,
+            ProjectConfig projectConfig, ExcelSource cliExcelSource, Boolean cliVirtualParents, RedmineClient client,
+            Map<Long, Map<String, Object>> issues, RunState state, FileLogger logger) {
+        Set<Long> managed = new HashSet<>(state.keepIssueIds);
+        state.planned.forEach(planned -> managed.add(planned.issueId()));
+        Set<Path> processed = new HashSet<>();
+        jobs.forEach(job -> processed.add(normalize(job.filePath)));
+        Map<Path, Long> configuredRoots = configuredRootIssueIds(projectConfig);
+        for (String listed : listedFiles) {
+            Path key = normalize(listed);
+            if (processed.contains(key)) {
+                continue;
+            }
+            Set<Long> ids = state.listedIssueIds.get(key);
+            if (ids == null) {
+                try {
+                    ids = listedFileIssueIds(listed, projectConfig, cliExcelSource, cliVirtualParents, client, issues,
+                            deleteStatusId(projectConfig.getSync()), logger, configuredRoots.get(key));
+                } catch (IOException | RuntimeException e) {
+                    logger.warn("sync.files のファイル「" + listed + "」を読み込めません: " + e.getMessage());
+                    ids = null;
+                }
+                if (ids == null) {
+                    logger.warn("sync.files のファイル「" + listed + "」を読み込めないため、安全のため親チケットの"
+                            + "自動完了は行いません（autoCloseParents.ignoreNotInExcel）");
+                    return null;
+                }
+                state.listedIssueIds.put(key, ids);
+            }
+            managed.addAll(ids);
+        }
+        return managed;
     }
 
     /**

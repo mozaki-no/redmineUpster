@@ -260,6 +260,75 @@ class AutoCloseParentsTests {
 		assertThat(status(1)).isEqualTo(IN_PROGRESS);
 	}
 
+	private Path configWithoutDeletion(String... extra) throws IOException {
+		Path config = config(true, extra);
+		Files.writeString(config, Files.readString(config).replace("      deletion: { statusId: 99 }\n", ""));
+		return config;
+	}
+
+	@Test
+	@DisplayName("ignoreNotInExcel: true なら Excelにない未完了の子を無視して親を完了にし、その子は変更しない")
+	void ignoreNotInExcel_closesParentDespiteOpenManualChild() throws IOException {
+		redmine.put(1L, issue(1, "A", null, OPEN));
+		redmine.put(2L, issue(2, "B", 1L, OPEN));
+		redmine.put(3L, issue(3, "t1", 2L, DONE));
+		redmine.put(9L, issue(9, "手動", 2L, OPEN));
+		csv(HEADER, "1,タスク,A,,,", "2,タスク,A,B,,", "3,タスク,A,B,t1,完了");
+
+		int exit = run(configWithoutDeletion("      autoCloseParents: { enabled: true, ignoreNotInExcel: true }"),
+				false, null);
+
+		assertThat(exit).isEqualTo(0);
+		assertThat(status(2)).isEqualTo(DONE);
+		assertThat(status(1)).isEqualTo(DONE);
+		assertThat(status(9)).isEqualTo(OPEN);
+		verify(client, never()).updateIssue(Mockito.eq(9L), anyMap());
+	}
+
+	@Test
+	@DisplayName("ignoreNotInExcel: true でも、子がExcelにないチケットだけの親は完了にも進行中にもしない")
+	void ignoreNotInExcel_parentWithOnlyManualChildren_untouched() throws IOException {
+		redmine.put(1L, issue(1, "A", null, OPEN));
+		redmine.put(2L, issue(2, "B", 1L, OPEN));
+		redmine.put(8L, issue(8, "手動1", 2L, DONE));
+		redmine.put(9L, issue(9, "手動2", 2L, IN_PROGRESS));
+		csv(HEADER, "1,タスク,A,,,", "2,タスク,A,B,,");
+
+		assertThat(run(configWithoutDeletion("      autoCloseParents: { enabled: true, ignoreNotInExcel: true }"),
+				false, null)).isEqualTo(0);
+
+		assertThat(status(2)).isEqualTo(OPEN);
+		assertThat(status(1)).isEqualTo(OPEN);
+		assertThat(statusChanges).isEmpty();
+
+		// 既定（false）なら Redmine の子で判定して進行中にする
+		assertThat(run(configWithoutDeletion(), false, null)).isEqualTo(0);
+		assertThat(status(2)).isEqualTo(IN_PROGRESS);
+		assertThat(status(1)).isEqualTo(IN_PROGRESS);
+		assertThat(status(8)).isEqualTo(DONE);
+		assertThat(status(9)).isEqualTo(IN_PROGRESS);
+	}
+
+	@Test
+	@DisplayName("ignoreNotInExcel: true では、sync.files の同期しないファイルにあるチケットは子の判定に使う")
+	void ignoreNotInExcel_countsListedFileTickets() throws IOException {
+		redmine.put(1L, issue(1, "A", null, OPEN));
+		redmine.put(3L, issue(3, "t1", 1L, DONE));
+		redmine.put(4L, issue(4, "t2", 1L, OPEN));
+		csv(HEADER, "1,タスク,A,,,", "3,タスク,A,,t1,完了");
+		Files.writeString(tempDir.resolve("b.csv"), HEADER + "\n4,タスク,A,,t2,\n", StandardCharsets.UTF_8);
+		Path config = configWithoutDeletion("      autoCloseParents: { enabled: true, ignoreNotInExcel: true }",
+				"      files: [a.csv, b.csv]");
+		// b.csv は「A」の行がなく検証エラーになるため、仮想親を有効にして読めるようにする
+		Files.writeString(config, Files.readString(config) + "      virtualParents: { enabled: true, trackerId: 2 }\n");
+
+		assertThat(run(config, false, null)).isEqualTo(0);
+
+		// b.csv の #4 が未完了なので完了にしない（完了の子 #3 があるので進行中）
+		assertThat(status(1)).isEqualTo(IN_PROGRESS);
+		assertThat(status(4)).isEqualTo(OPEN);
+	}
+
 	@Test
 	@DisplayName("子に進行中のチケットがあれば、新規の親を再帰的に進行中にし、ステータス列に書き戻す")
 	void inProgressChild_startsParentsRecursively() throws IOException {
@@ -422,7 +491,8 @@ class AutoCloseParentsTests {
 	@DisplayName("設定 autoCloseParents を読み込む")
 	void config_parsed() throws IOException {
 		Path config = config(false,
-				"      autoCloseParents: { enabled: true, status: 完了, inProgressStatus: 進行中, inProgress: false }");
+				"      autoCloseParents: { enabled: true, status: 完了, inProgressStatus: 進行中, inProgress: false,"
+						+ " ignoreNotInExcel: true }");
 		SyncConfigService service = new SyncConfigService(new SyncConfigProperties());
 		service.loadConfig(config.toString());
 
@@ -431,6 +501,8 @@ class AutoCloseParentsTests {
 		assertThat(autoClose.getStatus()).isEqualTo("完了");
 		assertThat(autoClose.getInProgressStatus()).isEqualTo("進行中");
 		assertThat(autoClose.isInProgress()).isFalse();
+		assertThat(autoClose.isIgnoreNotInExcel()).isTrue();
 		assertThat(new AutoCloseParentsConfig().isInProgress()).isTrue();
+		assertThat(new AutoCloseParentsConfig().isIgnoreNotInExcel()).isFalse();
 	}
 }

@@ -219,6 +219,14 @@ public class SyncConfigProperties {
 		 * 子に着手済みのチケットがある新規の親を進行中にするかどうか（既定: true）。
 		 */
 		private boolean inProgress = true;
+
+		/**
+		 * 子チケットの判定（すべて完了・着手済みがある）で、Excelにない子チケット（Redmineで手動作成したもの
+		 * など）を無視するかどうか（既定: false = Redmine の子すべてで判定）。true の場合は、同期したファイル・
+		 * sync.files のファイルにあるチケットと今回作成したチケット（仮想親を含む）だけで判定します。
+		 * 判定に使う子が1つもない親は完了にしません。無視した子チケットは変更しません。
+		 */
+		private boolean ignoreNotInExcel;
 	}
 
 	/**

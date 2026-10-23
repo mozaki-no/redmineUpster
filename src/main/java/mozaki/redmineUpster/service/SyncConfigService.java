@@ -296,6 +296,11 @@ public class SyncConfigService {
 			if (inProgress != null) {
 				autoClose.setInProgress(Boolean.parseBoolean(expandEnvVars(inProgress.toString()).trim()));
 			}
+			Object ignoreNotInExcel = autoCloseMap.get("ignoreNotInExcel");
+			if (ignoreNotInExcel != null) {
+				autoClose.setIgnoreNotInExcel(
+						Boolean.parseBoolean(expandEnvVars(ignoreNotInExcel.toString()).trim()));
+			}
 			config.setAutoCloseParents(autoClose);
 		}
 
