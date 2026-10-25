@@ -33,6 +33,10 @@ projects:
       # files:
       #   - { path: "wbs-設計.xlsx", rootIssueId: 123 }
       #   - { path: "wbs-開発.xlsx", rootIssueId: 124 }
+      # 各行に「最終同期日時」「同期結果」「エラー理由」を書き戻す（既定: 有効。dry-run では書かない）。
+      # 書き戻さない場合は enabled: false（CLI の --no-result-columns が優先）。列名は columns: で変更できる
+      # resultColumns:
+      #   enabled: true
       # Excel に親の行がない階層（例: 大分類の行がないタスク）を「仮想親チケット」として自動作成する（既定: 無効）
       # 無効の場合、親の行がないとエラー。CLI の --virtual-parents / --no-virtual-parents が優先
       # 仮想親は毎回「親チケット・件名・トラッカーが同じチケット」を Redmine から探して使う（なければ作成）
@@ -49,6 +53,8 @@ projects:
       #   status: "完了"   # 完了にするステータス（名前または番号。省略時は statusMap の「完了」→ Redmine の「完了」「終了」）
       #   # 子に着手済み（新規でない）のチケットがある新規の親は「進行中」にする（inProgress: false で無効）
       #   inProgressStatus: "進行中"   # 省略時は statusMap の「進行中」→ Redmine の「進行中」
+      #   # true: Excel にない子チケット（Redmine で手動作成したものなど）を無視して判定する（既定 false。無視した子は変更しない）
+      #   ignoreNotInExcel: false
       status:
         enabled: true
         mode: "BY_DATES"  # BY_DATES | FIXED
@@ -95,6 +101,11 @@ projects:
         # 階層列の空欄は「その階層を飛ばす」（例: 大分類の直下のタスク）。同じ値が続く行は各行に書くかセル結合する。
         # true にすると空欄を前の行の値で補う（旧来の動作。この場合は階層を飛ばせない）
         # fillDownHierarchy: false
+        # 同期結果の書き戻し先の列（なければヘッダの末尾に追加。Excel のテーブルはテーブルを右に広げる）。
+        # この3列は同期の差分には使わない（値を変えても Redmine は更新されない）
+        # lastSyncedAtColumn: "最終同期日時"   # yyyy/MM/dd HH:mm:ss（文字列）。1回の実行で全行同じ値
+        # syncResultColumn: "同期結果"         # 作成／更新／変更なし／エラー／未実行
+        # syncErrorColumn: "エラー理由"        # エラー・未実行の理由（成功した行は空にする）
         # Redmineに反映する日付/ステータス列
         startDateColumn: "着手予定"
         dueDateColumn: "完了予定"

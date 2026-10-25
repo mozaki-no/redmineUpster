@@ -159,6 +159,8 @@ public class SyncConfigProperties {
 		 */
 		private VirtualParentsConfig virtualParents;
 
+		private ResultColumnsConfig resultColumns;
+
 		/**
 		 * 親チケットの自動完了（子チケットがすべて完了したら親も完了にする）の設定。
 		 */
@@ -217,6 +219,14 @@ public class SyncConfigProperties {
 		 * 子に着手済みのチケットがある新規の親を進行中にするかどうか（既定: true）。
 		 */
 		private boolean inProgress = true;
+
+		/**
+		 * 子チケットの判定（すべて完了・着手済みがある）で、Excelにない子チケット（Redmineで手動作成したもの
+		 * など）を無視するかどうか（既定: false = Redmine の子すべてで判定）。true の場合は、同期したファイル・
+		 * sync.files のファイルにあるチケットと今回作成したチケット（仮想親を含む）だけで判定します。
+		 * 判定に使う子が1つもない親は完了にしません。無視した子チケットは変更しません。
+		 */
+		private boolean ignoreNotInExcel;
 	}
 
 	/**
@@ -248,6 +258,15 @@ public class SyncConfigProperties {
 	 * 優先順位は table ＞ sheet ＞ 先頭シート。CLI の --table / --sheet で上書きできます。
 	 * </p>
 	 */
+	/**
+	 * 同期結果（最終同期日時・同期結果・エラー理由）の書き戻し設定。
+	 */
+	@Data
+	public static class ResultColumnsConfig {
+		/** 書き戻す場合 true（既定） */
+		private boolean enabled = true;
+	}
+
 	@Data
 	public static class ExcelConfig {
 		/**
@@ -342,6 +361,15 @@ public class SyncConfigProperties {
 		 * </p>
 		 */
 		private boolean fillDownHierarchy = false;
+
+		/** 書き戻し: 最終同期日時の列 */
+		private String lastSyncedAtColumn = "最終同期日時";
+
+		/** 書き戻し: 同期結果（作成／更新／変更なし／エラー／未実行）の列 */
+		private String syncResultColumn = "同期結果";
+
+		/** 書き戻し: エラー理由の列 */
+		private String syncErrorColumn = "エラー理由";
 	}
 
 	/**
