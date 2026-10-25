@@ -54,9 +54,19 @@ public class WorkbookExporter {
      * @param issues チケット（null ならシートを作らない）
      * @param users ユーザー（null ならシートを作らない）
      * @param groups グループ（"users" にメンバー。null ならシートを作らない）
+     * @param rootIssueId ルートチケットのID（null ならプロジェクトのすべてのチケット）。指定するとルートの配下だけを、
+     *        ルートの子を最上位（階層の1列目）として出力する（ルート自身は出力しない）
      */
     public record ExportData(Map<Long, Map<String, Object>> issues, Map<Long, Map<String, Object>> users,
-            Map<Long, Map<String, Object>> groups) {
+            Map<Long, Map<String, Object>> groups, Long rootIssueId) {
+
+        /**
+         * ルートチケットなし（プロジェクトのすべてのチケット）で作ります。
+         */
+        public ExportData(Map<Long, Map<String, Object>> issues, Map<Long, Map<String, Object>> users,
+                Map<Long, Map<String, Object>> groups) {
+            this(issues, users, groups, null);
+        }
     }
 
     /**
@@ -101,8 +111,8 @@ public class WorkbookExporter {
             Styles styles = new Styles(workbook);
             if (data.issues() != null) {
                 List<List<Object>> rows = new ArrayList<>();
-                List<String> headers = ticketRows(data.issues(), assigneeNames(allUsers, allGroups), projectConfig,
-                        rows, warnings);
+                List<String> headers = ticketRows(data.issues(), data.rootIssueId(),
+                        assigneeNames(allUsers, allGroups), projectConfig, rows, warnings);
                 String name = sheetName(sync != null ? sync.getExcel() : null, DEFAULT_TICKETS_SHEET);
                 writeSheet(workbook, styles, name, tableName(sync != null ? sync.getExcel() : null), headers, rows);
                 sheets.put(name, rows.size());
@@ -158,11 +168,17 @@ public class WorkbookExporter {
 
     /**
      * チケットの行を作ります（親 → 子の順）。
+     * <p>
+     * ルートチケットを指定した場合は、ルートの配下（子孫）だけを出力し、階層はルートの子を1階層目として数えます。
+     * </p>
      *
      * @return ヘッダ
      */
-    private List<String> ticketRows(Map<Long, Map<String, Object>> issues, Map<Long, String> assigneeNames,
-            ProjectConfig projectConfig, List<List<Object>> rows, List<String> warnings) throws IOException {
+    private List<String> ticketRows(Map<Long, Map<String, Object>> allIssues, Long rootIssueId,
+            Map<Long, String> assigneeNames, ProjectConfig projectConfig, List<List<Object>> rows,
+            List<String> warnings) throws IOException {
+        Map<Long, Map<String, Object>> issues = rootIssueId == null ? allIssues
+                : descendants(allIssues, rootIssueId);
         SyncConfig sync = projectConfig != null ? projectConfig.getSync() : null;
         ColumnsConfig columns = sync != null && sync.getColumns() != null ? sync.getColumns() : new ColumnsConfig();
         List<String> hierarchy = DiffCalculator.resolveHierarchyColumns(projectConfig, List.of()).columns();
@@ -222,7 +238,7 @@ public class WorkbookExporter {
             Long parent = IssueComparator.nestedId(entry.getValue(), "parent");
             if (parent != null && issues.containsKey(parent)) {
                 children.computeIfAbsent(parent, k -> new ArrayList<>()).add(entry.getKey());
-            } else {
+            } else if (rootIssueId == null || rootIssueId.equals(parent)) {
                 roots.add(entry.getKey());
             }
         }
@@ -232,7 +248,8 @@ public class WorkbookExporter {
         }
         int maxDepth = ordered.stream().mapToInt(o -> ((List<?>) o[1]).size()).max().orElse(0);
         if (maxDepth > hierarchy.size()) {
-            throw new IOException("Redmine のチケットの親子が " + maxDepth + " 階層あり、階層列 " + hierarchy + "（"
+            String target = rootIssueId == null ? "Redmine のチケットの親子" : "ルートチケット #" + rootIssueId + " の配下";
+            throw new IOException(target + "が " + maxDepth + " 階層あり、階層列 " + hierarchy + "（"
                     + hierarchy.size() + " 列）より深いため出力できません。sync-config.yml の columns.hierarchy に列を追加してください");
         }
 
@@ -283,6 +300,39 @@ public class WorkbookExporter {
             rows.add(row);
         }
         return new ArrayList<>(headers);
+    }
+
+    /**
+     * ルートチケットの子孫（ルート自身は含まない）を、元の順のまま返します。親IDをたどって探します。
+     *
+     * @param issues プロジェクトのチケット
+     * @param rootIssueId ルートチケットのID（プロジェクト外のチケットでもよい）
+     * @return 子孫のチケット
+     */
+    static Map<Long, Map<String, Object>> descendants(Map<Long, Map<String, Object>> issues, Long rootIssueId) {
+        Map<Long, List<Long>> children = new HashMap<>();
+        for (Map.Entry<Long, Map<String, Object>> entry : issues.entrySet()) {
+            Long parent = IssueComparator.nestedId(entry.getValue(), "parent");
+            if (parent != null) {
+                children.computeIfAbsent(parent, k -> new ArrayList<>()).add(entry.getKey());
+            }
+        }
+        Set<Long> found = new LinkedHashSet<>();
+        List<Long> queue = new ArrayList<>(children.getOrDefault(rootIssueId, List.of()));
+        while (!queue.isEmpty()) {
+            Long id = queue.remove(queue.size() - 1);
+            // 親子が循環していても止まるように、見つけ済みのチケットはたどらない
+            if (!id.equals(rootIssueId) && found.add(id)) {
+                queue.addAll(children.getOrDefault(id, List.of()));
+            }
+        }
+        Map<Long, Map<String, Object>> result = new LinkedHashMap<>();
+        issues.forEach((id, issue) -> {
+            if (found.contains(id)) {
+                result.put(id, issue);
+            }
+        });
+        return result;
     }
 
     private static void walk(Long id, List<String> parentPath, Map<Long, Map<String, Object>> issues,

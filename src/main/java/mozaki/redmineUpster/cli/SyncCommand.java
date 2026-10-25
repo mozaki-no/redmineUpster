@@ -47,7 +47,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --no-result-columns}: 同期結果（最終同期日時・同期結果・エラー理由）を入力ファイルに書き込まない
  *       （設定 sync.resultColumns.enabled より優先）</li>
  *   <li>{@code --root-issue}: ルートチケットのID。今回同期するすべてのファイルの最上位の行を、このチケットの子にする
- *       （設定 sync.files の rootIssueId より優先）</li>
+ *       （設定 sync.files の rootIssueId より優先）。
+ *       {@code --export} と指定すると、このチケットの配下だけを出力</li>
  *   <li>{@code --targets}: 同期・出力する対象（tickets,users,groups のカンマ区切り。省略時はファイルにある表すべて）</li>
  *   <li>{@code --export}: 同期の代わりに、プロジェクトのチケットとユーザー・グループを {@code --file} の .xlsx に出力</li>
  *   <li>{@code --help}: 使い方を表示</li>
@@ -101,8 +102,16 @@ public class SyncCommand implements CommandLineRunner {
                 System.exit(1);
                 return;
             }
+            Long exportRoot;
+            try {
+                exportRoot = parseRootIssue(getArgValue(args, "--root-issue"));
+            } catch (IllegalArgumentException e) {
+                System.err.println("Error: " + e.getMessage());
+                System.exit(1);
+                return;
+            }
             System.exit(exportRunner.run(getArgValue(args, "--config"), getArgValue(args, "--project"), out,
-                    getArgValue(args, "--log-dir"), hasArg(args, "--debug"), targets));
+                    getArgValue(args, "--log-dir"), hasArg(args, "--debug"), targets, exportRoot));
             return;
         }
 
@@ -257,7 +266,9 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --no-result-columns     Do not write the sync result columns (最終同期日時/同期結果/エラー理由)");
         System.out.println("                          back to the input file (overrides sync.resultColumns.enabled)");
         System.out.println("  --root-issue=<id>       Root ticket: top-level rows of every file in this run become");
-        System.out.println("                          children of this Redmine issue (overrides rootIssueId in sync.files)");
+        System.out.println("                          children of this Redmine issue (overrides rootIssueId in sync.files).");
+        System.out.println("                          With --export: export only the tickets under this issue (the root");
+        System.out.println("                          itself is not exported; default: rootIssueId of the --file in sync.files)");
         System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: all sheets in the file)");
         System.out.println("  --export                Export tickets of the project, users and groups to --file (.xlsx)");
         System.out.println("                          The exported file can be used as --file for --sync as it is");
@@ -279,6 +290,7 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  redmineUpster --sync --config=sync-config.yml   (files listed in sync.files)");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx --root-issue=123");
         System.out.println("  redmineUpster --export --config=sync-config.yml --file=redmine.xlsx");
+        System.out.println("  redmineUpster --export --config=sync-config.yml --file=WBS-A.xlsx --root-issue=123");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=redmine.xlsx --targets=users,groups");
     }
 }

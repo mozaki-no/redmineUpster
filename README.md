@@ -105,7 +105,7 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--table=<名前>` | いいえ | 読み込む Excel のテーブル名。`sync.excel.table` より優先（`--sheet` より優先） |
 | `--virtual-parents` / `--no-virtual-parents` | いいえ | 親の行がない行の祖先を仮想親チケットとして作成する／しない（`sync.virtualParents.enabled` より優先） |
 | `--no-result-columns` | いいえ | 同期結果（最終同期日時・同期結果・エラー理由）を入力ファイルに書き込まない（`sync.resultColumns.enabled` より優先） |
-| `--root-issue=<チケット番号>` | いいえ | ルートチケット。今回同期するすべてのファイルの最上位の行を、このチケットの子にする（`sync.files` の `rootIssueId` より優先）。数値でなければエラー |
+| `--root-issue=<チケット番号>` | いいえ | ルートチケット。今回同期するすべてのファイルの最上位の行を、このチケットの子にする（`sync.files` の `rootIssueId` より優先）。数値でなければエラー。`--export` と指定すると、このチケットの配下だけを出力 |
 | `--targets=<対象>` | いいえ | 同期・出力する対象（`tickets`, `users`, `groups` のカンマ区切り）。省略時はファイルにある表すべて |
 | `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループを `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
 | ~~`--relink-parent`~~ | - | **廃止**（親子は毎回階層から再設定するため不要。指定しても警告を出して無視） |
@@ -173,6 +173,10 @@ java -jar redmineUpster.jar --sync --file=wbs-設計.xlsx --file=wbs-開発.xlsx
 ```bash
 # プロジェクトのチケット＋ユーザー＋グループを Excel に出力（ユーザー・グループは管理者の API キーが必要）
 java -jar redmineUpster.jar --export --file=redmine.xlsx
+
+# ルートチケット #123 の配下だけを出力（ルート自身は出力せず、ルートの子が最上位の行になる。
+# 出力先が sync.files にあれば、指定しなくてもそのファイルの rootIssueId を使う）
+java -jar redmineUpster.jar --export --file=WBS-A.xlsx --root-issue=123
 
 # 出力した Excel を編集して取り込む（ユーザー → グループ → チケットの順に Upsert）
 java -jar redmineUpster.jar --sync --file=redmine.xlsx --dry-run

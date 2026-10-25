@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.when;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.stream.Stream;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -318,5 +320,197 @@ class ExportImportTests {
 
 		usersSheet.rows().get(0).put("CF:部署", "開発部");
 		assertThat(DirectorySync.parseUsers(usersSheet, users).errors()).singleElement().asString().contains("部署");
+	}
+
+	/**
+	 * ルートチケットの出力用のチケット（プロジェクト）。
+	 * ルート #10 の配下は 子A(#11) > 孫(#12) と 子B(#13)。別の木 #1〜#6 は6階層（階層列5列より深い）。
+	 */
+	private static Map<Long, Map<String, Object>> rootIssues() {
+		Map<Long, Map<String, Object>> issues = new LinkedHashMap<>();
+		for (long id = 1; id <= 6; id++) {
+			issues.put(id, issue(id, "L" + id, id == 1 ? null : id - 1, "タスク"));
+		}
+		issues.put(10L, issue(10, "ルート", null, "サマリ"));
+		issues.put(11L, issue(11, "子A", 10L, "サマリ"));
+		issues.put(12L, issue(12, "孫", 11L, "タスク"));
+		issues.put(13L, issue(13, "子B", 10L, "タスク"));
+		return issues;
+	}
+
+	private static List<List<String>> sheetRows(Path xlsx, String sheetName) throws IOException {
+		List<List<String>> rows = new ArrayList<>();
+		try (InputStream in = Files.newInputStream(xlsx); Workbook wb = WorkbookFactory.create(in)) {
+			Sheet sheet = wb.getSheet(sheetName);
+			for (Row row : sheet) {
+				List<String> values = new ArrayList<>();
+				for (int c = 0; c < row.getLastCellNum(); c++) {
+					values.add(row.getCell(c) == null ? "" : new org.apache.poi.ss.usermodel.DataFormatter()
+							.formatCellValue(row.getCell(c)));
+				}
+				rows.add(values);
+			}
+		}
+		return rows;
+	}
+
+	private ExportRunner exportRunner(RedmineClient client) {
+		RedmineClientFactory factory = Mockito.mock(RedmineClientFactory.class);
+		when(factory.createClient(Mockito.any())).thenReturn(client);
+		SyncRunner runner = new SyncRunner(new SyncConfigService(new SyncConfigProperties()), new SpreadsheetParser(),
+				new DiffCalculator(), Mockito.mock(SyncExecutor.class), factory, new TicketIdWriter(),
+				new DirectorySync());
+		return new ExportRunner(runner, factory, new WorkbookExporter());
+	}
+
+	private Path exportConfig(String... files) throws IOException {
+		List<String> lines = new ArrayList<>(List.of(
+				"projects:",
+				"  - name: t",
+				"    default: true",
+				"    redmine: { baseUrl: 'http://127.0.0.1:1', apiKey: k, projectId: p }",
+				"    sync:",
+				"      trackerMap: { サマリ: 6, タスク: 2 }"));
+		if (files.length > 0) {
+			lines.add("      files:");
+			for (String file : files) {
+				lines.add("        - " + file);
+			}
+		}
+		Path config = tempDir.resolve("sync-config.yml");
+		Files.writeString(config, String.join("\n", lines) + "\n");
+		return config;
+	}
+
+	private String logText() throws IOException {
+		StringBuilder text = new StringBuilder();
+		try (Stream<Path> logs = Files.list(tempDir.resolve("logs"))) {
+			for (Path log : logs.toList()) {
+				text.append(Files.readString(log));
+			}
+		}
+		return text.toString();
+	}
+
+	@Test
+	@DisplayName("ルートチケット指定: 配下だけをルート基準の階層で出力し（ルート自身は出さない）、別の深い木はエラーにしない")
+	void export_rootIssue_subtreeOnly() throws Exception {
+		Path xlsx = tempDir.resolve("root.xlsx");
+		WorkbookExporter.ExportResult result = new WorkbookExporter().export(xlsx,
+				new WorkbookExporter.ExportData(rootIssues(), null, null, 10L), config(null));
+		assertThat(result.sheets()).containsExactly(Map.entry("チケット", 3));
+		List<List<String>> rows = sheetRows(xlsx, "チケット");
+		List<String> header = rows.get(0);
+		int id = header.indexOf("チケットID");
+		int level1 = header.indexOf("大分類");
+		int level2 = header.indexOf("中分類");
+		assertThat(rows.subList(1, rows.size())).extracting(r -> r.get(id)).containsExactly("11", "12", "13");
+		assertThat(rows.get(1).get(level1)).isEqualTo("子A");
+		assertThat(rows.get(2).get(level1)).isEqualTo("子A");
+		assertThat(rows.get(2).get(level2)).isEqualTo("孫");
+		assertThat(rows.get(3).get(level1)).isEqualTo("子B");
+
+		// 取り込むと、ルートの子が最上位の行（親行なし）になる
+		ParsedSheet tickets = new SpreadsheetParser().parseFromPath(xlsx.toString(), new ExcelSource("チケット", null));
+		DiffPlan plan = new DiffCalculator().calculate(tickets, config(null),
+				new TrackerResolver(Map.of("サマリ", "6", "タスク", "2"), null), logger, false);
+		assertThat(plan.errors()).isEmpty();
+		assertThat(plan.items()).extracting(DiffItem::issueId).containsExactlyInAnyOrder(11L, 12L, 13L);
+	}
+
+	@Test
+	@DisplayName("ルートチケット指定: ルートの配下が階層列より深い場合は、ルートを含むメッセージでエラー")
+	void export_rootIssue_tooDeep() {
+		Map<Long, Map<String, Object>> issues = rootIssues();
+		issues.put(7L, issue(7, "L7", 6L, "タスク"));
+		// L1 の配下（L2〜L7）は6階層で、階層列（5列）より深い
+		assertThatThrownBy(() -> new WorkbookExporter().export(tempDir.resolve("deep.xlsx"),
+				new WorkbookExporter.ExportData(issues, null, null, 1L), config(null)))
+				.hasMessageContaining("ルートチケット #1 の配下が 6 階層");
+		assertThat(WorkbookExporter.descendants(issues, 1L)).containsOnlyKeys(2L, 3L, 4L, 5L, 6L, 7L);
+		assertThat(tempDir.resolve("deep.xlsx")).doesNotExist();
+	}
+
+	@Test
+	@DisplayName("--export --root-issue: 別プロジェクトのルートは個別に取得して確認し、配下だけを出力する")
+	void exportRunner_rootInAnotherProject() throws Exception {
+		Map<Long, Map<String, Object>> issues = rootIssues();
+		issues.remove(10L); // ルートは親プロジェクトのチケット
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listProjectIssues()).thenReturn(issues);
+		when(client.getIssue(10L)).thenReturn(issue(10, "ルート", null, "サマリ"));
+		Path xlsx = tempDir.resolve("out.xlsx");
+		int exit = exportRunner(client).run(exportConfig().toString(), null, xlsx.toString(),
+				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), 10L);
+		assertThat(exit).isEqualTo(0);
+		Mockito.verify(client).getIssue(10L);
+		List<List<String>> rows = sheetRows(xlsx, "チケット");
+		int id = rows.get(0).indexOf("チケットID");
+		assertThat(rows.subList(1, rows.size())).extracting(r -> r.get(id)).containsExactly("11", "12", "13");
+	}
+
+	@Test
+	@DisplayName("--export --root-issue: ルートが見つからない場合はエラーで、ファイルを作らない")
+	void exportRunner_rootNotFound() throws Exception {
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listProjectIssues()).thenReturn(rootIssues());
+		when(client.getIssue(99L)).thenReturn(null);
+		Path xlsx = tempDir.resolve("out.xlsx");
+		int exit = exportRunner(client).run(exportConfig().toString(), null, xlsx.toString(),
+				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), 99L);
+		assertThat(exit).isEqualTo(1);
+		assertThat(xlsx).doesNotExist();
+		assertThat(logText()).contains("ルートチケット #99 が見つかりません");
+	}
+
+	@Test
+	@DisplayName("--export: 出力先が sync.files にあればその rootIssueId を使い、配下がなければ警告して見出しだけ出力")
+	void exportRunner_rootFromSyncFiles() throws Exception {
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listProjectIssues()).thenReturn(rootIssues());
+		Path config = exportConfig("{ path: wbs-a.xlsx, rootIssueId: 10 }", "{ path: wbs-b.xlsx, rootIssueId: 13 }");
+		Path a = tempDir.resolve("wbs-a.xlsx");
+		assertThat(exportRunner(client).run(config.toString(), null, a.toString(),
+				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), null)).isEqualTo(0);
+		List<List<String>> rows = sheetRows(a, "チケット");
+		int id = rows.get(0).indexOf("チケットID");
+		assertThat(rows.subList(1, rows.size())).extracting(r -> r.get(id)).containsExactly("11", "12", "13");
+
+		// CLI の --root-issue が優先
+		assertThat(exportRunner(client).run(config.toString(), null, a.toString(),
+				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), 11L)).isEqualTo(0);
+		rows = sheetRows(a, "チケット");
+		assertThat(rows.subList(1, rows.size())).extracting(r -> r.get(id)).containsExactly("12");
+
+		// 配下なし（#13 は子がない）: 見出しだけ
+		Path b = tempDir.resolve("wbs-b.xlsx");
+		assertThat(exportRunner(client).run(config.toString(), null, b.toString(),
+				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), null)).isEqualTo(0);
+		rows = sheetRows(b, "チケット");
+		assertThat(rows).hasSize(1);
+		assertThat(rows.get(0)).contains("チケットID", "大分類");
+		assertThat(logText()).contains("ルートチケット #13 の配下にプロジェクトのチケットがありません");
+		Mockito.verify(client, Mockito.never()).getIssue(Mockito.any());
+	}
+
+	@Test
+	@DisplayName("--export: ルートチケットなし（sync.files にない出力先）は従来どおりプロジェクト全体を出力する")
+	void exportRunner_withoutRoot_unchanged() throws Exception {
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listProjectIssues()).thenReturn(issues());
+		Path config = exportConfig("{ path: wbs-a.xlsx, rootIssueId: 10 }");
+		Path out = tempDir.resolve("all.xlsx");
+		assertThat(exportRunner(client).run(config.toString(), null, out.toString(),
+				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), null)).isEqualTo(0);
+		List<List<String>> rows = sheetRows(out, "チケット");
+		int id = rows.get(0).indexOf("チケットID");
+		assertThat(rows.subList(1, rows.size())).extracting(r -> r.get(id)).containsExactly("1", "2", "3", "4");
+		Mockito.verify(client, Mockito.never()).getIssue(Mockito.any());
+
+		// プロジェクト全体では6階層の木があるとエラー（従来どおり）
+		when(client.listProjectIssues()).thenReturn(rootIssues());
+		assertThat(exportRunner(client).run(config.toString(), null, out.toString(),
+				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), null)).isEqualTo(1);
+		assertThat(logText()).contains("Redmine のチケットの親子が 6 階層");
 	}
 }
