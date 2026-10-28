@@ -107,7 +107,7 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--no-result-columns` | いいえ | 同期結果（最終同期日時・同期結果・エラー理由）を入力ファイルに書き込まない（`sync.resultColumns.enabled` より優先） |
 | `--root-issue=<チケット番号>` | いいえ | ルートチケット。今回同期するすべてのファイルの最上位の行を、このチケットの子にする（`sync.files` の `rootIssueId` より優先）。数値でなければエラー。`--export` と指定すると、このチケットの配下だけを出力 |
 | `--targets=<対象>` | いいえ | 同期・出力する対象（`tickets`, `users`, `groups` のカンマ区切り）。省略時はファイルにある表すべて |
-| `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループを `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
+| `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループ・グループメンバー、参照用のトラッカー・ステータス・カスタムフィールド（選択肢）を `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
 | `--settings` | いいえ | 同期の代わりに設定画面を開き、`--config` の設定ファイル（省略時は同期と同じ探し方）を編集する |
 | ~~`--relink-parent`~~ | - | **廃止**（親子は毎回階層から再設定するため不要。指定しても警告を出して無視） |
 | ~~`--reset-sync`~~ | - | **廃止**（物理削除を行わない方針のため。指定しても警告を出して無視） |
@@ -186,6 +186,9 @@ java -jar redmineUpster.jar --sync --file=redmine.xlsx --dry-run
 java -jar redmineUpster.jar --sync --file=redmine.xlsx --targets=users,groups
 ```
 
+- 出力するシート: 「チケット」「ユーザー」「グループ」「グループメンバー」（1行に グループ名・ログインID・氏名）と、参照用の「トラッカー」（使う標準フィールドに ○）「ステータス」「カスタムフィールド」（対象・形式・必須・トラッカーごとの ○・取込列名）「カスタムフィールド選択肢」（1行に1つ）。参照用のシートは `--sync` では読みません。カスタムフィールドの一覧は管理者の API キーが必要で、取得できない（403）場合は警告してその2枚を省略します。
+- グループのメンバーは「グループメンバー」シートで取り込みます。**シートに書いたグループはシートの行がメンバーのすべて**になり、書いていないグループは変更しません（0人にするにはログインID空欄の行を1行）。以前の「グループ」シートの `メンバー` 列（カンマ区切り）も引き続き取り込めますが、同じグループを両方に書くとエラーです。シート名は `sync.groupMembers.sheet` で変更できます。
+
 詳細（列の意味・空欄の扱い）は [docs/USER_GUIDE.md](docs/USER_GUIDE.md) の「Excel 出力とユーザー・グループ」を参照してください。
 
 ## 設定ファイル（sync-config.yml）
@@ -241,12 +244,21 @@ projects:
           - "小分類"
           - "成果物"
           - "タスク"
+        subjectColumn: "タスク"      # 件名（空欄の行は一番深い階層列の値）
+        statusColumn: "ステータス"  # CSVのステータス列（優先）
+        assigneeColumn: "担当"       # Redmine assigned_to（ログインID・氏名・メール・グループ名）
         startDateColumn: "着手予定"  # Redmine start_date
         dueDateColumn: "完了予定"    # Redmine due_date
-        statusColumn: "ステータス"  # CSVのステータス列（優先）
+        startActualColumn: "着手実績"  # BY_DATES: 値があれば進行中
+        dueActualColumn: "完了実績"    # BY_DATES: 値があれば完了
         progressColumn: "進捗率"    # Redmine done_ratio
         descriptionColumn: "説明"   # Redmine description（改行・Markdown そのまま。空欄なら送らない）
+        lastSyncedAtColumn: "最終同期日時"  # 同期結果の書き戻し先（この3列は取り込みに使わない）
+        syncResultColumn: "同期結果"
+        syncErrorColumn: "エラー理由"
 ```
+
+標準フィールドの取込列名（`sync.columns.*`）はすべて設定で変更でき、`--export` も同じ列名で出力します（未設定・空欄なら上の既定値）。設定画面（`--settings`）の「取込列名」タブでも編集できます。
 
 環境変数は `${VAR_NAME}` 形式で参照可能です。
 

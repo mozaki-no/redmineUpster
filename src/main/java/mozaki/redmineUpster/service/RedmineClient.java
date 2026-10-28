@@ -1,6 +1,7 @@
 package mozaki.redmineUpster.service;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -330,6 +331,62 @@ public class RedmineClient {
 		}
 		debugLog("Closed issue statuses: " + closed);
 		return closed;
+	}
+
+	/**
+	 * トラッカーの詳細を取得します（GET /trackers.json。参照用シートの出力に使用）。
+	 * <p>
+	 * 各要素は id, name, default_status, description、Redmine 5 以降は enabled_standard_fields
+	 * （このトラッカーで使う標準フィールド）を含みます。
+	 * </p>
+	 *
+	 * @return トラッカー（Redmine の並び順）
+	 */
+	public List<Map<String, Object>> listTrackerDetails() {
+		return getList("/trackers.json", "trackers");
+	}
+
+	/**
+	 * チケットのステータスの詳細を取得します（GET /issue_statuses.json。参照用シートの出力に使用）。
+	 *
+	 * @return ステータス（id, name, is_closed。Redmine の並び順）
+	 */
+	public List<Map<String, Object>> listIssueStatusDetails() {
+		return getList("/issue_statuses.json", "issue_statuses");
+	}
+
+	/**
+	 * カスタムフィールドの定義を取得します（GET /custom_fields.json。管理者の API キーが必要）。
+	 * <p>
+	 * 各要素は id, name, customized_type, field_format, is_required, multiple, default_value,
+	 * possible_values（リストの選択肢 {value, label}）、trackers（チケットのカスタムフィールドを使うトラッカー）などを含みます。
+	 * </p>
+	 *
+	 * @return カスタムフィールド（Redmine の並び順）
+	 */
+	public List<Map<String, Object>> listCustomFields() {
+		return getList("/custom_fields.json", "custom_fields");
+	}
+
+	/**
+	 * ページングしない一覧を取得します。
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	private List<Map<String, Object>> getList(String path, String listKey) {
+		String url = baseUrl + path;
+		debugLog("Request URL: GET " + url);
+		ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, buildEntity(null), Map.class);
+		List<Map<String, Object>> result = new ArrayList<>();
+		Map body = response.getBody();
+		if (body != null && body.get(listKey) instanceof List<?> list) {
+			for (Object element : list) {
+				if (element instanceof Map item) {
+					result.add(new LinkedHashMap<>((Map<String, Object>) item));
+				}
+			}
+		}
+		debugLog(listKey + " fetched: " + result.size());
+		return result;
 	}
 
 	/**

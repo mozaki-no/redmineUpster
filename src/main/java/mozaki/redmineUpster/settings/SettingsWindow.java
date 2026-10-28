@@ -109,7 +109,7 @@ public class SettingsWindow extends JFrame {
 
         tabs.addTab("接続", scroll(connectionTab()));
         tabs.addTab("ファイル", scroll(filesTab()));
-        tabs.addTab("列", scroll(columnsTab()));
+        tabs.addTab("取込列名", scroll(columnsTab()));
         tabs.addTab("Excel", scroll(excelTab()));
         tabs.addTab("ステータス・削除", scroll(statusTab()));
         tabs.addTab("親チケット", scroll(parentsTab()));
@@ -384,7 +384,8 @@ public class SettingsWindow extends JFrame {
 
     private JComponent columnsTab() {
         Form form = new Form();
-        form.note("WBS ファイルの見出し（1行目）の名前。空欄なら「既定」の名前を使います。");
+        form.note("WBS ファイルの見出し（1行目）の名前（標準フィールドの取込列名）。空欄なら「既定」の名前を使います。");
+        form.note("--export で出力する Excel もこの列名で出力するので、そのまま取り込めます。");
         form.text("チケットID 列", "sync.columns.ticketIdColumn", "チケットID",
                 "空欄の行は新規作成（作成したチケット番号が書き戻される）、値がある行は更新");
         form.text("トラッカー列", "sync.columns.trackerColumn", "トラッカー", "トラッカー名を書く列");
@@ -419,9 +420,17 @@ public class SettingsWindow extends JFrame {
         form.check("階層列の空欄を前の行の値で補う", "sync.columns.fillDownHierarchy", false,
                 "オフ（既定）: 空欄は「その階層を飛ばす」（例: 大分類の直下のタスク）。"
                         + "オン: 空欄を前の行の値で補う（旧来の動作。階層を飛ばせない）");
+        form.text("件名列", "sync.columns.subjectColumn", "タスク",
+                "値があればチケットの件名にする列（空欄の行は一番深い階層列の値が件名）");
+        form.text("ステータス列", "sync.columns.statusColumn", "ステータス", "ステータス名を書く列");
+        form.text("担当者列", "sync.columns.assigneeColumn", "担当",
+                "担当者（ログインID・氏名・メールアドレス・グループ名）を書く列");
         form.text("着手予定（開始日）列", "sync.columns.startDateColumn", "着手予定", "開始日にする列");
         form.text("完了予定（期日）列", "sync.columns.dueDateColumn", "完了予定", "期日にする列");
-        form.text("ステータス列", "sync.columns.statusColumn", "ステータス", "ステータス名を書く列");
+        form.text("着手実績 列", "sync.columns.startActualColumn", "着手実績",
+                "ステータスの決め方が BY_DATES でステータス列が空欄のとき、値があれば「進行中」にする列");
+        form.text("完了実績 列", "sync.columns.dueActualColumn", "完了実績",
+                "ステータスの決め方が BY_DATES でステータス列が空欄のとき、値があれば「完了」にする列");
         form.text("進捗率列", "sync.columns.progressColumn", "進捗率", "進捗率（0〜100）を書く列");
         form.text("説明列", "sync.columns.descriptionColumn", "説明", "チケットの説明にする列");
         form.note("同期結果を書き戻す列（なければ見出しの末尾に追加。値を変えても Redmine は更新されません）");
@@ -442,6 +451,9 @@ public class SettingsWindow extends JFrame {
         form.note("ユーザー・グループの読み込み元（そのシートがなければ同期しません）");
         form.text("ユーザーのシート", "sync.users.sheet", "ユーザー", "ユーザーを読み込むシート名");
         form.text("グループのシート", "sync.groups.sheet", "グループ", "グループを読み込むシート名");
+        form.text("グループメンバーのシート", "sync.groupMembers.sheet", "グループメンバー",
+                "グループのメンバー（1行に グループ名・ログインID）を読み込むシート名。ここに書いたグループは、"
+                        + "シートの行がメンバーのすべてになる");
         return form.panel();
     }
 

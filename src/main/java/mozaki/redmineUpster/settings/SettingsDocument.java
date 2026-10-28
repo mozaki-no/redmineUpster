@@ -53,11 +53,13 @@ public class SettingsDocument {
     private static final List<String> PROJECT_ORDER = List.of("name", "default", "redmine", "sync");
     private static final List<String> REDMINE_ORDER = List.of("baseUrl", "apiKey", "projectId");
     private static final List<String> SYNC_ORDER = List.of("files", "trackerMap", "deletion", "virtualParents",
-            "autoCloseParents", "resultColumns", "status", "excel", "users", "groups", "columns", "customFieldMap",
+            "autoCloseParents", "resultColumns", "status", "excel", "users", "groups", "groupMembers", "columns",
+            "customFieldMap",
             "customFieldDateColumns", "tracker");
     private static final List<String> COLUMNS_ORDER = List.of("ticketIdColumn", "trackerColumn", "hierarchy",
-            "fillDownHierarchy", "startDateColumn", "dueDateColumn", "statusColumn", "progressColumn",
-            "descriptionColumn", "lastSyncedAtColumn", "syncResultColumn", "syncErrorColumn");
+            "fillDownHierarchy", "subjectColumn", "statusColumn", "assigneeColumn", "startDateColumn",
+            "dueDateColumn", "startActualColumn", "dueActualColumn", "progressColumn", "descriptionColumn",
+            "lastSyncedAtColumn", "syncResultColumn", "syncErrorColumn");
     private static final List<String> STATUS_ORDER = List.of("enabled", "mode", "fixed", "statusMap");
     private static final List<String> AUTO_CLOSE_ORDER = List.of("enabled", "status", "inProgress",
             "inProgressStatus", "ignoreNotInExcel");

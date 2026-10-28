@@ -155,6 +155,13 @@ public class SyncConfigProperties {
 		private ExcelConfig groups;
 
 		/**
+		 * グループメンバーの読み込み元（シート・テーブル）。省略時はシート「グループメンバー」（なければ使わない）。
+		 * 1行に「グループ名・ログインID」を1組書きます。このシートに書いたグループは、
+		 * シートの行がそのグループのメンバーのすべてになります（グループのシートを同期する場合だけ読みます）。
+		 */
+		private ExcelConfig groupMembers;
+
+		/**
 		 * 仮想親チケットの自動作成（Excelに親行がない場合）の設定。
 		 */
 		private VirtualParentsConfig virtualParents;
@@ -322,6 +329,18 @@ public class SyncConfigProperties {
 		private String trackerColumn = "トラッカー";
 
 		/**
+		 * 件名列名。値があればチケットの件名にします（空欄なら一番深い階層列の値）。
+		 * 既定の階層列の最後の列と同じ "タスク"。
+		 */
+		private String subjectColumn = "タスク";
+
+		/**
+		 * 担当者列名（ログインID・氏名・メールアドレス・グループ名。Redmineのassigned_to_idに反映）。
+		 * デフォルト値は "担当"。
+		 */
+		private String assigneeColumn = "担当";
+
+		/**
 		 * 開始日列名（Redmineのstart_dateに反映）。
 		 * デフォルト値は "着手予定"。
 		 */
@@ -332,6 +351,18 @@ public class SyncConfigProperties {
 		 * デフォルト値は "完了予定"。
 		 */
 		private String dueDateColumn = "完了予定";
+
+		/**
+		 * 着手実績列名（status.mode が BY_DATES でステータス列が空欄のとき、値があれば「進行中」にする）。
+		 * デフォルト値は "着手実績"。
+		 */
+		private String startActualColumn = "着手実績";
+
+		/**
+		 * 完了実績列名（status.mode が BY_DATES でステータス列が空欄のとき、値があれば「完了」にする）。
+		 * デフォルト値は "完了実績"。
+		 */
+		private String dueActualColumn = "完了実績";
 
 		/**
 		 * ステータス列名（CSVのステータス値を優先する場合に使用）。

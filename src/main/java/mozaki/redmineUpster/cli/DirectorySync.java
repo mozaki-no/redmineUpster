@@ -46,14 +46,23 @@ public class DirectorySync {
     /** 新規作成時だけ使うパスワード（空欄なら Redmine が自動生成してメールで通知） */
     public static final String COL_PASSWORD = "パスワード";
     public static final String COL_GROUP_NAME = "グループ名";
-    /** グループのメンバー（ログインIDをカンマ・改行区切り。空欄なら変更しない） */
+    /**
+     * グループのメンバー（ログインIDをカンマ・改行区切り。空欄なら変更しない）。
+     * 以前の --export が出力していた列で、取り込みでは引き続き使えます（今の --export は「グループメンバー」シートに出力）。
+     */
     public static final String COL_MEMBERS = "メンバー";
+    /** グループメンバーの既定のシート名 */
+    public static final String DEFAULT_GROUP_MEMBERS_SHEET = "グループメンバー";
+    /** グループメンバーのシートの氏名列（参照用。取り込みでは使わない） */
+    public static final String COL_MEMBER_NAME = "氏名";
 
     /** ユーザーの列（出力順） */
     public static final List<String> USER_COLUMNS = List.of(COL_ID, COL_LOGIN, COL_LASTNAME, COL_FIRSTNAME, COL_MAIL,
             COL_ADMIN, COL_STATUS, COL_PASSWORD);
-    /** グループの列（出力順） */
-    public static final List<String> GROUP_COLUMNS = List.of(COL_ID, COL_GROUP_NAME, COL_MEMBERS);
+    /** グループの列（出力順。メンバーは「グループメンバー」シートに出力する） */
+    public static final List<String> GROUP_COLUMNS = List.of(COL_ID, COL_GROUP_NAME);
+    /** グループメンバーの列（出力順。1行に1人。ログインIDが空欄の行は「メンバーなし」） */
+    public static final List<String> GROUP_MEMBER_COLUMNS = List.of(COL_GROUP_NAME, COL_LOGIN, COL_MEMBER_NAME);
 
     /** 状態の表示名（1=有効, 2=登録, 3=ロック） */
     public static final Map<Integer, String> STATUS_LABELS = Map.of(1, "有効", 2, "登録", 3, "ロック");
@@ -351,12 +360,41 @@ public class DirectorySync {
      */
     public static Plan<GroupRow> parseGroups(ParsedSheet sheet, Map<Long, Map<String, Object>> existingGroups,
             Set<String> knownLogins) {
+        return parseGroups(sheet, null, existingGroups, knownLogins);
+    }
+
+    /**
+     * グループのシートとグループメンバーのシートを解析・検証します。
+     * <p>
+     * グループメンバーのシートは1行に「グループ名・ログインID」を1組書きます。シートに書いたグループは、
+     * シートの行がメンバーのすべてになります（ない人はメンバーから外す）。ログインIDが空欄の行だけのグループは
+     * メンバーを0人にします。シートに書いていないグループのメンバーは変更しません（グループのシートの
+     * 「メンバー」列に書いた場合はその値）。同じグループを「メンバー」列とグループメンバーのシートの両方に
+     * 書くとエラーです。グループメンバーのシートのグループ名は、グループのシートにある必要があります。
+     * </p>
+     *
+     * @param sheet グループのシート
+     * @param membersSheet グループメンバーのシート（null ならメンバーは「メンバー」列だけで決める）
+     * @param existingGroups Redmine のグループ（ID → グループ）
+     * @param knownLogins メンバーに指定できるログインID（Redmine のユーザーと、ユーザーのシートで作成するユーザー）
+     * @return 解析結果
+     */
+    public static Plan<GroupRow> parseGroups(ParsedSheet sheet, ParsedSheet membersSheet,
+            Map<Long, Map<String, Object>> existingGroups, Set<String> knownLogins) {
         List<String> errors = new ArrayList<>();
         List<GroupRow> rows = new ArrayList<>();
         requireColumns(sheet, List.of(COL_ID, COL_GROUP_NAME), "グループ", errors);
+        if (membersSheet != null) {
+            requireColumns(membersSheet, List.of(COL_GROUP_NAME, COL_LOGIN), "グループメンバー", errors);
+        }
         if (!errors.isEmpty()) {
             return new Plan<>(rows, errors);
         }
+        // グループメンバーのシート: グループ名（小文字）→ メンバーのログインID（書いた順）
+        Map<String, List<String>> sheetMembers = new LinkedHashMap<>();
+        Map<String, String> sheetGroupNames = new LinkedHashMap<>();
+        Map<String, Integer> sheetGroupRows = new HashMap<>();
+        Set<String> invalidGroups = new HashSet<>();
         Map<String, Long> byName = new HashMap<>();
         for (Map.Entry<Long, Map<String, Object>> entry : existingGroups.entrySet()) {
             byName.put(text(entry.getValue().get("name")).toLowerCase(Locale.ROOT), entry.getKey());
@@ -365,6 +403,37 @@ public class DirectorySync {
         for (String login : knownLogins) {
             known.add(login.toLowerCase(Locale.ROOT));
         }
+        if (membersSheet != null) {
+            for (int i = 0; i < membersSheet.rows().size(); i++) {
+                Map<String, String> row = membersSheet.rows().get(i);
+                int rowNumber = membersSheet.rowNumbers().get(i);
+                String prefix = "グループメンバー 行" + rowNumber + ": ";
+                String groupName = value(row, COL_GROUP_NAME);
+                String login = value(row, COL_LOGIN);
+                if (groupName.isEmpty()) {
+                    if (!login.isEmpty()) {
+                        errors.add(prefix + "グループ名が空欄です（ログインID: " + login + "）");
+                    }
+                    continue;
+                }
+                String key = groupName.toLowerCase(Locale.ROOT);
+                sheetGroupNames.putIfAbsent(key, groupName);
+                sheetGroupRows.putIfAbsent(key, rowNumber);
+                List<String> members = sheetMembers.computeIfAbsent(key, k -> new ArrayList<>());
+                if (login.isEmpty()) {
+                    continue;
+                }
+                if (!known.contains(login.toLowerCase(Locale.ROOT))) {
+                    errors.add(prefix + "メンバーのログインIDが見つかりません: " + login + " [" + groupName + "]");
+                    invalidGroups.add(key);
+                    continue;
+                }
+                if (members.stream().noneMatch(m -> m.equalsIgnoreCase(login))) {
+                    members.add(login);
+                }
+            }
+        }
+        Set<String> usedSheetGroups = new HashSet<>();
         Map<String, CustomFieldColumns.Definition> groupFields = CustomFieldColumns.definitions(
                 existingGroups.values());
         Map<String, Integer> seenNames = new HashMap<>();
@@ -416,7 +485,20 @@ public class DirectorySync {
                     continue;
                 }
             }
-            Integer sameName = seenNames.putIfAbsent(name.toLowerCase(Locale.ROOT), rowNumber);
+            String nameKey = name.toLowerCase(Locale.ROOT);
+            if (sheetMembers.containsKey(nameKey)) {
+                usedSheetGroups.add(nameKey);
+                if (members != null) {
+                    errors.add(prefix + "メンバーが「" + COL_MEMBERS + "」列とグループメンバーのシート（行"
+                            + sheetGroupRows.get(nameKey) + "）の両方に書かれています。どちらか一方にしてください [" + name + "]");
+                    continue;
+                }
+                if (invalidGroups.contains(nameKey)) {
+                    continue;
+                }
+                members = new ArrayList<>(sheetMembers.get(nameKey));
+            }
+            Integer sameName = seenNames.putIfAbsent(nameKey, rowNumber);
             if (sameName != null) {
                 errors.add(prefix + "グループ名「" + name + "」が行" + sameName + "と重複しています");
                 continue;
@@ -435,6 +517,12 @@ public class DirectorySync {
                 continue;
             }
             rows.add(new GroupRow(rowNumber, id, matchedByName, name, members, customFields));
+        }
+        for (Map.Entry<String, String> entry : sheetGroupNames.entrySet()) {
+            if (!usedSheetGroups.contains(entry.getKey()) && !seenNames.containsKey(entry.getKey())) {
+                errors.add("グループメンバー 行" + sheetGroupRows.get(entry.getKey()) + ": グループ「" + entry.getValue()
+                        + "」がグループのシートにありません（グループのシートに行を追加してください）");
+            }
         }
         return new Plan<>(rows, errors);
     }

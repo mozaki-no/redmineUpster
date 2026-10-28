@@ -33,7 +33,6 @@ import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.service.SyncConfigService;
 import mozaki.redmineUpster.service.TicketIdWriter;
 import mozaki.redmineUpster.util.StringUtils;
-import mozaki.redmineUpster.util.ColumnDefinitions;
 
 /**
  * 同期実行サービス。
@@ -417,10 +416,13 @@ public class SyncRunner {
         private ExcelSource excelSource;
         private ExcelSource usersSource;
         private ExcelSource groupsSource;
+        /** グループメンバーのシート（グループを同期し、シートがある場合だけ） */
+        private ExcelSource groupMembersSource;
         private boolean doTickets;
         private ParsedSheet parsed;
         private ParsedSheet usersSheet;
         private ParsedSheet groupsSheet;
+        private ParsedSheet groupMembersSheet;
         private Map<Long, Map<String, Object>> users;
         private Map<Long, Map<String, Object>> groups;
         private DirectorySync.Plan<DirectorySync.UserRow> userPlan;
@@ -625,6 +627,10 @@ public class SyncRunner {
                 ? directorySource(syncConfig != null ? syncConfig.getGroups() : null,
                         DirectorySync.DEFAULT_GROUPS_SHEET, sheetNames)
                 : null;
+        job.groupMembersSource = job.groupsSource != null
+                ? directorySource(syncConfig != null ? syncConfig.getGroupMembers() : null,
+                        DirectorySync.DEFAULT_GROUP_MEMBERS_SHEET, sheetNames)
+                : null;
         if (isCsv && (targets != null && (selected.contains(SyncTarget.USERS)
                 || selected.contains(SyncTarget.GROUPS)))) {
             logger.warn("CSVファイルのため、ユーザー・グループは同期しません（Excel のシートで指定してください）");
@@ -645,7 +651,7 @@ public class SyncRunner {
         job.excelSource = excelSource;
         boolean doTickets = selected.contains(SyncTarget.TICKETS);
         if (doTickets && !isCsv && excelSource.isDefault() && !sheetNames.isEmpty()
-                && isDirectorySheet(sheetNames.get(0), job.usersSource, job.groupsSource)) {
+                && isDirectorySheet(sheetNames.get(0), job.usersSource, job.groupsSource, job.groupMembersSource)) {
             logger.info("先頭シート「" + sheetNames.get(0) + "」はユーザー・グループの表のため、チケットは同期しません");
             doTickets = false;
         }
@@ -696,6 +702,11 @@ public class SyncRunner {
             job.groupsSheet = spreadsheetParser.parseFromPath(filePath, job.groupsSource);
             logger.info("Groups: " + job.groupsSource.describe() + " " + job.groupsSheet.rows().size() + " rows");
         }
+        if (job.groupMembersSource != null) {
+            job.groupMembersSheet = spreadsheetParser.parseFromPath(filePath, job.groupMembersSource);
+            logger.info("Group Members: " + job.groupMembersSource.describe() + " "
+                    + job.groupMembersSheet.rows().size() + " rows（ここに書いたグループはこの行がメンバーのすべてになります）");
+        }
         return job;
     }
 
@@ -730,7 +741,8 @@ public class SyncRunner {
             if (job.userPlan != null) {
                 job.userPlan.rows().forEach(row -> knownLogins.add(row.login()));
             }
-            job.groupPlan = DirectorySync.parseGroups(job.groupsSheet, job.groups, knownLogins);
+            job.groupPlan = DirectorySync.parseGroups(job.groupsSheet, job.groupMembersSheet, job.groups,
+                    knownLogins);
             validationErrors.addAll(job.groupPlan.errors());
         }
         if (job.doTickets) {
@@ -1462,10 +1474,7 @@ public class SyncRunner {
     }
 
     private static String statusColumn(ProjectConfig projectConfig) {
-        SyncConfig syncConfig = projectConfig != null ? projectConfig.getSync() : null;
-        String statusColumn = syncConfig != null && syncConfig.getColumns() != null
-                ? syncConfig.getColumns().getStatusColumn() : null;
-        return statusColumn == null || statusColumn.isBlank() ? ColumnDefinitions.COL_STATUS : statusColumn;
+        return TicketColumns.of(projectConfig).status();
     }
 
     /**
@@ -1593,8 +1602,8 @@ public class SyncRunner {
         return sheetNames.contains(defaultSheet) ? new ExcelSource(defaultSheet, null) : null;
     }
 
-    private static boolean isDirectorySheet(String sheetName, ExcelSource usersSource, ExcelSource groupsSource) {
-        for (ExcelSource source : new ExcelSource[] { usersSource, groupsSource }) {
+    private static boolean isDirectorySheet(String sheetName, ExcelSource... sources) {
+        for (ExcelSource source : sources) {
             if (source != null && source.table() == null && sheetName.equals(source.sheet())) {
                 return true;
             }

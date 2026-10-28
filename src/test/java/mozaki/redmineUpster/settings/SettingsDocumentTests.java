@@ -272,4 +272,61 @@ class SettingsDocumentTests {
         SettingsDocument.load(path).save();
         assertThat(Files.readString(path, StandardCharsets.UTF_8)).isEqualTo(first);
     }
+
+    @Test
+    @DisplayName("標準フィールドの取込列名・グループメンバーのシートを保存すると、アプリの読み込みに反映され、決まった順に並ぶ")
+    void columnNames_saveAndLoad() throws Exception {
+        Path path = write(CONFIG);
+        SettingsDocument doc = SettingsDocument.load(path);
+        Map<String, Object> project = doc.projects().get(0);
+        SettingsDocument.setString(project, "sync.columns.descriptionColumn", "メモ");
+        SettingsDocument.setString(project, "sync.columns.dueActualColumn", "完了日");
+        SettingsDocument.setString(project, "sync.columns.startActualColumn", "開始日");
+        SettingsDocument.setString(project, "sync.columns.assigneeColumn", "担当者");
+        SettingsDocument.setString(project, "sync.columns.subjectColumn", "件名");
+        SettingsDocument.setString(project, "sync.groupMembers.sheet", "メンバー表");
+        doc.save();
+
+        String saved = Files.readString(path, StandardCharsets.UTF_8);
+        // 画面にない既存のキー（customFieldMap など）は残る
+        assertThat(saved).contains("customFieldMap:").contains("unknownProjectKey:");
+        assertThat(saved.indexOf("subjectColumn")).isLessThan(saved.indexOf("assigneeColumn"));
+        assertThat(saved.indexOf("assigneeColumn")).isLessThan(saved.indexOf("startActualColumn"));
+        assertThat(saved.indexOf("startActualColumn")).isLessThan(saved.indexOf("dueActualColumn"));
+        assertThat(saved.indexOf("dueActualColumn")).isLessThan(saved.indexOf("progressColumn"));
+        assertThat(saved.indexOf("progressColumn")).isLessThan(saved.indexOf("descriptionColumn"));
+
+        ProjectConfig loaded = loadWithApp(path).get(0);
+        assertThat(loaded.getSync().getColumns().getSubjectColumn()).isEqualTo("件名");
+        assertThat(loaded.getSync().getColumns().getAssigneeColumn()).isEqualTo("担当者");
+        assertThat(loaded.getSync().getColumns().getStartActualColumn()).isEqualTo("開始日");
+        assertThat(loaded.getSync().getColumns().getDueActualColumn()).isEqualTo("完了日");
+        assertThat(loaded.getSync().getColumns().getDescriptionColumn()).isEqualTo("メモ");
+        assertThat(loaded.getSync().getColumns().getProgressColumn()).isEqualTo("進捗率");
+        assertThat(loaded.getSync().getGroupMembers().getSheet()).isEqualTo("メンバー表");
+        assertThat(dir.resolve("sync-config.yml.bak")).exists();
+
+        // 空欄に戻すとキーを消し、既定の列名になる
+        SettingsDocument again = SettingsDocument.load(path);
+        SettingsDocument.setString(again.projects().get(0), "sync.columns.subjectColumn", "");
+        again.save();
+        assertThat(Files.readString(path, StandardCharsets.UTF_8)).doesNotContain("subjectColumn");
+        assertThat(loadWithApp(path).get(0).getSync().getColumns().getSubjectColumn()).isEqualTo("タスク");
+    }
+
+    @Test
+    @DisplayName("配布版・サンプルの sync-config.yml は標準フィールドの取込列名をすべて既定値で書いている")
+    void sampleConfigs_listAllColumnKeys() throws Exception {
+        for (String sample : List.of("packaging/dist/sync-config.yml", "samples/sync-config.example.yml")) {
+            String text = Files.readString(Paths.get(sample), StandardCharsets.UTF_8);
+            for (Map.Entry<String, String> entry : mozaki.redmineUpster.cli.TicketColumns.DEFAULTS.byKey().entrySet()) {
+                assertThat(text).as(sample).contains(entry.getKey() + ": \"" + entry.getValue() + "\"");
+            }
+            assertThat(text).as(sample).contains("lastSyncedAtColumn: \"最終同期日時\"")
+                    .contains("syncResultColumn: \"同期結果\"").contains("syncErrorColumn: \"エラー理由\"");
+            ProjectConfig loaded = loadWithApp(Paths.get(sample)).get(0);
+            assertThat(mozaki.redmineUpster.cli.TicketColumns.of(loaded))
+                    .isEqualTo(mozaki.redmineUpster.cli.TicketColumns.DEFAULTS);
+        }
+    }
 }

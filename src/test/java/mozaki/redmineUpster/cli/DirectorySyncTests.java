@@ -31,6 +31,10 @@ class DirectorySyncTests {
 	@TempDir
 	Path tempDir;
 
+	/** 「メンバー」列（1セルにカンマ区切り。以前の --export の形式）のあるグループの列 */
+	private static final List<String> PACKED_GROUP_COLUMNS = List.of(DirectorySync.COL_ID,
+			DirectorySync.COL_GROUP_NAME, DirectorySync.COL_MEMBERS);
+
 	private FileLogger logger;
 	private RedmineClient client;
 
@@ -141,7 +145,7 @@ class DirectorySyncTests {
 				"users", List.of(Map.of("id", 5, "name", "田中 太郎")))));
 		groups.put(21L, new LinkedHashMap<>(Map.of("id", 21, "name", "営業",
 				"users", List.of(Map.of("id", 6, "name", "鈴木 花子")))));
-		ParsedSheet sheet = sheet(DirectorySync.GROUP_COLUMNS, List.of(
+		ParsedSheet sheet = sheet(PACKED_GROUP_COLUMNS, List.of(
 				List.of("", "開発", "tanaka, sato"),
 				List.of("21", "営業", "Suzuki"),
 				List.of("", "品質保証", "suzuki\ntanaka"),
@@ -167,7 +171,7 @@ class DirectorySyncTests {
 	@Test
 	@DisplayName("グループ: メンバーに存在しないログインIDがあれば検証エラー")
 	void parseGroups_unknownMember() {
-		ParsedSheet sheet = sheet(DirectorySync.GROUP_COLUMNS, List.of(List.of("", "開発", "tanaka, nobody")));
+		ParsedSheet sheet = sheet(PACKED_GROUP_COLUMNS, List.of(List.of("", "開発", "tanaka, nobody")));
 		DirectorySync.Plan<DirectorySync.GroupRow> plan = DirectorySync.parseGroups(sheet, Map.of(), Set.of("tanaka"));
 		assertThat(plan.errors()).singleElement().asString().contains("nobody");
 	}
@@ -188,5 +192,90 @@ class DirectorySyncTests {
 	void parseTargets() {
 		assertThat(SyncTarget.parse(null)).containsExactlyInAnyOrder(SyncTarget.values());
 		assertThat(SyncTarget.parse("users, グループ")).containsExactlyInAnyOrder(SyncTarget.USERS, SyncTarget.GROUPS);
+	}
+
+	private static Map<Long, Map<String, Object>> existingGroups() {
+		Map<Long, Map<String, Object>> groups = new LinkedHashMap<>();
+		groups.put(20L, new LinkedHashMap<>(Map.of("id", 20, "name", "開発",
+				"users", List.of(Map.of("id", 5, "name", "田中 太郎")))));
+		groups.put(21L, new LinkedHashMap<>(Map.of("id", 21, "name", "営業",
+				"users", List.of(Map.of("id", 6, "name", "鈴木 花子")))));
+		groups.put(22L, new LinkedHashMap<>(Map.of("id", 22, "name", "総務",
+				"users", List.of(Map.of("id", 5, "name", "田中 太郎")))));
+		return groups;
+	}
+
+	@Test
+	@DisplayName("グループメンバーのシート: 書いたグループはシートの行がメンバーのすべて、書かないグループは変更しない、ログインID空欄だけなら0人")
+	void parseGroups_memberSheet() {
+		ParsedSheet groups = sheet(DirectorySync.GROUP_COLUMNS, List.of(
+				List.of("20", "開発"), List.of("21", "営業"), List.of("22", "総務"), List.of("", "新規")));
+		ParsedSheet members = sheet(DirectorySync.GROUP_MEMBER_COLUMNS, List.of(
+				List.of("開発", "tanaka", "田中 太郎"),
+				List.of("開発", "SUZUKI", ""),
+				List.of("開発", "suzuki", ""), // 重複は1人
+				List.of("総務", "", ""),
+				List.of("新規", "sato", ""),
+				List.of("", "", "")));
+		Map<Long, Map<String, Object>> existing = existingGroups();
+		DirectorySync.Plan<DirectorySync.GroupRow> plan = DirectorySync.parseGroups(groups, members, existing,
+				Set.of("tanaka", "suzuki", "sato"));
+		assertThat(plan.errors()).isEmpty();
+		assertThat(plan.rows()).extracting(DirectorySync.GroupRow::members).containsExactly(
+				List.of("tanaka", "SUZUKI"), null, List.of(), List.of("sato"));
+
+		Map<Long, Map<String, Object>> users = existingUsers();
+		users.put(10L, new LinkedHashMap<>(Map.of("id", 10, "login", "sato")));
+		when(client.createGroup(anyMap())).thenReturn(30L);
+		DirectorySync.Result result = new DirectorySync().syncGroups(plan.rows(), existing, users, client, false,
+				logger);
+		assertThat(result.errors()).isEmpty();
+		verify(client).updateGroup(20L, Map.of("user_ids", List.of(5L, 6L)));
+		verify(client, never()).updateGroup(eq(21L), anyMap());
+		verify(client).updateGroup(22L, Map.of("user_ids", List.of()));
+		verify(client).createGroup(Map.of("name", "新規", "user_ids", List.of(10L)));
+		assertThat(result.updated()).isEqualTo(2);
+		assertThat(result.unchanged()).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("グループメンバーのシート: 出力した形（メンバーなしは空欄の行）をそのまま取り込むと変更なし")
+	void parseGroups_memberSheet_unchanged() {
+		Map<Long, Map<String, Object>> existing = existingGroups();
+		existing.get(22L).put("users", List.of());
+		ParsedSheet groups = sheet(DirectorySync.GROUP_COLUMNS, List.of(
+				List.of("20", "開発"), List.of("21", "営業"), List.of("22", "総務")));
+		ParsedSheet members = sheet(DirectorySync.GROUP_MEMBER_COLUMNS, List.of(
+				List.of("開発", "tanaka", "田中 太郎"), List.of("営業", "suzuki", "鈴木 花子"), List.of("総務", "", "")));
+		DirectorySync.Plan<DirectorySync.GroupRow> plan = DirectorySync.parseGroups(groups, members, existing,
+				Set.of("tanaka", "suzuki"));
+		assertThat(plan.errors()).isEmpty();
+		DirectorySync.Result result = new DirectorySync().syncGroups(plan.rows(), existing, existingUsers(), client,
+				false, logger);
+		assertThat(result.unchanged()).isEqualTo(3);
+		verify(client, never()).updateGroup(any(), anyMap());
+	}
+
+	@Test
+	@DisplayName("グループメンバーのシート: 不明なログインID・グループのシートにないグループ・メンバー列との二重指定・グループ名の空欄はエラー")
+	void parseGroups_memberSheet_errors() {
+		ParsedSheet groups = sheet(PACKED_GROUP_COLUMNS, List.of(
+				List.of("20", "開発", ""), List.of("21", "営業", "suzuki")));
+		ParsedSheet members = sheet(DirectorySync.GROUP_MEMBER_COLUMNS, List.of(
+				List.of("開発", "nobody", ""),
+				List.of("営業", "tanaka", ""),
+				List.of("経理", "tanaka", ""),
+				List.of("", "tanaka", "")));
+		DirectorySync.Plan<DirectorySync.GroupRow> plan = DirectorySync.parseGroups(groups, members,
+				existingGroups(), Set.of("tanaka", "suzuki"));
+		assertThat(plan.errors()).hasSize(4);
+		assertThat(String.join("\n", plan.errors())).contains("グループメンバー 行2: メンバーのログインIDが見つかりません: nobody")
+				.contains("両方に書かれています").contains("グループ「経理」がグループのシートにありません")
+				.contains("グループメンバー 行5: グループ名が空欄です");
+		assertThat(plan.rows()).isEmpty();
+
+		ParsedSheet noLogin = sheet(List.of(DirectorySync.COL_GROUP_NAME), List.of(List.of("開発")));
+		assertThat(DirectorySync.parseGroups(groups, noLogin, existingGroups(), Set.of()).errors())
+				.singleElement().asString().contains("グループメンバーの表に列がありません: ログインID");
 	}
 }

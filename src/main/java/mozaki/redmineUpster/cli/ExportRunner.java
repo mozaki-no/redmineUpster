@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -22,6 +23,8 @@ import mozaki.redmineUpster.service.RedmineClientFactory;
  * <p>
  * 設定ファイルのプロジェクトのチケットと、Redmine のユーザー・グループを取得して .xlsx に出力します。
  * 出力したファイルはそのまま {@code --sync} の入力に使えます。
+ * チケットを出力する場合は、参照用のシート（トラッカー・ステータス・カスタムフィールドとその選択肢）も出力します
+ * （カスタムフィールドの取得には管理者の API キーが必要。取得できなければ警告してそのシートを省略）。
  * </p>
  */
 @Component
@@ -114,9 +117,11 @@ public class ExportRunner {
                 logger.warn("ユーザーを取得できないため、グループのメンバーは #ID で出力します");
             }
 
+            WorkbookExporter.ReferenceData reference = selected.contains(SyncTarget.TICKETS)
+                    ? fetchReference(client, logger) : null;
             WorkbookExporter.ExportData data = new WorkbookExporter.ExportData(issues,
                     selected.contains(SyncTarget.USERS) ? users : null,
-                    selected.contains(SyncTarget.GROUPS) ? groups : null, rootIssueId);
+                    selected.contains(SyncTarget.GROUPS) ? groups : null, rootIssueId, reference);
             if (data.issues() == null && data.users() == null && data.groups() == null) {
                 logger.error("出力できるデータがありません（ユーザー・グループの取得には管理者の API キーが必要です）");
                 return 1;
@@ -181,6 +186,40 @@ public class ExportRunner {
             logger.warn("ルートチケット #" + rootIssueId + " の配下にプロジェクトのチケットがありません（チケットのシートは見出しだけです）");
         }
         return true;
+    }
+
+    private interface ListFetcher {
+        List<Map<String, Object>> fetch();
+    }
+
+    /**
+     * 参照用のデータ（トラッカー・ステータス・カスタムフィールド）を取得します。取得できないものは警告して省略します。
+     */
+    static WorkbookExporter.ReferenceData fetchReference(RedmineClient client, FileLogger logger) {
+        List<Map<String, Object>> trackers = fetchReferenceList("trackers", "トラッカー", client::listTrackerDetails,
+                logger, "");
+        List<Map<String, Object>> statuses = fetchReferenceList("issue statuses", "ステータス",
+                client::listIssueStatusDetails, logger, "");
+        List<Map<String, Object>> customFields = fetchReferenceList("custom fields", "カスタムフィールド",
+                client::listCustomFields, logger, "カスタムフィールドの一覧の取得には管理者の API キーが必要です。");
+        return new WorkbookExporter.ReferenceData(trackers, statuses, customFields);
+    }
+
+    private static List<Map<String, Object>> fetchReferenceList(String kind, String label, ListFetcher fetcher,
+            FileLogger logger, String hint) {
+        try {
+            logger.info("Fetching " + kind + "（参照用シート）...");
+            List<Map<String, Object>> result = fetcher.fetch();
+            logger.info("Fetched " + (result == null ? 0 : result.size()) + " " + kind);
+            return result;
+        } catch (RestClientResponseException ex) {
+            logger.warn(label + "を取得できません（" + ex.getStatusCode().value() + "。" + hint
+                    + "参照用のシート「" + label + "」は出力しません）");
+            return null;
+        } catch (RuntimeException ex) {
+            logger.warn(label + "を取得できません（" + ex.getMessage() + "。参照用のシート「" + label + "」は出力しません）");
+            return null;
+        }
     }
 
     private interface Fetcher {
