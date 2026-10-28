@@ -192,12 +192,14 @@ public class WorkbookExporter {
                             Boolean.TRUE.equals(user.get("admin")) ? "はい" : "いいえ",
                             status == null ? "" : DirectorySync.STATUS_LABELS.getOrDefault(status.intValue(), ""),
                             ""));
+                    // 設定の列（個人設定・メール通知など）は Redmine が返す場合だけ出力（返さなければ空欄＝変更しない）
+                    row.addAll(UserSettingColumns.exportValues(user));
                     cf.values().forEach(d -> row.add(CustomFieldColumns.exportValue(user, d.id())));
                     rows.add(row);
                 }
                 String name = sheetName(sync != null ? sync.getUsers() : null, DirectorySync.DEFAULT_USERS_SHEET);
                 writeSheet(workbook, styles, name, tableName(sync != null ? sync.getUsers() : null),
-                        withCustomFields(DirectorySync.USER_COLUMNS, cf), rows);
+                        withCustomFields(DirectorySync.USER_EXPORT_COLUMNS, cf), rows);
                 sheets.put(name, rows.size());
             }
             if (data.groups() != null) {

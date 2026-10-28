@@ -715,6 +715,41 @@ public class SyncRunner {
      *
      * @return 検証エラー（なければ空）
      */
+    /**
+     * ユーザーのシートの「通知するプロジェクト」に識別子・名前があれば、プロジェクトを取得して ID に解決する関数を返します。
+     * 数値（ID）だけなら取得しません（null）。
+     */
+    private static java.util.function.Function<String, Long> projectResolver(
+            mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet sheet, RedmineClient client, FileLogger logger) {
+        boolean needed = false;
+        for (Map<String, String> row : sheet.rows()) {
+            String raw = row.get(UserSettingColumns.COL_NOTIFIED_PROJECTS);
+            if (raw != null) {
+                for (String token : UserSettingColumns.splitList(raw)) {
+                    if (!token.matches("#?\\d+") && !"なし".equals(token) && !"none".equalsIgnoreCase(token)) {
+                        needed = true;
+                    }
+                }
+            }
+        }
+        if (!needed) {
+            return null;
+        }
+        Map<String, Long> index = new HashMap<>();
+        Map<Long, Map<String, Object>> projects = client.listProjects();
+        logger.info("Fetched " + projects.size() + " projects（通知するプロジェクトの解決）");
+        projects.forEach((id, project) -> {
+            for (String key : List.of("identifier", "name")) {
+                Object value = project.get(key);
+                if (value != null) {
+                    index.putIfAbsent(String.valueOf(value).trim().toLowerCase(java.util.Locale.ROOT), id);
+                }
+            }
+            index.putIfAbsent(String.valueOf(id), id);
+        });
+        return token -> index.get(token.trim().toLowerCase(java.util.Locale.ROOT));
+    }
+
     private List<String> validateFile(FileJob job, ProjectConfig projectConfig, RedmineClient client,
             Boolean cliVirtualParents, FileLogger logger) {
         List<String> validationErrors = new ArrayList<>();
@@ -731,7 +766,8 @@ public class SyncRunner {
             logger.info("Fetched " + job.users.size() + " users");
         }
         if (job.usersSheet != null) {
-            job.userPlan = DirectorySync.parseUsers(job.usersSheet, job.users);
+            job.userPlan = DirectorySync.parseUsers(job.usersSheet, job.users,
+                    projectResolver(job.usersSheet, client, logger));
             validationErrors.addAll(job.userPlan.errors());
         }
         if (job.groupsSheet != null) {

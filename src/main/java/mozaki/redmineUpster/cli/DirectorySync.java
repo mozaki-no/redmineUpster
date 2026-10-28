@@ -59,6 +59,13 @@ public class DirectorySync {
     /** ユーザーの列（出力順） */
     public static final List<String> USER_COLUMNS = List.of(COL_ID, COL_LOGIN, COL_LASTNAME, COL_FIRSTNAME, COL_MAIL,
             COL_ADMIN, COL_STATUS, COL_PASSWORD);
+    /** ユーザーの列（出力順。基本の列＋設定の列。{@link UserSettingColumns}） */
+    public static final List<String> USER_EXPORT_COLUMNS;
+    static {
+        List<String> columns = new ArrayList<>(USER_COLUMNS);
+        columns.addAll(UserSettingColumns.COLUMN_NAMES);
+        USER_EXPORT_COLUMNS = java.util.Collections.unmodifiableList(columns);
+    }
     /** グループの列（出力順。メンバーは「グループメンバー」シートに出力する） */
     public static final List<String> GROUP_COLUMNS = List.of(COL_ID, COL_GROUP_NAME);
     /** グループメンバーの列（出力順。1行に1人。ログインIDが空欄の行は「メンバーなし」） */
@@ -81,10 +88,18 @@ public class DirectorySync {
      * @param status 状態（null＝変更しない）
      * @param password 新規作成時のパスワード（空欄なら自動生成）
      * @param customFields 「CF:名前」列の値（{@code {id, value}}。空欄の列は含まない）
+     * @param settings 設定の列（ユーザーの属性・個人設定。空欄の列は含まない）
      */
     public record UserRow(int rowNumber, Long id, boolean matchedByName, String login, String lastname,
             String firstname, String mail, Boolean admin, Integer status, String password,
-            List<Map<String, Object>> customFields) {
+            List<Map<String, Object>> customFields, UserSettingColumns.Values settings) {
+        public UserRow(int rowNumber, Long id, boolean matchedByName, String login, String lastname,
+                String firstname, String mail, Boolean admin, Integer status, String password,
+                List<Map<String, Object>> customFields) {
+            this(rowNumber, id, matchedByName, login, lastname, firstname, mail, admin, status, password,
+                    customFields, UserSettingColumns.Values.NONE);
+        }
+
         public UserRow(int rowNumber, Long id, boolean matchedByName, String login, String lastname,
                 String firstname, String mail, Boolean admin, Integer status, String password) {
             this(rowNumber, id, matchedByName, login, lastname, firstname, mail, admin, status, password, List.of());
@@ -152,6 +167,19 @@ public class DirectorySync {
      * @return 解析結果
      */
     public static Plan<UserRow> parseUsers(ParsedSheet sheet, Map<Long, Map<String, Object>> existingUsers) {
+        return parseUsers(sheet, existingUsers, null);
+    }
+
+    /**
+     * ユーザーのシートを解析・検証します。
+     *
+     * @param sheet シート
+     * @param existingUsers Redmine のユーザー（ID → ユーザー）
+     * @param projects 「通知するプロジェクト」の解決（識別子・名前・ID → ID。null なら ID の数値だけ）
+     * @return 解析結果
+     */
+    public static Plan<UserRow> parseUsers(ParsedSheet sheet, Map<Long, Map<String, Object>> existingUsers,
+            java.util.function.Function<String, Long> projects) {
         List<String> errors = new ArrayList<>();
         List<UserRow> rows = new ArrayList<>();
         requireColumns(sheet, List.of(COL_ID, COL_LOGIN), "ユーザー", errors);
@@ -202,6 +230,12 @@ public class DirectorySync {
                 errors.add(prefix + ex.getMessage());
                 continue;
             }
+            List<String> settingErrors = new ArrayList<>();
+            UserSettingColumns.Values settings = UserSettingColumns.parse(row, projects, settingErrors);
+            if (!settingErrors.isEmpty()) {
+                settingErrors.forEach(message -> errors.add(prefix + message));
+                continue;
+            }
             List<Map<String, Object>> customFields = new ArrayList<>();
             List<String> unknownFields = customFieldCells(row, userFields, customFields);
             if (!unknownFields.isEmpty()) {
@@ -210,7 +244,7 @@ public class DirectorySync {
             }
             UserRow user = new UserRow(rowNumber, id, matchedByName, login, value(row, COL_LASTNAME),
                     value(row, COL_FIRSTNAME), value(row, COL_MAIL), admin, status, value(row, COL_PASSWORD),
-                    customFields);
+                    customFields, settings);
             if (id == null) {
                 List<String> missing = new ArrayList<>();
                 for (String column : List.of(COL_LASTNAME, COL_FIRSTNAME, COL_MAIL)) {
@@ -261,18 +295,22 @@ public class DirectorySync {
             try {
                 if (row.id() == null) {
                     Map<String, Object> payload = createUserPayload(row);
+                    Map<String, Object> pref = row.settings().pref();
                     if (dryRun) {
-                        logger.info("DRY_RUN CREATE " + row.label());
+                        logger.info("DRY_RUN CREATE " + row.label() + (pref.isEmpty() ? "" : " pref=" + pref.keySet()));
                         created++;
                         continue;
                     }
-                    Long newId = client.createUser(payload);
+                    Long newId = client.createUser(payload, createExtras(row));
                     if (newId == null) {
                         addError(errors, logger, "作成失敗: " + row.label() + " 理由=レスポンスにIDがありません");
                         continue;
                     }
                     Map<String, Object> user = new LinkedHashMap<>(payload);
                     user.put("id", newId);
+                    if (!pref.isEmpty()) {
+                        user.put("pref", new LinkedHashMap<>(pref));
+                    }
                     existingUsers.put(newId, user);
                     writeBack.put(row.rowNumber(), newId);
                     logger.info("created " + row.label() + " -> #" + newId
@@ -289,12 +327,49 @@ public class DirectorySync {
                     unchanged++;
                     continue;
                 }
+                Map<String, Object> current = existingUsers.get(row.id());
+                @SuppressWarnings("unchecked")
+                Map<String, Object> pref = changes.get("pref") instanceof Map<?, ?> map
+                        ? new LinkedHashMap<>((Map<String, Object>) map) : new LinkedHashMap<>();
+                changes.remove("pref");
+                boolean resetPassword = Boolean.TRUE.equals(changes.remove("generate_password"));
+                List<String> changed = new ArrayList<>(changes.keySet());
+                pref.keySet().forEach(key -> changed.add("pref." + key));
+                if (resetPassword) {
+                    changed.add("パスワード再発行");
+                }
                 if (dryRun) {
-                    logger.info("DRY_RUN UPDATE " + row.label() + " changes=" + changes.keySet());
+                    logger.info("DRY_RUN UPDATE " + row.label() + " changes=" + changed);
                 } else {
-                    client.updateUser(row.id(), changes);
-                    existingUsers.get(row.id()).putAll(changes);
-                    logger.info("updated " + row.label() + " changes=" + changes.keySet());
+                    Map<String, Object> extras = new LinkedHashMap<>();
+                    Map<String, Object> user = new LinkedHashMap<>(changes);
+                    if (!pref.isEmpty()) {
+                        extras.put("pref", pref);
+                    }
+                    if (resetPassword) {
+                        user.put("generate_password", true);
+                        extras.put("send_information", true);
+                    }
+                    if (extras.isEmpty()) {
+                        client.updateUser(row.id(), changes);
+                    } else {
+                        // Redmine は "user" がないと更新できないため、属性の変更がなければログインIDだけ送る
+                        if (user.isEmpty()) {
+                            user.put("login", text(current.get("login")));
+                        }
+                        client.updateUser(row.id(), user, extras);
+                    }
+                    if (!pref.isEmpty()) {
+                        Map<String, Object> currentPref = new LinkedHashMap<>();
+                        Map<?, ?> before = UserSettingColumns.currentPref(current);
+                        if (before != null) {
+                            before.forEach((k, v) -> currentPref.put(String.valueOf(k), v));
+                        }
+                        currentPref.putAll(pref);
+                        current.put("pref", currentPref);
+                    }
+                    current.putAll(changes);
+                    logger.info("updated " + row.label() + " changes=" + changed);
                 }
                 updated++;
             } catch (RuntimeException ex) {
@@ -319,9 +394,9 @@ public class DirectorySync {
         if (!row.customFields().isEmpty()) {
             payload.put("custom_fields", apiFields(row.customFields()));
         }
+        payload.putAll(row.settings().user());
         if (row.password().isEmpty()) {
             payload.put("generate_password", true);
-            payload.put("send_information", true);
         } else {
             payload.put("password", row.password());
         }
@@ -345,7 +420,32 @@ public class DirectorySync {
             changes.put("status", row.status());
         }
         putCustomFieldChanges(changes, row.customFields(), current);
+        // 設定の列。Redmine の API が返さない項目（個人設定・メール通知など）は、セルに値があれば毎回送る
+        changes.putAll(UserSettingColumns.changed(row.settings().user(), current));
+        Map<String, Object> pref = UserSettingColumns.changed(row.settings().pref(),
+                UserSettingColumns.currentPref(current));
+        if (!pref.isEmpty()) {
+            changes.put("pref", pref);
+        }
+        if (row.settings().resetPassword()) {
+            changes.put("generate_password", true);
+        }
         return changes;
+    }
+
+    /**
+     * 新規作成で "user" の外に送る項目（個人設定 pref、パスワードを自動生成したときの send_information）。
+     */
+    static Map<String, Object> createExtras(UserRow row) {
+        Map<String, Object> extras = new LinkedHashMap<>();
+        if (!row.settings().pref().isEmpty()) {
+            extras.put("pref", row.settings().pref());
+        }
+        if (row.password().isEmpty()) {
+            // Redmine は send_information を "user" の外（トップレベル）で受け取る
+            extras.put("send_information", true);
+        }
+        return extras;
     }
 
     // ---------------------------------------------------------------- グループ

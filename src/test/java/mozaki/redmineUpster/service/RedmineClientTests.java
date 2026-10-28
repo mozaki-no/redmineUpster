@@ -2,9 +2,12 @@ package mozaki.redmineUpster.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.is;
 
 import java.util.Map;
 
@@ -136,6 +139,35 @@ class RedmineClientTests {
 		assertThat(client.listCustomFields()).singleElement()
 				.satisfies(cf -> assertThat(cf).containsEntry("field_format", "list")
 						.containsEntry("possible_values", java.util.List.of(Map.of("value", "設計"))));
+		server.verify();
+	}
+
+	@Test
+	@DisplayName("ユーザー: 個人設定（pref）と send_information は \"user\" の外（トップレベル）で送る")
+	void updateAndCreateUserWithExtras() {
+		RestTemplate restTemplate = new RestTemplate();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+		server.expect(requestTo("http://redmine.local/users/5.json")).andExpect(method(HttpMethod.PUT))
+				.andExpect(jsonPath("$.user.mail_notification", is("none")))
+				.andExpect(jsonPath("$.pref.hide_mail", is(false)))
+				.andExpect(jsonPath("$.pref.time_zone", is("Tokyo")))
+				.andExpect(jsonPath("$.pref.auto_watch_on", contains("issue_created")))
+				.andRespond(withSuccess());
+		server.expect(requestTo("http://redmine.local/users.json")).andExpect(method(HttpMethod.POST))
+				.andExpect(jsonPath("$.user.login", is("sato")))
+				.andExpect(jsonPath("$.send_information", is(true)))
+				.andExpect(jsonPath("$.pref.time_zone", is("Tokyo")))
+				.andRespond(withSuccess("{\"user\":{\"id\":10,\"login\":\"sato\"}}", MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/projects.json?limit=100&offset=0"))
+				.andRespond(withSuccess("{\"projects\":[{\"id\":3,\"identifier\":\"web\",\"name\":\"Web\"}],"
+						+ "\"total_count\":1}", MediaType.APPLICATION_JSON));
+
+		RedmineClient client = new RedmineClient("http://redmine.local", "key", "proj", restTemplate);
+		client.updateUser(5L, Map.of("mail_notification", "none"), Map.of("pref",
+				Map.of("hide_mail", false, "time_zone", "Tokyo", "auto_watch_on", java.util.List.of("issue_created"))));
+		assertThat(client.createUser(Map.of("login", "sato"), Map.of("send_information", true, "pref",
+				Map.of("time_zone", "Tokyo")))).isEqualTo(10L);
+		assertThat(client.listProjects()).containsKey(3L);
 		server.verify();
 	}
 }

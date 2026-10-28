@@ -265,7 +265,7 @@ class ExportImportTests {
 		RedmineClient client = Mockito.mock(RedmineClient.class);
 		when(client.listUsers()).thenReturn(users());
 		when(client.listGroups()).thenReturn(groups());
-		when(client.createUser(anyMap())).thenReturn(10L);
+		when(client.createUser(anyMap(), anyMap())).thenReturn(10L);
 		RedmineClientFactory factory = Mockito.mock(RedmineClientFactory.class);
 		when(factory.createClient(Mockito.any())).thenReturn(client);
 		SyncExecutor executor = Mockito.mock(SyncExecutor.class);

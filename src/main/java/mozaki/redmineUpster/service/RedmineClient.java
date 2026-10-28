@@ -400,6 +400,17 @@ public class RedmineClient {
 	}
 
 	/**
+	 * ユーザーを作成します（POST /users.json）。"user" の外に送る項目（個人設定 "pref"、"send_information"）付き。
+	 *
+	 * @param user ユーザー情報
+	 * @param extras "user" と並べて送る項目
+	 * @return 作成されたユーザーのID（取得できない場合はnull）
+	 */
+	public Long createUser(Map<String, Object> user, Map<String, Object> extras) {
+		return post("/users.json", "user", user, extras);
+	}
+
+	/**
 	 * ユーザーを更新します（PUT /users/{id}.json）。
 	 *
 	 * @param userId ユーザーID
@@ -407,6 +418,26 @@ public class RedmineClient {
 	 */
 	public void updateUser(Long userId, Map<String, Object> user) {
 		put("/users/" + userId + ".json", "user", user);
+	}
+
+	/**
+	 * ユーザーを更新します（PUT /users/{id}.json）。"user" の外に送る項目（個人設定 "pref"、"send_information"）付き。
+	 *
+	 * @param userId ユーザーID
+	 * @param user 更新する項目
+	 * @param extras "user" と並べて送る項目
+	 */
+	public void updateUser(Long userId, Map<String, Object> user, Map<String, Object> extras) {
+		put("/users/" + userId + ".json", "user", user, extras);
+	}
+
+	/**
+	 * プロジェクトを全件取得します（GET /projects.json。ページング）。
+	 *
+	 * @return プロジェクトID → プロジェクト情報（identifier・name など）
+	 */
+	public Map<Long, Map<String, Object>> listProjects() {
+		return listPaged("/projects.json", "projects", Map.of());
 	}
 
 	/**
@@ -431,8 +462,13 @@ public class RedmineClient {
 
 	@SuppressWarnings("rawtypes")
 	private Long post(String path, String rootKey, Map<String, Object> content) {
+		return post(path, rootKey, content, Map.of());
+	}
+
+	private Long post(String path, String rootKey, Map<String, Object> content, Map<String, Object> extra) {
 		String url = baseUrl + path;
-		Map<String, Object> requestBody = Map.of(rootKey, content);
+		Map<String, Object> requestBody = new LinkedHashMap<>(extra);
+		requestBody.put(rootKey, content);
 		debugLog("Request URL: POST " + url);
 		debugLog("Request body: " + formatBodyForLog(maskPassword(requestBody)));
 		ResponseEntity<Map> response = restTemplate.postForEntity(url, buildEntity(requestBody), Map.class);
@@ -445,8 +481,13 @@ public class RedmineClient {
 	}
 
 	private void put(String path, String rootKey, Map<String, Object> content) {
+		put(path, rootKey, content, Map.of());
+	}
+
+	private void put(String path, String rootKey, Map<String, Object> content, Map<String, Object> extra) {
 		String url = baseUrl + path;
-		Map<String, Object> requestBody = Map.of(rootKey, content);
+		Map<String, Object> requestBody = new LinkedHashMap<>(extra);
+		requestBody.put(rootKey, content);
 		debugLog("Request URL: PUT " + url);
 		debugLog("Request body: " + formatBodyForLog(maskPassword(requestBody)));
 		restTemplate.put(url, buildEntity(requestBody));
