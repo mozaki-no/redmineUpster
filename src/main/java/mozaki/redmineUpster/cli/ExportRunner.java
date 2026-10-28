@@ -45,6 +45,28 @@ public class ExportRunner {
      */
     public int run(String configPath, String projectName, String filePath, String logDir, boolean debug,
             Set<SyncTarget> targets) {
+        return run(configPath, projectName, filePath, logDir, debug, targets, null);
+    }
+
+    /**
+     * Excel に出力します（ルートチケットを CLI で指定）。
+     * <p>
+     * ルートチケットは、--root-issue ＞ 設定 sync.files で出力先と同じファイルに指定した rootIssueId の順に決めます。
+     * ルートチケットがある場合は、その配下（ルート自身は含まない）だけをルートの子を最上位として出力します
+     * （同期でルートの子になる最上位の行と同じ形なので、そのまま取り込めます）。
+     * </p>
+     *
+     * @param configPath 設定ファイルパス（null なら既定の場所）
+     * @param projectName プロジェクト名（null ならデフォルトプロジェクト）
+     * @param filePath 出力先（.xlsx。既にあれば {@code <file>.bak} に退避して上書き）
+     * @param logDir ログ出力ディレクトリ（null ならカレントディレクトリの logs）
+     * @param debug デバッグモードの場合 true
+     * @param targets 出力する対象（null ならすべて）
+     * @param cliRootIssueId CLI の --root-issue（null なら設定 sync.files の rootIssueId に従う）
+     * @return 成功なら 0、失敗なら 1
+     */
+    public int run(String configPath, String projectName, String filePath, String logDir, boolean debug,
+            Set<SyncTarget> targets, Long cliRootIssueId) {
         Set<SyncTarget> selected = targets == null ? EnumSet.allOf(SyncTarget.class) : targets;
         FileLogger logger = null;
         try {
@@ -72,10 +94,16 @@ public class ExportRunner {
             logger.info("Redmine URL: " + client.getBaseUrl());
 
             Map<Long, Map<String, Object>> issues = null;
+            Long rootIssueId = null;
             if (selected.contains(SyncTarget.TICKETS)) {
+                rootIssueId = cliRootIssueId != null ? cliRootIssueId
+                        : SyncRunner.configuredRootIssueId(projectConfig, filePath);
                 logger.info("Fetching issues of project " + client.getProjectId() + "...");
                 issues = client.listProjectIssues();
                 logger.info("Fetched " + issues.size() + " issues (closed included, subprojects excluded)");
+                if (rootIssueId != null && !checkRootIssue(rootIssueId, issues, client, logger)) {
+                    return 1;
+                }
             }
             // ユーザー・グループは担当の表示（ログインID・グループ名）にも使うので、チケットだけの出力でも取得を試みる
             Map<Long, Map<String, Object>> users = fetchOptional("users", client::listUsers, logger,
@@ -88,7 +116,7 @@ public class ExportRunner {
 
             WorkbookExporter.ExportData data = new WorkbookExporter.ExportData(issues,
                     selected.contains(SyncTarget.USERS) ? users : null,
-                    selected.contains(SyncTarget.GROUPS) ? groups : null);
+                    selected.contains(SyncTarget.GROUPS) ? groups : null, rootIssueId);
             if (data.issues() == null && data.users() == null && data.groups() == null) {
                 logger.error("出力できるデータがありません（ユーザー・グループの取得には管理者の API キーが必要です）");
                 return 1;
@@ -129,6 +157,30 @@ public class ExportRunner {
                 logger.close();
             }
         }
+    }
+
+    /**
+     * ルートチケットを確認します。プロジェクトのチケットになければ個別に取得します（別プロジェクトのチケットでもよい）。
+     * 配下のチケットがない場合は警告します（見出しだけのチケットのシートを出力）。
+     *
+     * @return ルートチケットがあれば true
+     */
+    private static boolean checkRootIssue(Long rootIssueId, Map<Long, Map<String, Object>> issues,
+            RedmineClient client, FileLogger logger) {
+        Map<String, Object> root = issues.get(rootIssueId);
+        if (root == null) {
+            root = client.getIssue(rootIssueId);
+            if (root == null || root.isEmpty()) {
+                logger.error("ルートチケット #" + rootIssueId + " が見つかりません");
+                return false;
+            }
+            logger.info("ルートチケット #" + rootIssueId + " は出力するプロジェクト外のチケットです");
+        }
+        logger.info("ルートチケット #" + rootIssueId + " 「" + root.get("subject") + "」の配下を出力します（ルート自身は出力しません）");
+        if (WorkbookExporter.descendants(issues, rootIssueId).isEmpty()) {
+            logger.warn("ルートチケット #" + rootIssueId + " の配下にプロジェクトのチケットがありません（チケットのシートは見出しだけです）");
+        }
+        return true;
     }
 
     private interface Fetcher {

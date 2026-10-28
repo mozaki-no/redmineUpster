@@ -527,6 +527,17 @@ public class SyncRunner {
     }
 
     /**
+     * 設定 sync.files でファイルに指定したルートチケットを返します（パスは同期と同じく絶対パスに正規化して比べる）。
+     *
+     * @param projectConfig プロジェクト設定
+     * @param file ファイルパス
+     * @return ルートチケットのID（指定なしはnull）
+     */
+    static Long configuredRootIssueId(ProjectConfig projectConfig, String file) {
+        return configuredRootIssueIds(projectConfig).get(normalize(file));
+    }
+
+    /**
      * ルートチケットを検証します（Redmineには読み取りのみ）。
      * <p>
      * ルートチケットは同期先プロジェクトのチケットから探し、なければ個別に取得します
