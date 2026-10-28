@@ -81,7 +81,7 @@ RedmineのチケットをCSV/Excelから同期するCLIツールです。Excel/C
 | `bash packaging/package-linux.sh`（Linux + JDK + Maven、動作確認用） | `target/package/redmineUpster/bin/redmineUpster` と `redmineUpster-linux.tar.gz` |
 
 - 同梱する Java モジュールは `packaging/modules.txt`（Windows は `jdk.crypto.mscapi` を追加）。Shift_JIS の CSV に `jdk.charsets`、HTTPS に `jdk.crypto.ec` が必要です。
-- 配布フォルダには `sync-config.yml`（サンプル）、`run-dry-run.bat` / `run.bat`（WBS ファイルをドラッグ＆ドロップして実行）、`USER_GUIDE.md`、`sample-wbs.xlsx` / `sample-wbs.csv` を同梱します（`packaging/dist/`）。配布版の `sync-config.yml` は `excel.table: "取込表"` が有効で、`sample-wbs.xlsx` をそのまま読めます（CSV では無視）。
+- 配布フォルダには `sync-config.yml`（サンプル）、`run-dry-run.bat` / `run.bat`（WBS ファイルをドラッグ＆ドロップして実行）、`settings.bat`（設定画面）、`USER_GUIDE.md`、`sample-wbs.xlsx` / `sample-wbs.csv` を同梱します（`packaging/dist/`）。配布版の `sync-config.yml` は `excel.table: "取込表"` が有効で、`sample-wbs.xlsx` をそのまま読めます（CSV では無視）。
 
 ## CLI実行
 
@@ -108,6 +108,7 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--root-issue=<チケット番号>` | いいえ | ルートチケット。今回同期するすべてのファイルの最上位の行を、このチケットの子にする（`sync.files` の `rootIssueId` より優先）。数値でなければエラー。`--export` と指定すると、このチケットの配下だけを出力 |
 | `--targets=<対象>` | いいえ | 同期・出力する対象（`tickets`, `users`, `groups` のカンマ区切り）。省略時はファイルにある表すべて |
 | `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループを `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
+| `--settings` | いいえ | 同期の代わりに設定画面を開き、`--config` の設定ファイル（省略時は同期と同じ探し方）を編集する |
 | ~~`--relink-parent`~~ | - | **廃止**（親子は毎回階層から再設定するため不要。指定しても警告を出して無視） |
 | ~~`--reset-sync`~~ | - | **廃止**（物理削除を行わない方針のため。指定しても警告を出して無視） |
 
@@ -190,6 +191,12 @@ java -jar redmineUpster.jar --sync --file=redmine.xlsx --targets=users,groups
 ## 設定ファイル（sync-config.yml）
 
 複数のプロジェクト環境を1ファイルで管理できます。
+
+YAML を手で書く代わりに、設定画面でも編集できます（Swing。Spring を起動せずにすぐ開きます）。保存すると YAML のコメントは消え、保存前の内容を `sync-config.yml.bak` に残します（画面にない項目や `${REDMINE_API_KEY}` はそのまま残ります）。配布版では `settings.bat` をダブルクリックします。
+
+```bash
+java -jar redmineUpster.jar --settings --config=sync-config.yml   # --config 省略時は同期と同じ探し方
+```
 
 ```yaml
 projects:

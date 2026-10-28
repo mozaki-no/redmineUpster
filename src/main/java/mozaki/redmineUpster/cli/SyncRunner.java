@@ -1669,7 +1669,7 @@ public class SyncRunner {
      *
      * @return 候補のパス（重複なし）
      */
-    static List<Path> defaultConfigCandidates() {
+    public static List<Path> defaultConfigCandidates() {
         Set<Path> candidates = new LinkedHashSet<>();
         candidates.add(Paths.get(DEFAULT_CONFIG_FILE).toAbsolutePath().normalize());
         Path appDir = applicationDirectory();
