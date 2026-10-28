@@ -112,6 +112,25 @@ redmineUpster.exe --sync --config=sync-config.yml --file=WBS.xlsx
 
 `--config` を省略すると、今いるフォルダ → `redmineUpster.exe` のあるフォルダの `sync-config.yml` を使います。`--help` で全オプションを表示します。
 
+### Jenkins・タスクスケジューラで自動実行する（確認なし）
+
+`redmineUpster.exe` 自体は確認画面を出しません。確認（`Continue [Y,N]?`）と最後の `pause` は bat だけです。次のどれかで bat も確認・pause なしで動きます。
+
+- 引数に `/y`（または `--yes`）を付ける: `run.bat /y "C:\wbs\WBS.xlsx"`
+- 環境変数 `REDMINEUPSTER_NO_PROMPT=1` を設定する
+- Jenkins から実行する（Jenkins が設定する `JENKINS_URL` があれば自動で確認なし）
+
+- 終了コードは `redmineUpster.exe` のまま返します（0＝成功、1＝エラーあり。行単位のエラーが1件でもあれば 1）。Jenkins はこれで失敗を判定できます。
+- `--` で始まる引数は exe にそのまま渡します。`=` を含むので引用符で囲んでください: `run.bat /y "--project=本番" "--root-issue=123" "C:\wbs\WBS.xlsx"`
+- ファイルを渡さなければ `sync-config.yml` の `files:` のファイルを使います（自動実行ではこの形がおすすめ）。
+- 実行中に WBS を Excel で開いていると書き戻しに失敗します（終了コード 1）。
+
+Jenkins（Windows エージェント）の例:
+
+```groovy
+bat 'C:\\tools\\redmineUpster\\run.bat /y'
+```
+
 ### 1つのプロジェクトを複数の Excel で更新する場合
 
 `sync-config.yml` は1つで足ります。ファイルは指定した順に1つずつ同期します（同時実行・結合はしません）。
