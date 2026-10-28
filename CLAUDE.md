@@ -34,6 +34,17 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 - 2026-10-25: export でルートチケット指定（--root-issue / sync.files の rootIssueId）に対応。ルート配下だけをルート基準の階層で出力（ルート自身は出力しない）。
 - 未実施: Windows ジョブの実行（GitHub Actions 上でのみ確認可能）、Windows 実機での exe・bat の動作確認、実Redmineでの確認。
 
+## 実行計画（設定画面）
+背景: むさしさんの指示。sync-config.yml を手で書くのがつらいため、設定を編集する画面（Swing、配布版の jlink ランタイムに java.desktop あり）を用意する。
+1. 起動: `--settings [--config=...]` を `RedmineUpsterApplication.main` で Spring 起動前に判定（`settings/SettingsLauncher`）。設定ファイルは同期と同じ探し方（`SyncRunner.defaultConfigCandidates`）。headless ならエラー終了（1）。`--help` に追加。
+2. 配布: `packaging/dist/settings.bat` を追加し、package-windows.ps1 で zip に同梱。
+3. 読み書き: `settings/SettingsDocument`（Swing 非依存）。SnakeYAML で LinkedHashMap の木に読み、画面の項目だけ変更して全体を書き戻す（未知のキー・`${...}` は保持、空欄はキー削除、キー順は固定、文字列は "..."）。保存前に `.bak`、先頭に説明コメント。
+4. 画面: `settings/SettingsWindow`。左にプロジェクト一覧（追加・複製・削除・既定）、右にタブ（接続・ファイル・列・Excel・ステータス・削除・親チケット）、保存時に検証、閉じるときに未保存の確認。
+5. テスト `SettingsDocumentTests`（往復・未知キー・${...}・files の2形式・空欄の削除・.bak・SyncConfigService での再読み込み・配布版設定の往復）、文書（USER_GUIDE・README）。
+
+### 進捗
+- 2026-10-28: 設定画面・settings.bat・SettingsDocument とテストを追加。Xvfb で画面表示（日本語の表示）と、配布版 sync-config.yml の読み込み→保存→CLI（--sync --dry-run）での読み込みを確認。
+
 ## 実行計画（Excel側にRedmineチケットIDを持つ方式への変更）
 背景: むさしさんの指示。Excel側に独自ID（`id`/`WBS_ID`）を持たず、階層・トラッカー・RedmineチケットIDを持つ。ExcelとRedmineのチケットを完全に一致させる。
 1. 仕様確定: チケットIDあり=更新／空欄=新規。親子は階層列のみで決定（一番深い値の列=レベル、浅い列が同じで1つ浅いレベルの行が親）。
@@ -122,6 +133,9 @@ java -jar target/redmineUpster.jar --sync --config=sync-config.yml --project="�
 # 単一テストメソッド実行
 ./mvnw test -Dtest=SpreadsheetParserTests#testMethodName
 
+# 設定画面（sync-config.yml を編集。配布版は settings.bat）
+java -jar target/redmineUpster.jar --settings --config=sync-config.yml
+
 # Windows 配布版（Java同梱 exe）の作成（Windows上）／Linux版（動作確認用）
 powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1
 bash packaging/package-linux.sh
@@ -138,6 +152,7 @@ bash packaging/package-linux.sh
 
 ### レイヤー構造
 - `cli/`: CLIコマンド・同期実行
+- `settings/`: 設定画面（`--settings`。Swing、Spring なし）と sync-config.yml の読み書き
 - `service/`: ビジネスロジック
 - `repository/`: JPA リポジトリ
 - `domain/`: エンティティ
@@ -212,7 +227,7 @@ redmineUpster/
 │       ├── java17.md
 │       ├── jenkins.md
 │       └── redmine-apache-passenger.md
-├── packaging/            # jpackage 配布スクリプト・同梱ファイル
+├── packaging/            # jpackage 配布スクリプト・同梱ファイル（dist/ に run.bat・settings.bat など）
 ├── samples/
 │   ├── sync-config.example.yml  # 設定ファイルサンプル
 │   └── wbs_*.csv         # WBSサンプル
