@@ -31,6 +31,10 @@ class DirectorySyncTests {
 	@TempDir
 	Path tempDir;
 
+	/** 「メンバー」列（1セルにカンマ区切り。以前の --export の形式）のあるグループの列 */
+	private static final List<String> PACKED_GROUP_COLUMNS = List.of(DirectorySync.COL_ID,
+			DirectorySync.COL_GROUP_NAME, DirectorySync.COL_MEMBERS);
+
 	private FileLogger logger;
 	private RedmineClient client;
 
@@ -79,7 +83,7 @@ class DirectorySyncTests {
 		DirectorySync.Plan<DirectorySync.UserRow> plan = DirectorySync.parseUsers(sheet, users);
 		assertThat(plan.errors()).isEmpty();
 
-		when(client.createUser(anyMap())).thenReturn(10L);
+		when(client.createUser(anyMap(), anyMap())).thenReturn(10L);
 		DirectorySync.Result result = new DirectorySync().syncUsers(plan.rows(), users, client, false, logger);
 
 		assertThat(result.errors()).isEmpty();
@@ -88,9 +92,13 @@ class DirectorySyncTests {
 		assertThat(result.writeBackIds()).containsExactly(Map.entry(2, 10L), Map.entry(3, 5L));
 		@SuppressWarnings("unchecked")
 		ArgumentCaptor<Map<String, Object>> created = ArgumentCaptor.forClass(Map.class);
-		verify(client).createUser(created.capture());
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, Object>> extras = ArgumentCaptor.forClass(Map.class);
+		verify(client).createUser(created.capture(), extras.capture());
 		assertThat(created.getValue()).containsEntry("login", "sato").containsEntry("generate_password", true)
-				.containsEntry("send_information", true).doesNotContainKey("password");
+				.doesNotContainKey("send_information").doesNotContainKey("password");
+		// send_information は "user" の外（トップレベル）
+		assertThat(extras.getValue()).containsExactly(Map.entry("send_information", true));
 		// ログインIDの大文字小文字の違いは変更しない。空欄の項目は送らない
 		verify(client).updateUser(5L, Map.of("mail", "tanaka@example.org"));
 		verify(client).updateUser(6L, Map.of("status", 3));
@@ -110,7 +118,7 @@ class DirectorySyncTests {
 		assertThat(result.unchanged()).isEqualTo(1);
 		assertThat(result.created()).isEqualTo(1);
 		assertThat(result.writeBackIds()).isEmpty();
-		verify(client, never()).createUser(any());
+		verify(client, never()).createUser(any(), any());
 		verify(client, never()).updateUser(any(), any());
 	}
 
@@ -141,7 +149,7 @@ class DirectorySyncTests {
 				"users", List.of(Map.of("id", 5, "name", "田中 太郎")))));
 		groups.put(21L, new LinkedHashMap<>(Map.of("id", 21, "name", "営業",
 				"users", List.of(Map.of("id", 6, "name", "鈴木 花子")))));
-		ParsedSheet sheet = sheet(DirectorySync.GROUP_COLUMNS, List.of(
+		ParsedSheet sheet = sheet(PACKED_GROUP_COLUMNS, List.of(
 				List.of("", "開発", "tanaka, sato"),
 				List.of("21", "営業", "Suzuki"),
 				List.of("", "品質保証", "suzuki\ntanaka"),
@@ -167,7 +175,7 @@ class DirectorySyncTests {
 	@Test
 	@DisplayName("グループ: メンバーに存在しないログインIDがあれば検証エラー")
 	void parseGroups_unknownMember() {
-		ParsedSheet sheet = sheet(DirectorySync.GROUP_COLUMNS, List.of(List.of("", "開発", "tanaka, nobody")));
+		ParsedSheet sheet = sheet(PACKED_GROUP_COLUMNS, List.of(List.of("", "開発", "tanaka, nobody")));
 		DirectorySync.Plan<DirectorySync.GroupRow> plan = DirectorySync.parseGroups(sheet, Map.of(), Set.of("tanaka"));
 		assertThat(plan.errors()).singleElement().asString().contains("nobody");
 	}
@@ -188,5 +196,220 @@ class DirectorySyncTests {
 	void parseTargets() {
 		assertThat(SyncTarget.parse(null)).containsExactlyInAnyOrder(SyncTarget.values());
 		assertThat(SyncTarget.parse("users, グループ")).containsExactlyInAnyOrder(SyncTarget.USERS, SyncTarget.GROUPS);
+	}
+
+	private static Map<Long, Map<String, Object>> existingGroups() {
+		Map<Long, Map<String, Object>> groups = new LinkedHashMap<>();
+		groups.put(20L, new LinkedHashMap<>(Map.of("id", 20, "name", "開発",
+				"users", List.of(Map.of("id", 5, "name", "田中 太郎")))));
+		groups.put(21L, new LinkedHashMap<>(Map.of("id", 21, "name", "営業",
+				"users", List.of(Map.of("id", 6, "name", "鈴木 花子")))));
+		groups.put(22L, new LinkedHashMap<>(Map.of("id", 22, "name", "総務",
+				"users", List.of(Map.of("id", 5, "name", "田中 太郎")))));
+		return groups;
+	}
+
+	@Test
+	@DisplayName("グループメンバーのシート: 書いたグループはシートの行がメンバーのすべて、書かないグループは変更しない、ログインID空欄だけなら0人")
+	void parseGroups_memberSheet() {
+		ParsedSheet groups = sheet(DirectorySync.GROUP_COLUMNS, List.of(
+				List.of("20", "開発"), List.of("21", "営業"), List.of("22", "総務"), List.of("", "新規")));
+		ParsedSheet members = sheet(DirectorySync.GROUP_MEMBER_COLUMNS, List.of(
+				List.of("開発", "tanaka", "田中 太郎"),
+				List.of("開発", "SUZUKI", ""),
+				List.of("開発", "suzuki", ""), // 重複は1人
+				List.of("総務", "", ""),
+				List.of("新規", "sato", ""),
+				List.of("", "", "")));
+		Map<Long, Map<String, Object>> existing = existingGroups();
+		DirectorySync.Plan<DirectorySync.GroupRow> plan = DirectorySync.parseGroups(groups, members, existing,
+				Set.of("tanaka", "suzuki", "sato"));
+		assertThat(plan.errors()).isEmpty();
+		assertThat(plan.rows()).extracting(DirectorySync.GroupRow::members).containsExactly(
+				List.of("tanaka", "SUZUKI"), null, List.of(), List.of("sato"));
+
+		Map<Long, Map<String, Object>> users = existingUsers();
+		users.put(10L, new LinkedHashMap<>(Map.of("id", 10, "login", "sato")));
+		when(client.createGroup(anyMap())).thenReturn(30L);
+		DirectorySync.Result result = new DirectorySync().syncGroups(plan.rows(), existing, users, client, false,
+				logger);
+		assertThat(result.errors()).isEmpty();
+		verify(client).updateGroup(20L, Map.of("user_ids", List.of(5L, 6L)));
+		verify(client, never()).updateGroup(eq(21L), anyMap());
+		verify(client).updateGroup(22L, Map.of("user_ids", List.of()));
+		verify(client).createGroup(Map.of("name", "新規", "user_ids", List.of(10L)));
+		assertThat(result.updated()).isEqualTo(2);
+		assertThat(result.unchanged()).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("グループメンバーのシート: 出力した形（メンバーなしは空欄の行）をそのまま取り込むと変更なし")
+	void parseGroups_memberSheet_unchanged() {
+		Map<Long, Map<String, Object>> existing = existingGroups();
+		existing.get(22L).put("users", List.of());
+		ParsedSheet groups = sheet(DirectorySync.GROUP_COLUMNS, List.of(
+				List.of("20", "開発"), List.of("21", "営業"), List.of("22", "総務")));
+		ParsedSheet members = sheet(DirectorySync.GROUP_MEMBER_COLUMNS, List.of(
+				List.of("開発", "tanaka", "田中 太郎"), List.of("営業", "suzuki", "鈴木 花子"), List.of("総務", "", "")));
+		DirectorySync.Plan<DirectorySync.GroupRow> plan = DirectorySync.parseGroups(groups, members, existing,
+				Set.of("tanaka", "suzuki"));
+		assertThat(plan.errors()).isEmpty();
+		DirectorySync.Result result = new DirectorySync().syncGroups(plan.rows(), existing, existingUsers(), client,
+				false, logger);
+		assertThat(result.unchanged()).isEqualTo(3);
+		verify(client, never()).updateGroup(any(), anyMap());
+	}
+
+	@Test
+	@DisplayName("グループメンバーのシート: 不明なログインID・グループのシートにないグループ・メンバー列との二重指定・グループ名の空欄はエラー")
+	void parseGroups_memberSheet_errors() {
+		ParsedSheet groups = sheet(PACKED_GROUP_COLUMNS, List.of(
+				List.of("20", "開発", ""), List.of("21", "営業", "suzuki")));
+		ParsedSheet members = sheet(DirectorySync.GROUP_MEMBER_COLUMNS, List.of(
+				List.of("開発", "nobody", ""),
+				List.of("営業", "tanaka", ""),
+				List.of("経理", "tanaka", ""),
+				List.of("", "tanaka", "")));
+		DirectorySync.Plan<DirectorySync.GroupRow> plan = DirectorySync.parseGroups(groups, members,
+				existingGroups(), Set.of("tanaka", "suzuki"));
+		assertThat(plan.errors()).hasSize(4);
+		assertThat(String.join("\n", plan.errors())).contains("グループメンバー 行2: メンバーのログインIDが見つかりません: nobody")
+				.contains("両方に書かれています").contains("グループ「経理」がグループのシートにありません")
+				.contains("グループメンバー 行5: グループ名が空欄です");
+		assertThat(plan.rows()).isEmpty();
+
+		ParsedSheet noLogin = sheet(List.of(DirectorySync.COL_GROUP_NAME), List.of(List.of("開発")));
+		assertThat(DirectorySync.parseGroups(groups, noLogin, existingGroups(), Set.of()).errors())
+				.singleElement().asString().contains("グループメンバーの表に列がありません: ログインID");
+	}
+
+	private static final List<String> SETTING_COLUMNS = List.of(DirectorySync.COL_ID, DirectorySync.COL_LOGIN,
+			UserSettingColumns.COL_HIDE_MAIL, UserSettingColumns.COL_TIME_ZONE, UserSettingColumns.COL_MAIL_NOTIFICATION,
+			UserSettingColumns.COL_COMMENTS_SORTING, UserSettingColumns.COL_AUTO_WATCH_ON,
+			UserSettingColumns.COL_NO_SELF_NOTIFIED, UserSettingColumns.COL_LANGUAGE);
+
+	@Test
+	@DisplayName("ユーザーの設定: 全員のメール公開・タイムゾーン・メール通知などを一括で変更（個人設定は pref で送る）")
+	void syncUsers_settingsBulkUpdate() {
+		ParsedSheet sheet = sheet(SETTING_COLUMNS, List.of(
+				List.of("5", "tanaka", "いいえ", "tokyo", "通知しない", "新しい順", "作成したチケット,更新したチケット", "はい", "日本語"),
+				List.of("6", "suzuki", "いいえ", "Tokyo", "", "", "", "", "")));
+		Map<Long, Map<String, Object>> users = existingUsers();
+		DirectorySync.Plan<DirectorySync.UserRow> plan = DirectorySync.parseUsers(sheet, users);
+		assertThat(plan.errors()).isEmpty();
+
+		DirectorySync.Result result = new DirectorySync().syncUsers(plan.rows(), users, client, false, logger);
+
+		assertThat(result.errors()).isEmpty();
+		assertThat(result.updated()).isEqualTo(2);
+		Map<String, Object> pref5 = new LinkedHashMap<>();
+		pref5.put("hide_mail", false);
+		pref5.put("time_zone", "Tokyo");
+		pref5.put("comments_sorting", "desc");
+		pref5.put("no_self_notified", "1");
+		pref5.put("auto_watch_on", List.of("issue_created", "issue_contributed_to"));
+		verify(client).updateUser(5L, Map.of("mail_notification", "none", "language", "ja"), Map.of("pref", pref5));
+		// 属性の変更がなく個人設定だけなら、"user" にはログインIDだけを入れる
+		verify(client).updateUser(6L, Map.of("login", "suzuki"),
+				Map.of("pref", Map.of("hide_mail", false, "time_zone", "Tokyo")));
+		verify(client, never()).updateUser(any(), any());
+	}
+
+	@Test
+	@DisplayName("ユーザーの設定: Redmine が現在の値を返す項目は比較して、同じなら送らない。dry-run では書き込まない")
+	void syncUsers_settingsUnchangedWhenKnown() {
+		ParsedSheet sheet = sheet(SETTING_COLUMNS, List.of(
+				List.of("5", "tanaka", "いいえ", "Tokyo", "none", "", "作成したチケット", "", ""),
+				List.of("6", "suzuki", "はい", "", "", "", "", "", "")));
+		Map<Long, Map<String, Object>> users = existingUsers();
+		users.get(5L).put("mail_notification", "none");
+		users.get(5L).put("pref", Map.of("hide_mail", false, "time_zone", "Tokyo", "auto_watch_on",
+				List.of("issue_created")));
+		DirectorySync.Plan<DirectorySync.UserRow> plan = DirectorySync.parseUsers(sheet, users);
+		assertThat(plan.errors()).isEmpty();
+
+		DirectorySync.Result dry = new DirectorySync().syncUsers(plan.rows(), users, client, true, logger);
+		assertThat(dry.unchanged()).isEqualTo(1);
+		assertThat(dry.updated()).isEqualTo(1);
+		verify(client, never()).updateUser(any(), any(), any());
+
+		new DirectorySync().syncUsers(plan.rows(), users, client, false, logger);
+		verify(client).updateUser(6L, Map.of("login", "suzuki"), Map.of("pref", Map.of("hide_mail", true)));
+		verify(client, never()).updateUser(eq(5L), any(), any());
+	}
+
+	@Test
+	@DisplayName("ユーザーの設定: 新規作成でも送る（属性は user、個人設定は pref）。パスワード再発行は generate_password と send_information")
+	void syncUsers_settingsOnCreateAndResetPassword() {
+		List<String> headers = new ArrayList<>(DirectorySync.USER_COLUMNS);
+		headers.addAll(List.of(UserSettingColumns.COL_TIME_ZONE, UserSettingColumns.COL_MAIL_NOTIFICATION,
+				UserSettingColumns.COL_MUST_CHANGE_PASSWD, UserSettingColumns.COL_RESET_PASSWORD,
+				UserSettingColumns.COL_NOTIFIED_PROJECTS));
+		ParsedSheet sheet = sheet(headers, List.of(
+				List.of("", "sato", "佐藤", "次郎", "sato@example.com", "", "", "secret", "Tokyo", "選択したプロジェクト",
+						"はい", "", "web, 7"),
+				List.of("5", "tanaka", "", "", "", "", "", "", "", "", "", "はい", "")));
+		Map<Long, Map<String, Object>> users = existingUsers();
+		DirectorySync.Plan<DirectorySync.UserRow> plan = DirectorySync.parseUsers(sheet, users,
+				token -> "web".equals(token) ? 3L : null);
+		assertThat(plan.errors()).isEmpty();
+		when(client.createUser(anyMap(), anyMap())).thenReturn(10L);
+
+		new DirectorySync().syncUsers(plan.rows(), users, client, false, logger);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, Object>> created = ArgumentCaptor.forClass(Map.class);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Map<String, Object>> extras = ArgumentCaptor.forClass(Map.class);
+		verify(client).createUser(created.capture(), extras.capture());
+		assertThat(created.getValue()).containsEntry("password", "secret").containsEntry("mail_notification", "selected")
+				.containsEntry("must_change_passwd", true).containsEntry("notified_project_ids", List.of(3L, 7L))
+				.doesNotContainKey("generate_password");
+		// パスワードを指定したので send_information は送らない
+		assertThat(extras.getValue()).containsExactly(Map.entry("pref", Map.of("time_zone", "Tokyo")));
+		verify(client).updateUser(5L, Map.of("generate_password", true), Map.of("send_information", true));
+	}
+
+	@Test
+	@DisplayName("ユーザーの設定: 不正な値は書き込む前に検証エラー")
+	void parseUsers_settingErrors() {
+		List<String> headers = List.of(DirectorySync.COL_ID, DirectorySync.COL_LOGIN, UserSettingColumns.COL_HIDE_MAIL,
+				UserSettingColumns.COL_TIME_ZONE, UserSettingColumns.COL_MAIL_NOTIFICATION,
+				UserSettingColumns.COL_RECENTLY_USED_PROJECTS, UserSettingColumns.COL_NOTIFIED_PROJECTS,
+				UserSettingColumns.COL_HISTORY_DEFAULT_TAB);
+		ParsedSheet sheet = sheet(headers, List.of(
+				List.of("5", "tanaka", "多分", "Mars", "たまに", "abc", "unknown", "どれか"),
+				List.of("6", "suzuki", "はい", "UTC", "all", "5", "", "履歴")));
+		DirectorySync.Plan<DirectorySync.UserRow> plan = DirectorySync.parseUsers(sheet, existingUsers(), t -> null);
+
+		assertThat(plan.rows()).hasSize(1);
+		assertThat(plan.errors()).hasSize(6).allMatch(e -> e.startsWith("ユーザー 行2: "));
+		assertThat(String.join("\n", plan.errors())).contains("メール非公開の値が不正です").contains("タイムゾーンの値が不正です")
+				.contains("メール通知の値が不正です").contains("最近使ったプロジェクトの表示数の値が不正です")
+				.contains("通知するプロジェクトのプロジェクトが Redmine にありません: [unknown]")
+				.contains("履歴の既定のタブの値が不正です");
+	}
+
+	@Test
+	@DisplayName("ユーザーの設定: 出力は Redmine が返す値だけ（返さない項目は空欄）")
+	void exportSettingValues() {
+		Map<String, Object> user = new LinkedHashMap<>(Map.of("login", "tanaka", "mail_notification", "only_my_events",
+				"pref", Map.of("hide_mail", true, "time_zone", "Tokyo", "auto_watch_on", List.of(""))));
+		List<String> cells = UserSettingColumns.exportValues(user);
+		assertThat(cells).hasSize(UserSettingColumns.COLUMN_NAMES.size());
+		Map<String, String> byColumn = new LinkedHashMap<>();
+		for (int i = 0; i < cells.size(); i++) {
+			byColumn.put(UserSettingColumns.COLUMN_NAMES.get(i), cells.get(i));
+		}
+		assertThat(byColumn).containsEntry(UserSettingColumns.COL_MAIL_NOTIFICATION, "自分が関係")
+				.containsEntry(UserSettingColumns.COL_HIDE_MAIL, "はい")
+				.containsEntry(UserSettingColumns.COL_TIME_ZONE, "Tokyo")
+				.containsEntry(UserSettingColumns.COL_AUTO_WATCH_ON, "なし")
+				.containsEntry(UserSettingColumns.COL_COMMENTS_SORTING, "");
+		assertThat(UserSettingColumns.exportValues(Map.of("login", "x"))).allMatch(String::isEmpty);
+		// 出力した値はそのまま取り込める
+		List<String> errors = new ArrayList<>();
+		UserSettingColumns.parse(byColumn, null, errors);
+		assertThat(errors).isEmpty();
 	}
 }

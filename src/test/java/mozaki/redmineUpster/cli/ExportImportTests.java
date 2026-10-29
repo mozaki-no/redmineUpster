@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -28,6 +30,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestTemplate;
 
 import mozaki.redmineUpster.config.SyncConfigProperties;
 import mozaki.redmineUpster.config.SyncConfigProperties.ExcelConfig;
@@ -128,7 +133,7 @@ class ExportImportTests {
 				new WorkbookExporter.ExportData(issues(), users(), groups()), config);
 		assertThat(result.warnings()).isEmpty();
 		assertThat(result.sheets()).containsExactly(Map.entry("チケット", 4), Map.entry("ユーザー", 1),
-				Map.entry("グループ", 1));
+				Map.entry("グループ", 1), Map.entry("グループメンバー", 1));
 
 		SpreadsheetParser parser = new SpreadsheetParser();
 		ParsedSheet tickets = parser.parseFromPath(xlsx.toString(), new ExcelSource(null, "取込表"));
@@ -155,8 +160,13 @@ class ExportImportTests {
 		assertThat(DirectorySync.userChanges(userPlan.rows().get(0), users().get(5L))).isEmpty();
 
 		ParsedSheet groupsSheet = parser.parseFromPath(xlsx.toString(), new ExcelSource("グループ", null));
-		DirectorySync.Plan<DirectorySync.GroupRow> groupPlan = DirectorySync.parseGroups(groupsSheet, groups(),
-				Set.of("tanaka"));
+		assertThat(groupsSheet.headers()).containsExactly("ID", "グループ名");
+		ParsedSheet membersSheet = parser.parseFromPath(xlsx.toString(), new ExcelSource("グループメンバー", null));
+		assertThat(membersSheet.headers()).containsExactly("グループ名", "ログインID", "氏名");
+		assertThat(membersSheet.rows()).singleElement()
+				.isEqualTo(Map.of("グループ名", "開発", "ログインID", "tanaka", "氏名", "田中 太郎"));
+		DirectorySync.Plan<DirectorySync.GroupRow> groupPlan = DirectorySync.parseGroups(groupsSheet, membersSheet,
+				groups(), Set.of("tanaka"));
 		assertThat(groupPlan.errors()).isEmpty();
 		assertThat(groupPlan.rows().get(0).members()).containsExactly("tanaka");
 		assertThat(DirectorySync.sameMembers(groupPlan.rows().get(0).members(), groups().get(20L), users())).isTrue();
@@ -260,7 +270,7 @@ class ExportImportTests {
 		RedmineClient client = Mockito.mock(RedmineClient.class);
 		when(client.listUsers()).thenReturn(users());
 		when(client.listGroups()).thenReturn(groups());
-		when(client.createUser(anyMap())).thenReturn(10L);
+		when(client.createUser(anyMap(), anyMap())).thenReturn(10L);
 		RedmineClientFactory factory = Mockito.mock(RedmineClientFactory.class);
 		when(factory.createClient(Mockito.any())).thenReturn(client);
 		SyncExecutor executor = Mockito.mock(SyncExecutor.class);
@@ -512,5 +522,296 @@ class ExportImportTests {
 		assertThat(exportRunner(client).run(config.toString(), null, out.toString(),
 				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), null)).isEqualTo(1);
 		assertThat(logText()).contains("Redmine のチケットの親子が 6 階層");
+	}
+
+	@Test
+	@DisplayName("参照用シート: トラッカー（標準フィールドの ○）・ステータス・カスタムフィールド（トラッカーの ○）・選択肢を1行ずつ出力")
+	void export_referenceSheets() throws Exception {
+		List<Map<String, Object>> trackers = List.of(
+				new LinkedHashMap<>(Map.of("id", 2, "name", "タスク", "default_status", Map.of("id", 1, "name", "新規"),
+						"description", "作業", "enabled_standard_fields", List.of("assigned_to_id", "start_date",
+								"due_date", "done_ratio"))),
+				new LinkedHashMap<>(Map.of("id", 6, "name", "サマリ", "default_status", Map.of("id", 1, "name", "新規"),
+						"enabled_standard_fields", List.of("start_date", "due_date"))));
+		List<Map<String, Object>> statuses = List.of(Map.of("id", 1, "name", "新規", "is_closed", false),
+				Map.of("id", 5, "name", "完了", "is_closed", true));
+		List<Map<String, Object>> customFields = List.of(
+				new LinkedHashMap<>(Map.of("id", 12, "name", "工程", "customized_type", "issue", "field_format", "list",
+						"multiple", false, "is_required", true,
+						"possible_values", List.of(Map.of("value", "設計"), Map.of("value", "実装")),
+						"trackers", List.of(Map.of("id", 2, "name", "タスク")))),
+				new LinkedHashMap<>(Map.of("id", 13, "name", "重要度", "customized_type", "issue", "field_format",
+						"enumeration", "multiple", true, "is_required", false,
+						"possible_values", List.of(Map.of("value", "3", "label", "高"), Map.of("value", "4", "label", "低")),
+						"trackers", List.of(Map.of("id", 2, "name", "タスク"), Map.of("id", 6, "name", "サマリ")))),
+				new LinkedHashMap<>(Map.of("id", 7, "name", "社員番号", "customized_type", "user", "field_format",
+						"string", "multiple", false, "is_required", false)),
+				new LinkedHashMap<>(Map.of("id", 9, "name", "予算", "customized_type", "project", "field_format",
+						"int")));
+		Path xlsx = tempDir.resolve("ref.xlsx");
+		WorkbookExporter.ExportResult result = new WorkbookExporter().export(xlsx,
+				new WorkbookExporter.ExportData(issues(), null, null, null,
+						new WorkbookExporter.ReferenceData(trackers, statuses, customFields)),
+				config(null));
+		assertThat(result.sheets()).containsExactly(Map.entry("チケット", 4), Map.entry("トラッカー", 2),
+				Map.entry("ステータス", 2), Map.entry("カスタムフィールド", 4), Map.entry("カスタムフィールド選択肢", 4));
+
+		List<List<String>> trackerRows = sheetRows(xlsx, "トラッカー");
+		assertThat(trackerRows.get(0)).startsWith("ID", "トラッカー名", "既定のステータス", "説明", "担当者", "カテゴリ");
+		int assignee = trackerRows.get(0).indexOf("担当者");
+		int start = trackerRows.get(0).indexOf("開始日");
+		assertThat(trackerRows.get(1)).startsWith("2", "タスク", "新規", "作業");
+		assertThat(trackerRows.get(1).get(assignee)).isEqualTo("○");
+		assertThat(trackerRows.get(2).get(assignee)).isEmpty();
+		assertThat(trackerRows.get(2).get(start)).isEqualTo("○");
+		assertThat(String.join(",", trackerRows.get(0))).contains("参照用");
+
+		assertThat(sheetRows(xlsx, "ステータス").get(2)).startsWith("5", "完了", "はい");
+
+		List<List<String>> fieldRows = sheetRows(xlsx, "カスタムフィールド");
+		List<String> header = fieldRows.get(0);
+		assertThat(header).startsWith("ID", "名前", "取込列名", "対象", "形式", "複数選択", "必須", "既定値", "選択肢の数",
+				"トラッカー:タスク", "トラッカー:サマリ");
+		assertThat(fieldRows.get(1)).startsWith("12", "工程", "CF:工程", "チケット", "リスト", "いいえ", "はい", "", "2",
+				"○", "");
+		assertThat(fieldRows.get(2)).startsWith("13", "重要度", "CF:重要度", "チケット", "キー・バリュー リスト", "はい",
+				"いいえ", "", "2", "○", "○");
+		assertThat(fieldRows.get(3)).startsWith("7", "社員番号", "CF:社員番号", "ユーザー", "文字列");
+		assertThat(fieldRows.get(4)).startsWith("9", "予算", "", "プロジェクト", "整数");
+
+		List<List<String>> valueRows = sheetRows(xlsx, "カスタムフィールド選択肢");
+		assertThat(valueRows.get(0)).startsWith("カスタムフィールドID", "カスタムフィールド名", "対象", "値", "表示名");
+		assertThat(valueRows.subList(1, valueRows.size())).extracting(r -> r.subList(0, 5)).containsExactly(
+				List.of("12", "工程", "チケット", "設計", "設計"), List.of("12", "工程", "チケット", "実装", "実装"),
+				List.of("13", "重要度", "チケット", "3", "高"), List.of("13", "重要度", "チケット", "4", "低"));
+
+		// 取り込みは参照用シートを読まない（先頭のチケットのシートだけ）
+		ParsedSheet tickets = new SpreadsheetParser().parseFromPath(xlsx.toString(), ExcelSource.DEFAULT);
+		DiffPlan plan = new DiffCalculator().calculate(tickets, config(null),
+				new TrackerResolver(config(null).getSync().getTrackerMap(), null), logger, false);
+		assertThat(plan.errors()).isEmpty();
+		assertThat(plan.items()).hasSize(4);
+	}
+
+	@Test
+	@DisplayName("--export: カスタムフィールドを取得できない（403）場合は警告してそのシートだけ省略する")
+	void exportRunner_referenceForbidden() throws Exception {
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listProjectIssues()).thenReturn(issues());
+		when(client.listTrackerDetails()).thenReturn(List.of(Map.of("id", 2, "name", "タスク")));
+		when(client.listIssueStatusDetails()).thenReturn(List.of(Map.of("id", 1, "name", "新規")));
+		when(client.listCustomFields()).thenThrow(org.springframework.web.client.HttpClientErrorException.create(
+				org.springframework.http.HttpStatus.FORBIDDEN, "Forbidden", null, null, null));
+		Path xlsx = tempDir.resolve("out.xlsx");
+		int exit = exportRunner(client).run(exportConfig().toString(), null, xlsx.toString(),
+				tempDir.resolve("logs").toString(), false, Set.of(SyncTarget.TICKETS), null);
+		assertThat(exit).isEqualTo(0);
+		try (InputStream in = Files.newInputStream(xlsx); Workbook wb = WorkbookFactory.create(in)) {
+			assertThat(wb.getSheet("トラッカー")).isNotNull();
+			assertThat(wb.getSheet("ステータス")).isNotNull();
+			assertThat(wb.getSheet("カスタムフィールド")).isNull();
+			assertThat(wb.getSheet("カスタムフィールド選択肢")).isNull();
+		}
+		assertThat(logText()).contains("カスタムフィールドを取得できません（403。カスタムフィールドの一覧の取得には管理者の API キーが必要です。");
+	}
+
+	@Test
+	@DisplayName("標準フィールドの取込列名を変えると、出力も取り込みもその列名を使う")
+	void configurableColumns_roundTrip() throws Exception {
+		ProjectConfig config = config(null);
+		SyncConfigProperties.ColumnsConfig columns = new SyncConfigProperties.ColumnsConfig();
+		columns.setTicketIdColumn("#");
+		columns.setTrackerColumn("種別");
+		columns.setHierarchy(List.of("L1", "L2", "L3"));
+		columns.setSubjectColumn("件名");
+		columns.setStatusColumn("状態");
+		columns.setAssigneeColumn("担当者");
+		columns.setStartDateColumn("開始日");
+		columns.setDueDateColumn("期日");
+		columns.setProgressColumn("進捗");
+		columns.setDescriptionColumn("メモ");
+		config.getSync().setColumns(columns);
+		Map<Long, Map<String, Object>> issues = issues();
+		issues.get(3L).put("description", "説明文");
+		Path xlsx = tempDir.resolve("cols.xlsx");
+		new WorkbookExporter().export(xlsx, new WorkbookExporter.ExportData(issues, users(), null), config, users(),
+				null);
+		List<List<String>> rows = sheetRows(xlsx, "チケット");
+		assertThat(rows.get(0)).startsWith("#", "種別", "L1", "L2", "L3", "状態", "担当者", "開始日", "期日", "進捗", "メモ");
+
+		ParsedSheet tickets = new SpreadsheetParser().parseFromPath(xlsx.toString(), new ExcelSource("チケット", null));
+		DiffPlan plan = new DiffCalculator().calculate(tickets, config,
+				new TrackerResolver(config.getSync().getTrackerMap(), null), logger, false);
+		assertThat(plan.errors()).isEmpty();
+		DiffItem task = plan.items().stream().filter(i -> i.issueId() == 3L).findFirst().orElseThrow();
+		assertThat(task.subject()).isEqualTo("ログイン画面");
+		assertThat(task.trackerId()).isEqualTo(2L);
+		assertThat(task.status()).isEqualTo("新規");
+		assertThat(task.payload()).containsEntry("assignee", "tanaka").containsEntry("startDate", "2026-10-01")
+				.containsEntry("dueDate", "2026-10-10").containsEntry("progress", 50)
+				.containsEntry("description", "説明文");
+	}
+
+	@Test
+	@DisplayName("--sync: 出力したグループメンバーのシートに行を足すとメンバーを追加し、行を消したグループ以外は変更しない")
+	void syncRunner_groupMembersSheet() throws Exception {
+		Map<Long, Map<String, Object>> users = users();
+		users.put(6L, new LinkedHashMap<>(Map.of("id", 6, "login", "sato", "lastname", "佐藤", "firstname", "次郎",
+				"mail", "sato@example.com", "admin", false, "status", 1)));
+		Map<Long, Map<String, Object>> groups = groups();
+		groups.put(21L, new LinkedHashMap<>(Map.of("id", 21, "name", "営業", "users", List.of(Map.of("id", 6)))));
+		Path xlsx = tempDir.resolve("groups.xlsx");
+		new WorkbookExporter().export(xlsx, new WorkbookExporter.ExportData(null, users, groups), config(null));
+		try (InputStream in = Files.newInputStream(xlsx); Workbook wb = WorkbookFactory.create(in)) {
+			Sheet members = wb.getSheet("グループメンバー");
+			assertThat(members.getLastRowNum()).isEqualTo(2);
+			// 開発に sato を追加、営業（sato）の行は消す（営業のメンバーは変更しない）
+			members.getRow(2).getCell(0).setCellValue("開発");
+			try (OutputStream out = Files.newOutputStream(xlsx)) {
+				wb.write(out);
+			}
+		}
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listUsers()).thenReturn(users);
+		when(client.listGroups()).thenReturn(groups);
+		RedmineClientFactory factory = Mockito.mock(RedmineClientFactory.class);
+		when(factory.createClient(Mockito.any())).thenReturn(client);
+		SyncRunner runner = new SyncRunner(new SyncConfigService(new SyncConfigProperties()), new SpreadsheetParser(),
+				new DiffCalculator(), Mockito.mock(SyncExecutor.class), factory, new TicketIdWriter(),
+				new DirectorySync());
+		int exit = runner.run(exportConfig().toString(), null, xlsx.toString(), false,
+				tempDir.resolve("logs").toString(), false, false, null, null, null);
+		assertThat(exit).isEqualTo(0);
+		Mockito.verify(client).updateGroup(20L, Map.of("user_ids", List.of(5L, 6L)));
+		Mockito.verify(client, Mockito.never()).updateGroup(Mockito.eq(21L), anyMap());
+		Mockito.verify(client, Mockito.never()).updateUser(Mockito.any(), anyMap());
+		assertThat(logText()).contains("Group Members: ");
+	}
+
+	@Test
+	@DisplayName("実際の Redmine（5.x/6.x）の /users.json の応答から、基本の列・参照用の列・CF をすべて出力し、設定の列は空欄＋見出しにコメント")
+	void exportUsers_fromRealisticRedmineResponse() throws Exception {
+		RestTemplate restTemplate = new RestTemplate();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+		// Redmine 5.1 / 6.0 の users/index.api.rsb と同じ形（管理者の API キー。status は含まない版もある）
+		String active = """
+				{"users":[
+				 {"id":5,"login":"tanaka","admin":true,"firstname":"太郎","lastname":"田中","mail":"tanaka@example.com",
+				  "created_on":"2024-04-01T00:00:00Z","updated_on":"2026-10-01T09:00:00Z",
+				  "last_login_on":"2026-10-28T23:30:00Z","passwd_changed_on":"2025-01-15T03:00:00Z","twofa_scheme":"totp",
+				  "custom_fields":[{"id":7,"name":"社員番号","value":"E001"}]},
+				 {"id":6,"login":"sato","admin":false,"firstname":"花子","lastname":"佐藤","mail":"sato@example.com",
+				  "created_on":"2024-04-01T00:00:00Z","updated_on":"2024-04-01T00:00:00Z",
+				  "last_login_on":null,"passwd_changed_on":null,"twofa_scheme":null,
+				  "custom_fields":[{"id":7,"name":"社員番号","value":""}]}
+				],"total_count":2,"offset":0,"limit":100}""";
+		String locked = """
+				{"users":[{"id":9,"login":"old","admin":false,"firstname":"一郎","lastname":"鈴木","mail":"old@example.com",
+				  "created_on":"2020-01-01T00:00:00Z","updated_on":"2020-01-01T00:00:00Z","last_login_on":null,
+				  "passwd_changed_on":null,"twofa_scheme":null,"status":3,
+				  "custom_fields":[{"id":7,"name":"社員番号","value":"E009"}]}],"total_count":1,"offset":0,"limit":100}""";
+		server.expect(requestTo("http://redmine.local/users.json?status=1&limit=100&offset=0"))
+				.andRespond(withSuccess(active, MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/users.json?status=2&limit=100&offset=0"))
+				.andRespond(withSuccess("{\"users\":[],\"total_count\":0,\"offset\":0,\"limit\":100}",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/users.json?status=3&limit=100&offset=0"))
+				.andRespond(withSuccess(locked, MediaType.APPLICATION_JSON));
+		Map<Long, Map<String, Object>> users = new RedmineClient("http://redmine.local", "key", "proj", restTemplate)
+				.listUsers();
+		server.verify();
+
+		Path xlsx = tempDir.resolve("users.xlsx");
+		new WorkbookExporter().export(xlsx, new WorkbookExporter.ExportData(null, users, null), config(null));
+
+		ParsedSheet sheet = new SpreadsheetParser().parseFromPath(xlsx.toString(), new ExcelSource("ユーザー", null));
+		assertThat(sheet.headers()).containsSubsequence("ID", "ログインID", "姓", "名", "メールアドレス", "管理者", "状態",
+				"パスワード", "メール通知", "パスワード再発行", "作成日", "最終ログイン", "パスワード変更日", "2段階認証", "CF:社員番号");
+		Map<String, String> tanaka = sheet.rows().get(0);
+		assertThat(tanaka).containsEntry("ID", "5").containsEntry("ログインID", "tanaka").containsEntry("姓", "田中")
+				.containsEntry("名", "太郎").containsEntry("メールアドレス", "tanaka@example.com")
+				.containsEntry("管理者", "はい").containsEntry("状態", "有効").containsEntry("2段階認証", "TOTP")
+				.containsEntry("CF:社員番号", "E001");
+		assertThat(tanaka.get("作成日")).isEqualTo(UserInfoColumns.dateTime("2024-04-01T00:00:00Z")).isNotBlank();
+		assertThat(tanaka.get("最終ログイン")).matches("\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2}");
+		assertThat(tanaka.get("パスワード変更日")).isNotBlank();
+		// 設定の列（個人設定・メール通知など）は Redmine の API が返さないので空欄（空欄＝取り込みで変更しない）
+		for (String column : UserSettingColumns.COLUMN_NAMES) {
+			assertThat(tanaka.get(column)).as(column).isEmpty();
+		}
+		assertThat(sheet.rows().get(1)).containsEntry("ログインID", "sato").containsEntry("管理者", "いいえ")
+				.containsEntry("状態", "有効").containsEntry("最終ログイン", "").containsEntry("2段階認証", "なし");
+		assertThat(sheet.rows().get(2)).containsEntry("ログインID", "old").containsEntry("姓", "鈴木")
+				.containsEntry("状態", "ロック").containsEntry("CF:社員番号", "E009");
+
+		try (Workbook wb = WorkbookFactory.create(xlsx.toFile())) {
+			Row header = wb.getSheet("ユーザー").getRow(0);
+			int mailNotification = sheet.headers().indexOf("メール通知");
+			int created = sheet.headers().indexOf("作成日");
+			assertThat(header.getCell(mailNotification).getCellComment().getString().getString())
+					.contains("返さない");
+			assertThat(header.getCell(created).getCellComment().getString().getString()).contains("取り込みでは使いません");
+			assertThat(header.getCell(0).getCellComment()).isNull();
+		}
+
+		// 出力したまま取り込んでも変更なし（参照用の列は無視）
+		DirectorySync.Plan<DirectorySync.UserRow> plan = DirectorySync.parseUsers(sheet, users);
+		assertThat(plan.errors()).isEmpty();
+		for (DirectorySync.UserRow row : plan.rows()) {
+			assertThat(DirectorySync.userChanges(row, users.get(row.id()))).as(row.login()).isEmpty();
+		}
+	}
+
+	private Path targetsConfig(String targetsYaml) throws IOException {
+		Path config = tempDir.resolve("targets-config.yml");
+		Files.write(config, List.of("projects:", "  - name: t", "    default: true",
+				"    redmine: { baseUrl: 'http://127.0.0.1:1', apiKey: k, projectId: p }", "    sync:",
+				"      targets: " + targetsYaml, "      trackerMap: { サマリ: 6, タスク: 2 }"));
+		return config;
+	}
+
+	@Test
+	@DisplayName("sync.targets: --export はユーザー・グループ・グループメンバーのシートだけを出力し、チケットを取得しない")
+	void exportRunner_configTargetsUsersAndGroups() throws Exception {
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listUsers()).thenReturn(users());
+		when(client.listGroups()).thenReturn(groups());
+		Path xlsx = tempDir.resolve("users.xlsx");
+		int exit = exportRunner(client).run(targetsConfig("\"users,groups\"").toString(), null, xlsx.toString(),
+				tempDir.resolve("logs").toString(), false, null, null);
+		assertThat(exit).isEqualTo(0);
+		Mockito.verify(client, Mockito.never()).listProjectIssues();
+		try (Workbook wb = WorkbookFactory.create(xlsx.toFile())) {
+			List<String> names = new ArrayList<>();
+			wb.forEach(sheet -> names.add(sheet.getSheetName()));
+			assertThat(names).containsExactly("ユーザー", "グループ", "グループメンバー");
+		}
+		assertThat(logText()).contains("sync.targets");
+	}
+
+	@Test
+	@DisplayName("sync.targets（リスト形式）: --sync はチケットのシートがあってもユーザーだけを同期する。不正な値はエラー")
+	void syncRunner_configTargets() throws Exception {
+		Path xlsx = tempDir.resolve("all.xlsx");
+		new WorkbookExporter().export(xlsx, new WorkbookExporter.ExportData(issues(), users(), groups()), config(null));
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listUsers()).thenReturn(users());
+		when(client.listGroups()).thenReturn(groups());
+		RedmineClientFactory factory = Mockito.mock(RedmineClientFactory.class);
+		when(factory.createClient(Mockito.any())).thenReturn(client);
+		SyncRunner runner = new SyncRunner(new SyncConfigService(new SyncConfigProperties()), new SpreadsheetParser(),
+				new DiffCalculator(), Mockito.mock(SyncExecutor.class), factory, new TicketIdWriter(),
+				new DirectorySync());
+		int exit = runner.run(targetsConfig("[users]").toString(), null, xlsx.toString(), false,
+				tempDir.resolve("logs").toString(), false, false, null, null, null);
+		assertThat(exit).isEqualTo(0);
+		Mockito.verify(client, Mockito.never()).listProjectIssues();
+		Mockito.verify(client, Mockito.never()).updateGroup(Mockito.any(), anyMap());
+		Mockito.verify(client, Mockito.never()).updateUser(Mockito.any(), anyMap());
+
+		int bad = runner.run(targetsConfig("\"users,foo\"").toString(), null, xlsx.toString(), false,
+				tempDir.resolve("logs").toString(), false, false, null, null, null);
+		assertThat(bad).isEqualTo(1);
+		assertThat(logText()).contains("sync.targets の値が不正です: foo");
 	}
 }

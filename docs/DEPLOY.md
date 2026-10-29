@@ -1252,6 +1252,9 @@ Credentials Bindingが機能しない
 | 0 | 正常終了 |
 | 1 | エラーあり（一部または全部の処理が失敗） |
 
+- jar／exe は確認画面を出さないので、Jenkins からそのまま実行できます。
+- Windows 配布版の `run.bat` / `run-dry-run.bat` / `export.bat` は、`/y`（`--yes`）・環境変数 `REDMINEUPSTER_NO_PROMPT=1`・Jenkins 上（`JENKINS_URL` あり）のいずれかで確認と `pause` を省略し、exe の終了コードを返します（例: `bat 'C:\\tools\\redmineUpster\\run.bat /y'`）。詳しくは [USER_GUIDE.md](./USER_GUIDE.md) の「Jenkins・タスクスケジューラで自動実行する」。
+
 ### 9.8 デバッグ方法
 
 #### 詳細ログの確認

@@ -245,6 +245,7 @@ public class SyncConfigService {
 		config.setExcel(parseExcelConfig(map.get("excel")));
 		config.setUsers(parseExcelConfig(map.get("users")));
 		config.setGroups(parseExcelConfig(map.get("groups")));
+		config.setGroupMembers(parseExcelConfig(map.get("groupMembers")));
 
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
 		if (columnsMap != null) {
@@ -315,6 +316,14 @@ public class SyncConfigService {
 		}
 		config.setFiles(files);
 		config.setFileRootIssueIds(fileRootIssueIds);
+
+		// targets: "users,groups" または [users, groups]
+		Object targets = map.get("targets");
+		if (targets instanceof List<?> list) {
+			config.setTargets(String.join(",", list.stream().map(String::valueOf).toList()));
+		} else if (targets != null) {
+			config.setTargets(expandEnvVars(targets.toString()));
+		}
 
 		return config;
 	}
@@ -443,6 +452,26 @@ public class SyncConfigService {
 		String trackerColumn = (String) map.get("trackerColumn");
 		if (trackerColumn != null && !trackerColumn.isBlank()) {
 			config.setTrackerColumn(trackerColumn);
+		}
+
+		String subjectColumn = (String) map.get("subjectColumn");
+		if (subjectColumn != null && !subjectColumn.isBlank()) {
+			config.setSubjectColumn(subjectColumn.trim());
+		}
+
+		String assigneeColumn = (String) map.get("assigneeColumn");
+		if (assigneeColumn != null && !assigneeColumn.isBlank()) {
+			config.setAssigneeColumn(assigneeColumn.trim());
+		}
+
+		String startActualColumn = (String) map.get("startActualColumn");
+		if (startActualColumn != null && !startActualColumn.isBlank()) {
+			config.setStartActualColumn(startActualColumn.trim());
+		}
+
+		String dueActualColumn = (String) map.get("dueActualColumn");
+		if (dueActualColumn != null && !dueActualColumn.isBlank()) {
+			config.setDueActualColumn(dueActualColumn.trim());
 		}
 
 		String startDateColumn = (String) map.get("startDateColumn");

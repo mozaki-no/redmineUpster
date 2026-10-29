@@ -81,7 +81,7 @@ RedmineのチケットをCSV/Excelから同期するCLIツールです。Excel/C
 | `bash packaging/package-linux.sh`（Linux + JDK + Maven、動作確認用） | `target/package/redmineUpster/bin/redmineUpster` と `redmineUpster-linux.tar.gz` |
 
 - 同梱する Java モジュールは `packaging/modules.txt`（Windows は `jdk.crypto.mscapi` を追加）。Shift_JIS の CSV に `jdk.charsets`、HTTPS に `jdk.crypto.ec` が必要です。
-- 配布フォルダには `sync-config.yml`（サンプル）、`run-dry-run.bat` / `run.bat`（WBS ファイルをドラッグ＆ドロップして実行）、`USER_GUIDE.md`、`sample-wbs.xlsx` / `sample-wbs.csv` を同梱します（`packaging/dist/`）。配布版の `sync-config.yml` は `excel.table: "取込表"` が有効で、`sample-wbs.xlsx` をそのまま読めます（CSV では無視）。
+- 配布フォルダには `sync-config.yml`（サンプル）、`run-dry-run.bat` / `run.bat`（WBS ファイルをドラッグ＆ドロップして実行）、`settings.bat`（設定画面）、`USER_GUIDE.md`、`sample-wbs.xlsx` / `sample-wbs.csv` を同梱します（`packaging/dist/`）。配布版の `sync-config.yml` は `excel.table: "取込表"` が有効で、`sample-wbs.xlsx` をそのまま読めます（CSV では無視）。
 
 ## CLI実行
 
@@ -106,8 +106,9 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--virtual-parents` / `--no-virtual-parents` | いいえ | 親の行がない行の祖先を仮想親チケットとして作成する／しない（`sync.virtualParents.enabled` より優先） |
 | `--no-result-columns` | いいえ | 同期結果（最終同期日時・同期結果・エラー理由）を入力ファイルに書き込まない（`sync.resultColumns.enabled` より優先） |
 | `--root-issue=<チケット番号>` | いいえ | ルートチケット。今回同期するすべてのファイルの最上位の行を、このチケットの子にする（`sync.files` の `rootIssueId` より優先）。数値でなければエラー。`--export` と指定すると、このチケットの配下だけを出力 |
-| `--targets=<対象>` | いいえ | 同期・出力する対象（`tickets`, `users`, `groups` のカンマ区切り）。省略時はファイルにある表すべて |
-| `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループを `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
+| `--targets=<対象>` | いいえ | 同期・出力する対象（`tickets`, `users`, `groups` のカンマ区切り）。省略時は設定の `sync.targets`、それもなければファイルにある表すべて（`--export` はすべて） |
+| `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループ・グループメンバー、参照用のトラッカー・ステータス・カスタムフィールド（選択肢）を `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
+| `--settings` | いいえ | 同期の代わりに設定画面を開き、`--config` の設定ファイル（省略時は同期と同じ探し方）を編集する |
 | ~~`--relink-parent`~~ | - | **廃止**（親子は毎回階層から再設定するため不要。指定しても警告を出して無視） |
 | ~~`--reset-sync`~~ | - | **廃止**（物理削除を行わない方針のため。指定しても警告を出して無視） |
 
@@ -181,15 +182,27 @@ java -jar redmineUpster.jar --export --file=WBS-A.xlsx --root-issue=123
 # 出力した Excel を編集して取り込む（ユーザー → グループ → チケットの順に Upsert）
 java -jar redmineUpster.jar --sync --file=redmine.xlsx --dry-run
 
-# ユーザーとグループだけ取り込む
-java -jar redmineUpster.jar --sync --file=redmine.xlsx --targets=users,groups
+# ユーザーとグループだけ出力・取り込む（配布版は export-users.bat → users-dry-run.bat / users.bat）
+java -jar redmineUpster.jar --export --file=users.xlsx --targets=users,groups
+java -jar redmineUpster.jar --sync --file=users.xlsx --targets=users,groups
 ```
+
+- 出力するシート: 「チケット」「ユーザー」「グループ」「グループメンバー」（1行に グループ名・ログインID・氏名）と、参照用の「トラッカー」（使う標準フィールドに ○）「ステータス」「カスタムフィールド」（対象・形式・必須・トラッカーごとの ○・取込列名）「カスタムフィールド選択肢」（1行に1つ）。参照用のシートは `--sync` では読みません。カスタムフィールドの一覧は管理者の API キーが必要で、取得できない（403）場合は警告してその2枚を省略します。
+- グループのメンバーは「グループメンバー」シートで取り込みます。**シートに書いたグループはシートの行がメンバーのすべて**になり、書いていないグループは変更しません（0人にするにはログインID空欄の行を1行）。以前の「グループ」シートの `メンバー` 列（カンマ区切り）も引き続き取り込めますが、同じグループを両方に書くとエラーです。シート名は `sync.groupMembers.sheet` で変更できます。
+
+- 「ユーザー」シートには基本の列（ID・ログインID・姓・名・メールアドレス・管理者・状態・パスワード・`CF:名前`）のほか、設定の列（`メール通知`・`通知するプロジェクト`・`言語`・`認証方式`・`パスワード変更を要求`・`メール非公開`・`タイムゾーン`・`コメントの表示順` などの個人設定、`パスワード再発行`）を書けます。空欄は変更しないので、列に全員分の値を入れると一括で変更できます。個人設定は `PUT /users/:id.json` の `pref` で送ります。Redmine の API（5.x/6.x の `/users.json`・`/users/:id.json`）は個人設定・メール通知・言語・認証方式を返さないため、`--export` ではこれらの列は常に空欄（書き込み専用。見出しのコメントにも記載）で、値を入れたセルは毎回送ります。参照用に `作成日`・`最終ログイン`・`パスワード変更日`・`2段階認証` も出力します（取り込みでは読みません）。`sync.targets: "users,groups"` を書くと、そのプロジェクトは `--targets` なしでもユーザー・グループだけを扱います。
 
 詳細（列の意味・空欄の扱い）は [docs/USER_GUIDE.md](docs/USER_GUIDE.md) の「Excel 出力とユーザー・グループ」を参照してください。
 
 ## 設定ファイル（sync-config.yml）
 
 複数のプロジェクト環境を1ファイルで管理できます。
+
+YAML を手で書く代わりに、設定画面でも編集できます（Swing。Spring を起動せずにすぐ開きます）。保存すると YAML のコメントは消え、保存前の内容を `sync-config.yml.bak` に残します（画面にない項目や `${REDMINE_API_KEY}` はそのまま残ります）。配布版では `settings.bat` をダブルクリックします。
+
+```bash
+java -jar redmineUpster.jar --settings --config=sync-config.yml   # --config 省略時は同期と同じ探し方
+```
 
 ```yaml
 projects:
@@ -234,12 +247,21 @@ projects:
           - "小分類"
           - "成果物"
           - "タスク"
+        subjectColumn: "タスク"      # 件名（空欄の行は一番深い階層列の値）
+        statusColumn: "ステータス"  # CSVのステータス列（優先）
+        assigneeColumn: "担当"       # Redmine assigned_to（ログインID・氏名・メール・グループ名）
         startDateColumn: "着手予定"  # Redmine start_date
         dueDateColumn: "完了予定"    # Redmine due_date
-        statusColumn: "ステータス"  # CSVのステータス列（優先）
+        startActualColumn: "着手実績"  # BY_DATES: 値があれば進行中
+        dueActualColumn: "完了実績"    # BY_DATES: 値があれば完了
         progressColumn: "進捗率"    # Redmine done_ratio
         descriptionColumn: "説明"   # Redmine description（改行・Markdown そのまま。空欄なら送らない）
+        lastSyncedAtColumn: "最終同期日時"  # 同期結果の書き戻し先（この3列は取り込みに使わない）
+        syncResultColumn: "同期結果"
+        syncErrorColumn: "エラー理由"
 ```
+
+標準フィールドの取込列名（`sync.columns.*`）はすべて設定で変更でき、`--export` も同じ列名で出力します（未設定・空欄なら上の既定値）。設定画面（`--settings`）の「取込列名」タブでも編集できます。
 
 環境変数は `${VAR_NAME}` 形式で参照可能です。
 
