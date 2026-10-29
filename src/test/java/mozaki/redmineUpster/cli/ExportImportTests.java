@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -28,6 +30,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestTemplate;
 
 import mozaki.redmineUpster.config.SyncConfigProperties;
 import mozaki.redmineUpster.config.SyncConfigProperties.ExcelConfig;
@@ -681,5 +686,132 @@ class ExportImportTests {
 		Mockito.verify(client, Mockito.never()).updateGroup(Mockito.eq(21L), anyMap());
 		Mockito.verify(client, Mockito.never()).updateUser(Mockito.any(), anyMap());
 		assertThat(logText()).contains("Group Members: ");
+	}
+
+	@Test
+	@DisplayName("実際の Redmine（5.x/6.x）の /users.json の応答から、基本の列・参照用の列・CF をすべて出力し、設定の列は空欄＋見出しにコメント")
+	void exportUsers_fromRealisticRedmineResponse() throws Exception {
+		RestTemplate restTemplate = new RestTemplate();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+		// Redmine 5.1 / 6.0 の users/index.api.rsb と同じ形（管理者の API キー。status は含まない版もある）
+		String active = """
+				{"users":[
+				 {"id":5,"login":"tanaka","admin":true,"firstname":"太郎","lastname":"田中","mail":"tanaka@example.com",
+				  "created_on":"2024-04-01T00:00:00Z","updated_on":"2026-10-01T09:00:00Z",
+				  "last_login_on":"2026-10-28T23:30:00Z","passwd_changed_on":"2025-01-15T03:00:00Z","twofa_scheme":"totp",
+				  "custom_fields":[{"id":7,"name":"社員番号","value":"E001"}]},
+				 {"id":6,"login":"sato","admin":false,"firstname":"花子","lastname":"佐藤","mail":"sato@example.com",
+				  "created_on":"2024-04-01T00:00:00Z","updated_on":"2024-04-01T00:00:00Z",
+				  "last_login_on":null,"passwd_changed_on":null,"twofa_scheme":null,
+				  "custom_fields":[{"id":7,"name":"社員番号","value":""}]}
+				],"total_count":2,"offset":0,"limit":100}""";
+		String locked = """
+				{"users":[{"id":9,"login":"old","admin":false,"firstname":"一郎","lastname":"鈴木","mail":"old@example.com",
+				  "created_on":"2020-01-01T00:00:00Z","updated_on":"2020-01-01T00:00:00Z","last_login_on":null,
+				  "passwd_changed_on":null,"twofa_scheme":null,"status":3,
+				  "custom_fields":[{"id":7,"name":"社員番号","value":"E009"}]}],"total_count":1,"offset":0,"limit":100}""";
+		server.expect(requestTo("http://redmine.local/users.json?status=1&limit=100&offset=0"))
+				.andRespond(withSuccess(active, MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/users.json?status=2&limit=100&offset=0"))
+				.andRespond(withSuccess("{\"users\":[],\"total_count\":0,\"offset\":0,\"limit\":100}",
+						MediaType.APPLICATION_JSON));
+		server.expect(requestTo("http://redmine.local/users.json?status=3&limit=100&offset=0"))
+				.andRespond(withSuccess(locked, MediaType.APPLICATION_JSON));
+		Map<Long, Map<String, Object>> users = new RedmineClient("http://redmine.local", "key", "proj", restTemplate)
+				.listUsers();
+		server.verify();
+
+		Path xlsx = tempDir.resolve("users.xlsx");
+		new WorkbookExporter().export(xlsx, new WorkbookExporter.ExportData(null, users, null), config(null));
+
+		ParsedSheet sheet = new SpreadsheetParser().parseFromPath(xlsx.toString(), new ExcelSource("ユーザー", null));
+		assertThat(sheet.headers()).containsSubsequence("ID", "ログインID", "姓", "名", "メールアドレス", "管理者", "状態",
+				"パスワード", "メール通知", "パスワード再発行", "作成日", "最終ログイン", "パスワード変更日", "2段階認証", "CF:社員番号");
+		Map<String, String> tanaka = sheet.rows().get(0);
+		assertThat(tanaka).containsEntry("ID", "5").containsEntry("ログインID", "tanaka").containsEntry("姓", "田中")
+				.containsEntry("名", "太郎").containsEntry("メールアドレス", "tanaka@example.com")
+				.containsEntry("管理者", "はい").containsEntry("状態", "有効").containsEntry("2段階認証", "TOTP")
+				.containsEntry("CF:社員番号", "E001");
+		assertThat(tanaka.get("作成日")).isEqualTo(UserInfoColumns.dateTime("2024-04-01T00:00:00Z")).isNotBlank();
+		assertThat(tanaka.get("最終ログイン")).matches("\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2}");
+		assertThat(tanaka.get("パスワード変更日")).isNotBlank();
+		// 設定の列（個人設定・メール通知など）は Redmine の API が返さないので空欄（空欄＝取り込みで変更しない）
+		for (String column : UserSettingColumns.COLUMN_NAMES) {
+			assertThat(tanaka.get(column)).as(column).isEmpty();
+		}
+		assertThat(sheet.rows().get(1)).containsEntry("ログインID", "sato").containsEntry("管理者", "いいえ")
+				.containsEntry("状態", "有効").containsEntry("最終ログイン", "").containsEntry("2段階認証", "なし");
+		assertThat(sheet.rows().get(2)).containsEntry("ログインID", "old").containsEntry("姓", "鈴木")
+				.containsEntry("状態", "ロック").containsEntry("CF:社員番号", "E009");
+
+		try (Workbook wb = WorkbookFactory.create(xlsx.toFile())) {
+			Row header = wb.getSheet("ユーザー").getRow(0);
+			int mailNotification = sheet.headers().indexOf("メール通知");
+			int created = sheet.headers().indexOf("作成日");
+			assertThat(header.getCell(mailNotification).getCellComment().getString().getString())
+					.contains("返さない");
+			assertThat(header.getCell(created).getCellComment().getString().getString()).contains("取り込みでは使いません");
+			assertThat(header.getCell(0).getCellComment()).isNull();
+		}
+
+		// 出力したまま取り込んでも変更なし（参照用の列は無視）
+		DirectorySync.Plan<DirectorySync.UserRow> plan = DirectorySync.parseUsers(sheet, users);
+		assertThat(plan.errors()).isEmpty();
+		for (DirectorySync.UserRow row : plan.rows()) {
+			assertThat(DirectorySync.userChanges(row, users.get(row.id()))).as(row.login()).isEmpty();
+		}
+	}
+
+	private Path targetsConfig(String targetsYaml) throws IOException {
+		Path config = tempDir.resolve("targets-config.yml");
+		Files.write(config, List.of("projects:", "  - name: t", "    default: true",
+				"    redmine: { baseUrl: 'http://127.0.0.1:1', apiKey: k, projectId: p }", "    sync:",
+				"      targets: " + targetsYaml, "      trackerMap: { サマリ: 6, タスク: 2 }"));
+		return config;
+	}
+
+	@Test
+	@DisplayName("sync.targets: --export はユーザー・グループ・グループメンバーのシートだけを出力し、チケットを取得しない")
+	void exportRunner_configTargetsUsersAndGroups() throws Exception {
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listUsers()).thenReturn(users());
+		when(client.listGroups()).thenReturn(groups());
+		Path xlsx = tempDir.resolve("users.xlsx");
+		int exit = exportRunner(client).run(targetsConfig("\"users,groups\"").toString(), null, xlsx.toString(),
+				tempDir.resolve("logs").toString(), false, null, null);
+		assertThat(exit).isEqualTo(0);
+		Mockito.verify(client, Mockito.never()).listProjectIssues();
+		try (Workbook wb = WorkbookFactory.create(xlsx.toFile())) {
+			List<String> names = new ArrayList<>();
+			wb.forEach(sheet -> names.add(sheet.getSheetName()));
+			assertThat(names).containsExactly("ユーザー", "グループ", "グループメンバー");
+		}
+		assertThat(logText()).contains("sync.targets");
+	}
+
+	@Test
+	@DisplayName("sync.targets（リスト形式）: --sync はチケットのシートがあってもユーザーだけを同期する。不正な値はエラー")
+	void syncRunner_configTargets() throws Exception {
+		Path xlsx = tempDir.resolve("all.xlsx");
+		new WorkbookExporter().export(xlsx, new WorkbookExporter.ExportData(issues(), users(), groups()), config(null));
+		RedmineClient client = Mockito.mock(RedmineClient.class);
+		when(client.listUsers()).thenReturn(users());
+		when(client.listGroups()).thenReturn(groups());
+		RedmineClientFactory factory = Mockito.mock(RedmineClientFactory.class);
+		when(factory.createClient(Mockito.any())).thenReturn(client);
+		SyncRunner runner = new SyncRunner(new SyncConfigService(new SyncConfigProperties()), new SpreadsheetParser(),
+				new DiffCalculator(), Mockito.mock(SyncExecutor.class), factory, new TicketIdWriter(),
+				new DirectorySync());
+		int exit = runner.run(targetsConfig("[users]").toString(), null, xlsx.toString(), false,
+				tempDir.resolve("logs").toString(), false, false, null, null, null);
+		assertThat(exit).isEqualTo(0);
+		Mockito.verify(client, Mockito.never()).listProjectIssues();
+		Mockito.verify(client, Mockito.never()).updateGroup(Mockito.any(), anyMap());
+		Mockito.verify(client, Mockito.never()).updateUser(Mockito.any(), anyMap());
+
+		int bad = runner.run(targetsConfig("\"users,foo\"").toString(), null, xlsx.toString(), false,
+				tempDir.resolve("logs").toString(), false, false, null, null, null);
+		assertThat(bad).isEqualTo(1);
+		assertThat(logText()).contains("sync.targets の値が不正です: foo");
 	}
 }

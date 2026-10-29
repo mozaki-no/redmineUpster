@@ -272,7 +272,7 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("                          children of this Redmine issue (overrides rootIssueId in sync.files).");
         System.out.println("                          With --export: export only the tickets under this issue (the root");
         System.out.println("                          itself is not exported; default: rootIssueId of the --file in sync.files)");
-        System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: all sheets in the file)");
+        System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: sync.targets, else all sheets in the file)");
         System.out.println("  --export                Export tickets of the project, users and groups to --file (.xlsx)");
         System.out.println("                          The exported file can be used as --file for --sync as it is");
         System.out.println("  --settings              Open the settings window to edit the config file (sync-config.yml).");

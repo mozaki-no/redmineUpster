@@ -59,11 +59,12 @@ public class DirectorySync {
     /** ユーザーの列（出力順） */
     public static final List<String> USER_COLUMNS = List.of(COL_ID, COL_LOGIN, COL_LASTNAME, COL_FIRSTNAME, COL_MAIL,
             COL_ADMIN, COL_STATUS, COL_PASSWORD);
-    /** ユーザーの列（出力順。基本の列＋設定の列。{@link UserSettingColumns}） */
+    /** ユーザーの列（出力順。基本の列＋設定の列 {@link UserSettingColumns}＋参照用の列 {@link UserInfoColumns}） */
     public static final List<String> USER_EXPORT_COLUMNS;
     static {
         List<String> columns = new ArrayList<>(USER_COLUMNS);
         columns.addAll(UserSettingColumns.COLUMN_NAMES);
+        columns.addAll(UserInfoColumns.COLUMN_NAMES);
         USER_EXPORT_COLUMNS = java.util.Collections.unmodifiableList(columns);
     }
     /** グループの列（出力順。メンバーは「グループメンバー」シートに出力する） */

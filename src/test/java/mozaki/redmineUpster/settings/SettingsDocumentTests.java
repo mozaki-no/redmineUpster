@@ -213,6 +213,22 @@ class SettingsDocumentTests {
     }
 
     @Test
+    @DisplayName("sync.targets（同期・出力する対象）を保存して読み込め、不正な値は検証エラー")
+    void targets_roundTripAndValidation() throws Exception {
+        Path path = write(CONFIG);
+        SettingsDocument doc = SettingsDocument.load(path);
+        Map<String, Object> project = doc.projects().get(0);
+        SettingsDocument.setString(project, "sync.targets", "users,groups");
+        assertThat(doc.validate()).isEmpty();
+        doc.save();
+        assertThat(Files.readString(path, StandardCharsets.UTF_8)).contains("targets: \"users,groups\"");
+        assertThat(loadWithApp(path).get(0).getSync().getTargets()).isEqualTo("users,groups");
+
+        SettingsDocument.setString(project, "sync.targets", "users,tasks");
+        assertThat(doc.validate()).singleElement().asString().contains("同期する対象");
+    }
+
+    @Test
     @DisplayName("プロジェクト名の必須・重複、既定はちょうど1つを検証する")
     void validate_projects() throws Exception {
         SettingsDocument doc = SettingsDocument.load(write(CONFIG));

@@ -146,6 +146,10 @@ public final class UserSettingColumns {
     /** パスワードの再発行（はい＝自動生成して本人にメールで通知。更新のときだけ使う） */
     public static final String COL_RESET_PASSWORD = "パスワード再発行";
 
+    /** --export の見出しのコメント（設定の列） */
+    public static final String EXPORT_NOTE = "Redmine の API は現在の値を返さないため空欄で出力します。"
+            + "値を書くと取り込みでその値に変更します（空欄は変更しない）。";
+
     /** 通知するプロジェクトのキー（プロジェクトの識別子・名前 → ID の解決が必要） */
     public static final String KEY_NOTIFIED_PROJECTS = "notified_project_ids";
 

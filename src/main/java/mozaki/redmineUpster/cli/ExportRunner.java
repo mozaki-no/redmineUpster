@@ -92,6 +92,15 @@ public class ExportRunner {
                 return 1;
             }
             logger.info("Project: " + projectConfig.getName());
+            if (targets == null) {
+                Set<SyncTarget> configured = SyncRunner.configuredTargets(projectConfig, logger);
+                if (configured == SyncRunner.CONFIG_TARGETS_INVALID) {
+                    return 1;
+                }
+                if (configured != null) {
+                    selected = configured;
+                }
+            }
             RedmineClient client = redmineClientFactory.createClient(projectConfig);
             client.setLogger(logger);
             logger.info("Redmine URL: " + client.getBaseUrl());

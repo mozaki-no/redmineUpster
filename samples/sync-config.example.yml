@@ -6,6 +6,9 @@ projects:
       apiKey: "${REDMINE_API_KEY}"  # 環境変数展開対応
       projectId: "project-a"
     sync:
+      # 同期・出力する対象の既定（tickets, users, groups のカンマ区切り。--targets が優先。省略時はファイルにある表すべて）
+      # "users,groups" にすると、このプロジェクトはユーザー・グループだけをメンテする（users.bat / export-users.bat は常にこの指定）
+      # targets: "tickets,users,groups"
       # トラッカー列が空欄の行に使う既定トラッカー（名前またはID）
       tracker:
         enabled: true

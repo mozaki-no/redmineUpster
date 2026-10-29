@@ -51,6 +51,9 @@ Copy-Item (Join-Path $Root "packaging\dist\sync-config.yml") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\run.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\run-dry-run.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\export.bat") $AppDir
+Copy-Item (Join-Path $Root "packaging\dist\export-users.bat") $AppDir
+Copy-Item (Join-Path $Root "packaging\dist\users.bat") $AppDir
+Copy-Item (Join-Path $Root "packaging\dist\users-dry-run.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\settings.bat") $AppDir
 Copy-Item (Join-Path $Root "docs\USER_GUIDE.md") $AppDir
 Copy-Item (Join-Path $Root "LICENSE") $AppDir

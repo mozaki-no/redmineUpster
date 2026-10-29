@@ -28,7 +28,7 @@ public enum SyncTarget {
         }
         Set<SyncTarget> targets = EnumSet.noneOf(SyncTarget.class);
         for (String token : raw.split("[,、]")) {
-            String value = token.trim().toLowerCase(Locale.ROOT);
+            String value = token.replace("[", "").replace("]", "").trim().toLowerCase(Locale.ROOT);
             switch (value) {
                 case "" -> {
                 }

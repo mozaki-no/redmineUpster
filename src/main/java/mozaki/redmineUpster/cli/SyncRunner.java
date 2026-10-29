@@ -164,6 +164,30 @@ public class SyncRunner {
      * @param targets 対象（null ならファイルにある表すべて）
      * @return 成功の場合は0、失敗の場合は1
      */
+    /** {@link #configuredTargets} の戻り値: sync.targets が不正 */
+    static final Set<SyncTarget> CONFIG_TARGETS_INVALID = java.util.Collections.unmodifiableSet(
+            EnumSet.noneOf(SyncTarget.class));
+
+    /**
+     * 設定の sync.targets（CLI の --targets がないときの既定）。
+     *
+     * @return 対象（未設定なら null、不正なら {@link #CONFIG_TARGETS_INVALID}）
+     */
+    static Set<SyncTarget> configuredTargets(ProjectConfig projectConfig, FileLogger logger) {
+        String raw = projectConfig.getSync() != null ? projectConfig.getSync().getTargets() : null;
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            Set<SyncTarget> targets = SyncTarget.parse(raw);
+            logger.info("Targets (設定 sync.targets): " + targets);
+            return targets;
+        } catch (IllegalArgumentException ex) {
+            logger.error("設定 sync.targets: " + ex.getMessage().replace("--targets", "sync.targets"));
+            return CONFIG_TARGETS_INVALID;
+        }
+    }
+
     public int runFiles(String configPath, String projectName, List<String> filePaths, boolean dryRun, String logDir,
             boolean debug, boolean forceUpdate, ExcelSource cliExcelSource, Boolean cliVirtualParents,
             Set<SyncTarget> targets) {
@@ -264,6 +288,16 @@ public class SyncRunner {
                 logger.debug("Project ID: " + projectConfig.getRedmine().getProjectId());
             }
             SyncConfig syncConfig = projectConfig.getSync();
+            if (targets == null) {
+                Set<SyncTarget> configured = configuredTargets(projectConfig, logger);
+                if (configured == CONFIG_TARGETS_INVALID) {
+                    return 1;
+                }
+                if (configured != null) {
+                    targets = configured;
+                    selected = configured;
+                }
+            }
             state.resultColumns = resultColumns(projectConfig, noResultColumns, logger);
             state.projectConfig = projectConfig;
 

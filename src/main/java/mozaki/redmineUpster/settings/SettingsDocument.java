@@ -52,7 +52,7 @@ public class SettingsDocument {
     private static final List<String> ROOT_ORDER = List.of("projects");
     private static final List<String> PROJECT_ORDER = List.of("name", "default", "redmine", "sync");
     private static final List<String> REDMINE_ORDER = List.of("baseUrl", "apiKey", "projectId");
-    private static final List<String> SYNC_ORDER = List.of("files", "trackerMap", "deletion", "virtualParents",
+    private static final List<String> SYNC_ORDER = List.of("targets", "files", "trackerMap", "deletion", "virtualParents",
             "autoCloseParents", "resultColumns", "status", "excel", "users", "groups", "groupMembers", "columns",
             "customFieldMap",
             "customFieldDateColumns", "tracker");
@@ -573,6 +573,14 @@ public class SettingsDocument {
             for (Map.Entry<String, String> entry : getStringMap(project, "sync.trackerMap").entrySet()) {
                 if (!isNumberOrEnv(entry.getValue()) || entry.getValue().isBlank()) {
                     errors.add(label + ": トラッカー対応表の「" + entry.getKey() + "」の ID は数値で入力してください");
+                }
+            }
+            String targets = getString(project, "sync.targets");
+            if (!isBlank(targets) && !targets.contains("${")) {
+                try {
+                    mozaki.redmineUpster.cli.SyncTarget.parse(targets);
+                } catch (IllegalArgumentException ex) {
+                    errors.add(label + ": 同期する対象は tickets, users, groups のカンマ区切りで入力してください: " + targets);
                 }
             }
             for (FileEntry file : getFiles(project)) {

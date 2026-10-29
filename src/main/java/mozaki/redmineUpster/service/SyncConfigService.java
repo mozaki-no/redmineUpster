@@ -317,6 +317,14 @@ public class SyncConfigService {
 		config.setFiles(files);
 		config.setFileRootIssueIds(fileRootIssueIds);
 
+		// targets: "users,groups" または [users, groups]
+		Object targets = map.get("targets");
+		if (targets instanceof List<?> list) {
+			config.setTargets(String.join(",", list.stream().map(String::valueOf).toList()));
+		} else if (targets != null) {
+			config.setTargets(expandEnvVars(targets.toString()));
+		}
+
 		return config;
 	}
 

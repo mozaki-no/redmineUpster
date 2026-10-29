@@ -194,12 +194,13 @@ public class WorkbookExporter {
                             ""));
                     // 設定の列（個人設定・メール通知など）は Redmine が返す場合だけ出力（返さなければ空欄＝変更しない）
                     row.addAll(UserSettingColumns.exportValues(user));
+                    row.addAll(UserInfoColumns.exportValues(user));
                     cf.values().forEach(d -> row.add(CustomFieldColumns.exportValue(user, d.id())));
                     rows.add(row);
                 }
                 String name = sheetName(sync != null ? sync.getUsers() : null, DirectorySync.DEFAULT_USERS_SHEET);
                 writeSheet(workbook, styles, name, tableName(sync != null ? sync.getUsers() : null),
-                        withCustomFields(DirectorySync.USER_EXPORT_COLUMNS, cf), rows);
+                        withCustomFields(DirectorySync.USER_EXPORT_COLUMNS, cf), rows, userHeaderNotes());
                 sheets.put(name, rows.size());
             }
             if (data.groups() != null) {
@@ -642,13 +643,48 @@ public class WorkbookExporter {
 
     private static void writeSheet(XSSFWorkbook workbook, Styles styles, String name, String tableName,
             List<String> headers, List<List<Object>> rows) {
+        writeSheet(workbook, styles, name, tableName, headers, rows, Map.of());
+    }
+
+    /**
+     * 「ユーザー」シートの見出しのコメント。
+     * 設定の列は Redmine の API が現在の値を返さないため空欄で出力されること、参照用の列は取り込まないことを書く。
+     */
+    static Map<String, String> userHeaderNotes() {
+        Map<String, String> notes = new LinkedHashMap<>();
+        for (String column : UserSettingColumns.COLUMN_NAMES) {
+            notes.put(column, UserSettingColumns.COL_RESET_PASSWORD.equals(column)
+                    ? "「はい」でパスワードを再発行します（取り込み時だけ。出力は常に空欄）。"
+                    : UserSettingColumns.EXPORT_NOTE);
+        }
+        for (String column : UserInfoColumns.COLUMN_NAMES) {
+            notes.put(column, UserInfoColumns.NOTE);
+        }
+        return notes;
+    }
+
+    private static void writeSheet(XSSFWorkbook workbook, Styles styles, String name, String tableName,
+            List<String> headers, List<List<Object>> rows, Map<String, String> headerNotes) {
         XSSFSheet sheet = workbook.createSheet(name);
         Row headerRow = sheet.createRow(0);
+        org.apache.poi.ss.usermodel.Drawing<?> drawing = headerNotes.isEmpty() ? null : sheet.createDrawingPatriarch();
         for (int c = 0; c < headers.size(); c++) {
             Cell cell = headerRow.createCell(c);
             cell.setCellValue(headers.get(c));
             cell.setCellStyle(styles.header);
             sheet.setColumnWidth(c, 14 * 256);
+            String note = headerNotes.get(headers.get(c));
+            if (drawing != null && note != null) {
+                org.apache.poi.ss.usermodel.ClientAnchor anchor = workbook.getCreationHelper().createClientAnchor();
+                anchor.setCol1(c);
+                anchor.setCol2(c + 3);
+                anchor.setRow1(0);
+                anchor.setRow2(4);
+                org.apache.poi.ss.usermodel.Comment comment = drawing.createCellComment(anchor);
+                comment.setString(workbook.getCreationHelper().createRichTextString(note));
+                comment.setAuthor("redmineUpster");
+                cell.setCellComment(comment);
+            }
         }
         for (int r = 0; r < rows.size(); r++) {
             Row row = sheet.createRow(r + 1);

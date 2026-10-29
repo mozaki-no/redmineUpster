@@ -100,6 +100,12 @@ public class SyncConfigProperties {
 	@Data
 	public static class SyncConfig {
 		/**
+		 * 同期・出力する対象の既定（tickets,users,groups のカンマ区切り。CLI の --targets が優先）。
+		 * 省略時はファイルにある表すべて（--export はすべて）。例: "users,groups"（ユーザー・グループだけをメンテする）
+		 */
+		private String targets;
+
+		/**
 		 * トラッカー設定。
 		 */
 		private TrackerConfig tracker;

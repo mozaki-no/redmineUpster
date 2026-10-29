@@ -12,6 +12,9 @@ projects:
       # 同期先プロジェクトの識別子（プロジェクトの URL の /projects/xxxx の xxxx）
       projectId: "my-project"
     sync:
+      # 同期・出力する対象の既定（tickets, users, groups のカンマ区切り。--targets が優先。省略時はファイルにある表すべて）
+      # "users,groups" にすると、このプロジェクトはユーザー・グループだけをメンテする（users.bat / export-users.bat は常にこの指定）
+      # targets: "tickets,users,groups"
       # トラッカー列の名前 → トラッカーID（ここにない名前は Redmine のトラッカー名から自動で探す）
       trackerMap:
         "タスク": 2

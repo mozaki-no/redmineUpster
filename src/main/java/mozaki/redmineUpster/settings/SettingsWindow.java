@@ -379,6 +379,9 @@ public class SettingsWindow extends JFrame {
         form.note("書いておくと、1つのファイルだけを同期しても、ほかのファイルのチケットは削除扱いになりません。");
         form.note("run.bat にファイルをドロップせずに実行すると、ここに書いた順にすべて同期します。");
         form.wide(tableWithButtons(table, model, add));
+        form.text("同期・出力する対象", "sync.targets", "（空欄＝ファイルにある表すべて。例: users,groups）",
+                "tickets（チケット）, users（ユーザー）, groups（グループ）のカンマ区切り。"
+                        + "users,groups にするとユーザー・グループだけをメンテします（--targets が優先）");
         return form.panel();
     }
 
