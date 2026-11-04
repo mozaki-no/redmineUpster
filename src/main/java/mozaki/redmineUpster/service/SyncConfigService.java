@@ -20,12 +20,14 @@ import jakarta.annotation.PostConstruct;
 import mozaki.redmineUpster.config.SyncConfigProperties;
 import mozaki.redmineUpster.config.SyncConfigProperties.ExcelConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.AutoCloseParentsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.DeletionConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.TrackerConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.ResultColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.VirtualParentsConfig;
 
 /**
@@ -49,6 +51,9 @@ public class SyncConfigService {
 	private final SyncConfigProperties properties;
 
 	private List<ProjectConfig> loadedProjects = new ArrayList<>();
+
+	/** 読み込み中の設定ファイルのフォルダ（sync.files の相対パスの基準。クラスパスから読む場合は null） */
+	private Path configBaseDir;
 
 	/**
 	 * コンストラクタ。
@@ -97,6 +102,7 @@ public class SyncConfigService {
 			// Try as classpath resource
 			try (InputStream is = getClass().getClassLoader().getResourceAsStream(configPath)) {
 				if (is != null) {
+					configBaseDir = null;
 					loadFromInputStream(is);
 					return;
 				}
@@ -107,6 +113,7 @@ public class SyncConfigService {
 		}
 
 		try (InputStream is = Files.newInputStream(path)) {
+			configBaseDir = path.toAbsolutePath().normalize().getParent();
 			loadFromInputStream(is);
 		} catch (IOException e) {
 			throw new RuntimeException("Failed to load configuration file: " + configPath, e);
@@ -238,6 +245,7 @@ public class SyncConfigService {
 		config.setExcel(parseExcelConfig(map.get("excel")));
 		config.setUsers(parseExcelConfig(map.get("users")));
 		config.setGroups(parseExcelConfig(map.get("groups")));
+		config.setGroupMembers(parseExcelConfig(map.get("groupMembers")));
 
 		Map<String, Object> columnsMap = (Map<String, Object>) map.get("columns");
 		if (columnsMap != null) {
@@ -260,7 +268,155 @@ public class SyncConfigService {
 			config.setVirtualParents(virtualParents);
 		}
 
+		Map<String, Object> resultColumnsMap = (Map<String, Object>) map.get("resultColumns");
+		if (resultColumnsMap != null) {
+			ResultColumnsConfig resultColumns = new ResultColumnsConfig();
+			Object enabled = resultColumnsMap.get("enabled");
+			if (enabled != null) {
+				resultColumns.setEnabled(Boolean.parseBoolean(expandEnvVars(enabled.toString()).trim()));
+			}
+			config.setResultColumns(resultColumns);
+		}
+
+		Map<String, Object> autoCloseMap = (Map<String, Object>) map.get("autoCloseParents");
+		if (autoCloseMap != null) {
+			AutoCloseParentsConfig autoClose = new AutoCloseParentsConfig();
+			Object enabled = autoCloseMap.get("enabled");
+			if (enabled != null) {
+				autoClose.setEnabled(Boolean.parseBoolean(expandEnvVars(enabled.toString()).trim()));
+			}
+			Object status = autoCloseMap.get("status");
+			if (status != null && !expandEnvVars(status.toString()).isBlank()) {
+				autoClose.setStatus(expandEnvVars(status.toString()).trim());
+			}
+			Object inProgressStatus = autoCloseMap.get("inProgressStatus");
+			if (inProgressStatus != null && !expandEnvVars(inProgressStatus.toString()).isBlank()) {
+				autoClose.setInProgressStatus(expandEnvVars(inProgressStatus.toString()).trim());
+			}
+			Object inProgress = autoCloseMap.get("inProgress");
+			if (inProgress != null) {
+				autoClose.setInProgress(Boolean.parseBoolean(expandEnvVars(inProgress.toString()).trim()));
+			}
+			Object ignoreNotInExcel = autoCloseMap.get("ignoreNotInExcel");
+			if (ignoreNotInExcel != null) {
+				autoClose.setIgnoreNotInExcel(
+						Boolean.parseBoolean(expandEnvVars(ignoreNotInExcel.toString()).trim()));
+			}
+			config.setAutoCloseParents(autoClose);
+		}
+
+		List<FileEntry> fileEntries = parseFileEntries(map.get("files"));
+		List<String> files = new ArrayList<>();
+		Map<String, Long> fileRootIssueIds = new HashMap<>();
+		for (FileEntry entry : fileEntries) {
+			files.add(entry.path());
+			if (entry.rootIssueId() != null) {
+				fileRootIssueIds.put(entry.path(), entry.rootIssueId());
+			}
+		}
+		config.setFiles(files);
+		config.setFileRootIssueIds(fileRootIssueIds);
+
+		// targets: "users,groups" または [users, groups]
+		Object targets = map.get("targets");
+		if (targets instanceof List<?> list) {
+			config.setTargets(String.join(",", list.stream().map(String::valueOf).toList()));
+		} else if (targets != null) {
+			config.setTargets(expandEnvVars(targets.toString()));
+		}
+
 		return config;
+	}
+
+	/**
+	 * sync.files（同期するファイルの一覧）を解析します。
+	 * <p>
+	 * 1件だけなら文字列でも書けます。相対パスは設定ファイルのフォルダを基準に絶対パスへ変換します
+	 * （クラスパスから読み込んだ場合はカレントディレクトリ基準のまま）。空欄の要素は無視します。
+	 * ルートチケットの指定（{@code { path: ..., rootIssueId: 123 }}）はパスだけを返します。
+	 * </p>
+	 *
+	 * @param value YAMLの値（null・文字列・リスト）
+	 * @return ファイルパスの一覧（書いた順）
+	 */
+	List<String> parseFiles(Object value) {
+		return parseFileEntries(value).stream().map(FileEntry::path).toList();
+	}
+
+	/**
+	 * sync.files の1件（ファイルパスと、そのファイルのルートチケット）。
+	 *
+	 * @param path ファイルパス（相対パスは設定ファイルのフォルダ基準で絶対パスに変換済み）
+	 * @param rootIssueId ルートチケットのID（指定なしは null）
+	 */
+	record FileEntry(String path, Long rootIssueId) {
+	}
+
+	/**
+	 * sync.files（同期するファイルの一覧）を、ルートチケットの指定も含めて解析します。
+	 * <p>
+	 * 要素は文字列（パスのみ）か、{@code { path: "wbs-a.xlsx", rootIssueId: 123 }} の形式で書けます
+	 * （{@code rootIssueId} の代わりに {@code rootIssue} も可。数値・数字の文字列のどちらでも可）。
+	 * </p>
+	 *
+	 * @param value YAMLの値（null・文字列・リスト）
+	 * @return ファイルの一覧（書いた順）
+	 * @throws IllegalArgumentException パスがない・ルートチケットが数値でない場合
+	 */
+	List<FileEntry> parseFileEntries(Object value) {
+		List<FileEntry> files = new ArrayList<>();
+		if (value == null) {
+			return files;
+		}
+		List<?> entries = value instanceof List<?> list ? list : List.of(value);
+		for (Object entry : entries) {
+			if (entry == null) {
+				continue;
+			}
+			Object rawPath = entry;
+			Long rootIssueId = null;
+			if (entry instanceof Map<?, ?> map) {
+				rawPath = map.get("path") != null ? map.get("path") : map.get("file");
+				if (rawPath == null) {
+					throw new IllegalArgumentException("sync.files の要素に path がありません: " + map);
+				}
+				Object rawRoot = map.get("rootIssueId") != null ? map.get("rootIssueId") : map.get("rootIssue");
+				rootIssueId = parseRootIssueId(rawRoot, rawPath);
+			}
+			String file = expandEnvVars(rawPath.toString()).trim();
+			if (file.isEmpty()) {
+				continue;
+			}
+			Path path = Paths.get(file);
+			if (!path.isAbsolute() && configBaseDir != null) {
+				path = configBaseDir.resolve(path);
+			}
+			files.add(new FileEntry(path.isAbsolute() ? path.normalize().toString() : file, rootIssueId));
+		}
+		return files;
+	}
+
+	private Long parseRootIssueId(Object rawRoot, Object rawPath) {
+		if (rawRoot == null) {
+			return null;
+		}
+		String text = expandEnvVars(String.valueOf(rawRoot)).trim();
+		if (text.startsWith("#")) {
+			text = text.substring(1).trim();
+		}
+		if (text.isEmpty()) {
+			return null;
+		}
+		try {
+			long id = Long.parseLong(text);
+			if (id <= 0) {
+				throw new NumberFormatException(text);
+			}
+			return id;
+		} catch (NumberFormatException ex) {
+			throw new IllegalArgumentException("sync.files の rootIssueId はチケット番号（数値）で指定してください: "
+					+ rawPath + " → " + rawRoot, ex);
+		}
 	}
 
 	/**
@@ -298,6 +454,26 @@ public class SyncConfigService {
 			config.setTrackerColumn(trackerColumn);
 		}
 
+		String subjectColumn = (String) map.get("subjectColumn");
+		if (subjectColumn != null && !subjectColumn.isBlank()) {
+			config.setSubjectColumn(subjectColumn.trim());
+		}
+
+		String assigneeColumn = (String) map.get("assigneeColumn");
+		if (assigneeColumn != null && !assigneeColumn.isBlank()) {
+			config.setAssigneeColumn(assigneeColumn.trim());
+		}
+
+		String startActualColumn = (String) map.get("startActualColumn");
+		if (startActualColumn != null && !startActualColumn.isBlank()) {
+			config.setStartActualColumn(startActualColumn.trim());
+		}
+
+		String dueActualColumn = (String) map.get("dueActualColumn");
+		if (dueActualColumn != null && !dueActualColumn.isBlank()) {
+			config.setDueActualColumn(dueActualColumn.trim());
+		}
+
 		String startDateColumn = (String) map.get("startDateColumn");
 		if (startDateColumn != null && !startDateColumn.isBlank()) {
 			config.setStartDateColumn(startDateColumn);
@@ -316,6 +492,26 @@ public class SyncConfigService {
 		String progressColumn = (String) map.get("progressColumn");
 		if (progressColumn != null && !progressColumn.isBlank()) {
 			config.setProgressColumn(progressColumn);
+		}
+
+		String descriptionColumn = (String) map.get("descriptionColumn");
+		if (descriptionColumn != null && !descriptionColumn.isBlank()) {
+			config.setDescriptionColumn(descriptionColumn);
+		}
+
+		String lastSyncedAtColumn = (String) map.get("lastSyncedAtColumn");
+		if (lastSyncedAtColumn != null && !lastSyncedAtColumn.isBlank()) {
+			config.setLastSyncedAtColumn(lastSyncedAtColumn.trim());
+		}
+
+		String syncResultColumn = (String) map.get("syncResultColumn");
+		if (syncResultColumn != null && !syncResultColumn.isBlank()) {
+			config.setSyncResultColumn(syncResultColumn.trim());
+		}
+
+		String syncErrorColumn = (String) map.get("syncErrorColumn");
+		if (syncErrorColumn != null && !syncErrorColumn.isBlank()) {
+			config.setSyncErrorColumn(syncErrorColumn.trim());
 		}
 
 		Object fillDownHierarchy = map.get("fillDownHierarchy");

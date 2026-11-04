@@ -100,6 +100,12 @@ public class SyncConfigProperties {
 	@Data
 	public static class SyncConfig {
 		/**
+		 * 同期・出力する対象の既定（tickets,users,groups のカンマ区切り。CLI の --targets が優先）。
+		 * 省略時はファイルにある表すべて（--export はすべて）。例: "users,groups"（ユーザー・グループだけをメンテする）
+		 */
+		private String targets;
+
+		/**
 		 * トラッカー設定。
 		 */
 		private TrackerConfig tracker;
@@ -155,9 +161,85 @@ public class SyncConfigProperties {
 		private ExcelConfig groups;
 
 		/**
+		 * グループメンバーの読み込み元（シート・テーブル）。省略時はシート「グループメンバー」（なければ使わない）。
+		 * 1行に「グループ名・ログインID」を1組書きます。このシートに書いたグループは、
+		 * シートの行がそのグループのメンバーのすべてになります（グループのシートを同期する場合だけ読みます）。
+		 */
+		private ExcelConfig groupMembers;
+
+		/**
 		 * 仮想親チケットの自動作成（Excelに親行がない場合）の設定。
 		 */
 		private VirtualParentsConfig virtualParents;
+
+		private ResultColumnsConfig resultColumns;
+
+		/**
+		 * 親チケットの自動完了（子チケットがすべて完了したら親も完了にする）の設定。
+		 */
+		private AutoCloseParentsConfig autoCloseParents;
+
+		/**
+		 * このプロジェクトを更新する Excel/CSV ファイルの一覧（任意。相対パスは設定ファイルのフォルダ基準で、
+		 * 読み込み時に絶対パスへ変換済み）。
+		 * <p>
+		 * --file を省略した場合は、ここに書いた順にすべてのファイルを同期します。
+		 * また論理削除では、ここに書いたどのファイルにもないチケットだけを対象にします
+		 * （1つのファイルだけを同期しても、別のファイルのチケットを論理削除しない）。
+		 * </p>
+		 */
+		private List<String> files = new ArrayList<>();
+
+		/**
+		 * sync.files のファイルごとのルートチケット（{@link #files} と同じパス → RedmineのチケットID）。
+		 * <p>
+		 * {@code files: [{ path: wbs-a.xlsx, rootIssueId: 123 }]} のように書いたファイルだけを含みます。
+		 * ルートチケットがあるファイルの最上位の行（親行がない行。最上位の仮想親を含む）は、
+		 * 親なしではなくルートチケットの子として同期します。
+		 * </p>
+		 */
+		private Map<String, Long> fileRootIssueIds = new HashMap<>();
+	}
+
+	/**
+	 * 親チケットの自動完了の設定クラス。
+	 * <p>
+	 * 有効にすると、同期の最後に、子チケットがすべて完了（Redmine の「終了したチケット」扱いのステータス）に
+	 * なった親チケットを完了にします（孫→子→親の順に再帰的に）。完了した親を未完了に戻すことはしません。
+	 * ルートチケットとその祖先は対象外です。
+	 * </p>
+	 */
+	@Data
+	public static class AutoCloseParentsConfig {
+		/**
+		 * 親チケットを自動で完了にするかどうか（既定: false）。
+		 */
+		private boolean enabled;
+
+		/**
+		 * 完了にするときのステータス（名前またはID）。未設定の場合は statusMap の「完了」→ Redmine の
+		 * 「完了」「終了」→ 最初の終了ステータスの順に決めます。
+		 */
+		private String status;
+
+		/**
+		 * 子に着手済み（新規でない）のチケットがある新規の親を進行中にするときのステータス（名前またはID）。
+		 * 未設定の場合は statusMap の「進行中」「作業中」→ Redmine の「進行中」「作業中」。
+		 */
+		private String inProgressStatus;
+
+		/**
+		 * 子に着手済みのチケットがある新規の親を進行中にするかどうか（既定: true）。
+		 */
+		private boolean inProgress = true;
+
+		/**
+		 * 子チケットの判定（すべて完了・着手済みがある）で、Excelにない子チケット（Redmineで手動作成したもの
+		 * など）を無視するかどうか（既定: false = Redmine の子すべてで判定）。true の場合は、同期したファイル・
+		 * sync.files のファイルにあるチケットと今回作成したチケット（仮想親を含む）だけで判定します。
+		 * 判定に使う子が1つもない親は完了にしません。無視した子チケットは変更しません。
+		 */
+		private boolean ignoreNotInExcel;
 	}
 
 	/**
@@ -189,6 +271,15 @@ public class SyncConfigProperties {
 	 * 優先順位は table ＞ sheet ＞ 先頭シート。CLI の --table / --sheet で上書きできます。
 	 * </p>
 	 */
+	/**
+	 * 同期結果（最終同期日時・同期結果・エラー理由）の書き戻し設定。
+	 */
+	@Data
+	public static class ResultColumnsConfig {
+		/** 書き戻す場合 true（既定） */
+		private boolean enabled = true;
+	}
+
 	@Data
 	public static class ExcelConfig {
 		/**
@@ -244,6 +335,18 @@ public class SyncConfigProperties {
 		private String trackerColumn = "トラッカー";
 
 		/**
+		 * 件名列名。値があればチケットの件名にします（空欄なら一番深い階層列の値）。
+		 * 既定の階層列の最後の列と同じ "タスク"。
+		 */
+		private String subjectColumn = "タスク";
+
+		/**
+		 * 担当者列名（ログインID・氏名・メールアドレス・グループ名。Redmineのassigned_to_idに反映）。
+		 * デフォルト値は "担当"。
+		 */
+		private String assigneeColumn = "担当";
+
+		/**
 		 * 開始日列名（Redmineのstart_dateに反映）。
 		 * デフォルト値は "着手予定"。
 		 */
@@ -254,6 +357,18 @@ public class SyncConfigProperties {
 		 * デフォルト値は "完了予定"。
 		 */
 		private String dueDateColumn = "完了予定";
+
+		/**
+		 * 着手実績列名（status.mode が BY_DATES でステータス列が空欄のとき、値があれば「進行中」にする）。
+		 * デフォルト値は "着手実績"。
+		 */
+		private String startActualColumn = "着手実績";
+
+		/**
+		 * 完了実績列名（status.mode が BY_DATES でステータス列が空欄のとき、値があれば「完了」にする）。
+		 * デフォルト値は "完了実績"。
+		 */
+		private String dueActualColumn = "完了実績";
 
 		/**
 		 * ステータス列名（CSVのステータス値を優先する場合に使用）。
@@ -268,6 +383,13 @@ public class SyncConfigProperties {
 		private String progressColumn = "進捗率";
 
 		/**
+		 * 説明列名（Redmineのdescriptionに反映）。セル内の改行・Markdownはそのまま送ります。
+		 * 空欄の場合は送らない（Redmineの説明を変更しない）。
+		 * デフォルト値は "説明"。
+		 */
+		private String descriptionColumn = "説明";
+
+		/**
 		 * 階層列の空欄を前行の値で補完するか（旧来の動作）。デフォルト false。
 		 * <p>
 		 * false: 階層列の空欄は「その階層を飛ばした」ことを表します（例: 大分類の直下のタスク）。
@@ -276,6 +398,15 @@ public class SyncConfigProperties {
 		 * </p>
 		 */
 		private boolean fillDownHierarchy = false;
+
+		/** 書き戻し: 最終同期日時の列 */
+		private String lastSyncedAtColumn = "最終同期日時";
+
+		/** 書き戻し: 同期結果（作成／更新／変更なし／エラー／未実行）の列 */
+		private String syncResultColumn = "同期結果";
+
+		/** 書き戻し: エラー理由の列 */
+		private String syncErrorColumn = "エラー理由";
 	}
 
 	/**

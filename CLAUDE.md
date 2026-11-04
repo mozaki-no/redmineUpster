@@ -27,7 +27,26 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 - 2026-09-28: Excel のサンプル `samples/sample-wbs.xlsx` / `.xlsm`（マクロなし）を追加（1枚目「WBS」=人が見る表: タイトル行・大分類/中分類の縦結合・色・未使用列・区切り行、2枚目「取込」=テーブル「取込表」: WBS への単一セル参照の数式。大分類・中分類の直下のタスクを含む）。作成は `src/test/.../samples/SampleWorkbookGenerator`（POI、計算結果を保存＋開いたときに再計算）。配布版の設定は `excel.table: "取込表"` を有効にし、zip に `sample-wbs.xlsx` を同梱（CSV では設定のテーブル指定は info ログで無視）。jar と疑似Redmineで xlsx・xlsm とも dry-run → 作成（飛ばし階層の親も正しい）→ WBS シートへ書き戻し → 再実行で全件スキップを確認。xlsm は書き戻し後も xlsm のまま。
 - 2026-09-28: タグ `v*` の push で GitHub Release を作成し `redmineUpster-windows-<タグ>.zip` を添付（package.yml に release ジョブ、`contents: write` はそのジョブだけ。jpackage のバージョンはタグの数字部分）。ブランチの push は従来どおり artifact。README・USER_GUIDE に Releases からのダウンロード（ログイン不要）と自前ビルド手順を記載。タグの作成・push は未実施。
 - 2026-09-28: 仮想親チケットの作成モードを追加（むさしさんの依頼。既定は無効＝従来どおり親行なしは検証エラー）。`sync.virtualParents.enabled` / `trackerId`（名前またはID、既定「サマリ」）と CLI `--virtual-parents` / `--no-virtual-parents`。親行がない行の祖先を最上位まで仮想親として補い（ファイルの行が優先、飛ばし階層は空欄のまま）、日付は子の最小/最大・進捗率は子の平均（切り捨て）、ステータスは送らない、作成時だけ説明に目印。DBがないため毎回 Redmine から（親チケット・件名完全一致・トラッカー、Excel行のIDと論理削除ステータスは除外、目印付き優先→最小ID）で見つけ直す（`VirtualParentMatcher`）。今回必要な仮想親は論理削除しない・不要になったものは候補。テスト `VirtualParentTests` 追加で `mvn -B test` 128件成功。jar と疑似Redmineでユーザーの Lv.* CSV（実装の祖先行なし）を確認: 仮想親4件作成→書き戻し11件（仮想親は書き戻さない）→再実行で15件全スキップ・書き込み0→実装の行を消すと仮想親を含む7件を論理削除→戻すと仮想親を新規作成して子を付け替え→再実行で全スキップ。
+- 2026-10-02: 複数の Excel で1つのプロジェクトを順に更新できるようにした（設定は1つ）。`--file` の複数指定（指定順）と `sync.files`（相対パスは設定ファイルのフォルダ基準。`--file` 省略時に書いた順に同期）。先に全ファイルを解析・検証し、エラーがあれば書き込まない。ファイルごとに同期・書き戻し（2つ目以降は Redmine を取得し直して再検証）。論理削除は全ファイルの後に1回だけ、対象は「同期したファイル・`sync.files` のファイル（未同期分もチケットIDと必要な仮想親を読む）・今回作成したチケット（仮想親含む）」のどれにもないチケット。`sync.files` のファイルを読めない／検証エラーなら論理削除しない。run.bat / run-dry-run.bat は複数ドロップ対応（ドロップなしは `sync.files`）。テスト `MultiFileSyncTests` 追加で `mvn -B test` 159件成功。
+- 2026-10-19: WBSごとのルートチケットを追加。`sync.files` の要素に `{ path, rootIssueId }`（`rootIssue`・数字の文字列も可）と CLI `--root-issue=<番号>`（全ファイルに適用・設定より優先）。最上位の行（最上位の仮想親を含む）の親をルートにし（作成・更新・比較スキップ、仮想親の再識別も親=ルートで探す）、書き込み前に存在（一覧になければ個別GET、別PJ可）・論理削除ステータスでない・行のチケットIDと重複しないことを検証。ルートとその祖先は論理削除しない。今回同期する全ファイルにルートがあれば論理削除はルートの子孫に限定（1つでもなければプロジェクト全体）。テスト `RootIssueTests` 追加で `mvn -B test` 173件成功。
+- 2026-10-20: 親チケットの自動完了を追加（むさしさんの依頼。既定は無効）。`sync.autoCloseParents.enabled` / `status`（名前またはID、省略時は statusMap「完了」→ Redmine「完了」「終了」→ 最初の終了ステータス）。全ファイルの同期・論理削除の後、子がすべて is_closed の親を深い順に完了（`ParentAutoCloser`。Redmineだけの子も数える、未完了に戻さない、対象は今回同期したチケットとその祖先、ルートチケットとその祖先は除外）。dry-run は作成・更新・論理削除の予定（作成予定は負の仮ID）を反映して DRY_RUN AUTO_CLOSE を出す。完了にした行のステータス列（ある場合だけ）へステータス名を書き戻し。ステータス列が空欄で完了済みの親の行は現在のステータスを送り、開き直さない。テスト `AutoCloseParentsTests`。続けて、子に新規でない（進行中・完了など）チケットがある新規（Redmineのステータス一覧で最初の未完了ステータス）の親を再帰的に進行中にする処理を追加（`inProgressStatus`、省略時は statusMap「進行中」→ Redmine「進行中」。`inProgress: false` で無効。新規に戻さない）。
+- 2026-10-23: 同期結果の書き戻しを追加（むさしさんの依頼）。チケットの表の各行に「最終同期日時」（yyyy/MM/dd HH:mm:ss の文字列、実行内で同じ値）・「同期結果」（作成／更新／変更なし／エラー／未実行）・「エラー理由」（ログと同じ理由。成功時は空にして前回のエラーを消す）を、チケットIDと同じ1回の書き込み（.bak も1つ）で書く。列名は `sync.columns.lastSyncedAtColumn` / `syncResultColumn` / `syncErrorColumn`、無効化は `sync.resultColumns.enabled: false` / CLI `--no-result-columns`。列がなければ末尾に追加（テーブルは右に拡張、すぐ右が使用中なら警告して追加しない）。3列は解析時に取り除き差分に使わない。数式セルは上書きせず警告。入力エラーで中止した場合もエラーの行=エラー＋理由、ほかの行=未実行（`DiffPlan.rowErrors`）。中止（例外）時も未実行＋理由。書き込み失敗はエラーログのみ（IDを書けなかった場合だけ終了コード1）。dry-run では書かない。テスト `SyncResultColumnsTests`・`TicketIdWriterResultTests` 追加で `mvn -B test` 187件成功。jar と疑似Redmineで xlsx（取込表テーブル）・xlsm・CSV の作成→再実行で全行変更なし（書き込み0）→入力エラー→行のAPIエラー（422／存在しないID、子は未実行）→修正後にエラー理由が消えることを確認。develop の親チケット自動完了（#10）とのマージ: 自動完了が有効なら書き戻しを自動完了の後へ後回しにし、チケットID・同期結果・自動で変えたステータス名をファイルごとに1回で書く（.bak は1つ。中止時も後回し分を書く）。自動で変えた行は「更新」（作成の行はそのまま）、変更に失敗した行は「エラー」＋理由。テスト2件追加。親チケットの自動完了に `sync.autoCloseParents.ignoreNotInExcel`（既定 false）を追加: true なら「子がすべて完了」「新規でない子がある」の判定を Excel で管理しているチケット（同期したファイル・`sync.files` のファイルのチケットID、今回作成したチケット・仮想親）だけで行い、Redmine だけの子は無視（変更しない。判定に使う子がない親は対象外。`sync.files` を読めなければ自動完了しない）。テスト3件追加で `mvn -B test` 204件成功。疑似Redmineで手動の未完了の子: 無効→親は未完了のまま、有効→親を完了・手動の子は変更なしを確認。
+- 2026-10-25: export でルートチケット指定（--root-issue / sync.files の rootIssueId）に対応。ルート配下だけをルート基準の階層で出力（ルート自身は出力しない）。
+- 2026-10-28: `--export` のグループメンバーを別シート「グループメンバー」（1行に グループ名・ログインID・氏名。メンバーなしはログインID空欄の行）に出力し、「グループ」シートの `メンバー` 列は出力しない（取り込みは従来どおり可）。取り込みは、シートに書いたグループはシートの行がメンバーのすべて・書いていないグループは変更しない・ログインID空欄の行だけなら0人・`メンバー` 列との二重指定やグループのシートにない名前はエラー（`sync.groupMembers.sheet` で変更可）。参照用シート「トラッカー」（標準フィールドの ○）「ステータス」「カスタムフィールド」（トラッカーの ○・取込列名）「カスタムフィールド選択肢」（1行に1つ）を追加（`--sync` では読まない。custom_fields が 403 なら警告して省略）。標準フィールドの取込列名を `TicketColumns` に集約し、`subjectColumn`（タスク）・`assigneeColumn`（担当）・`startActualColumn`（着手実績）・`dueActualColumn`（完了実績）を追加。サンプル・配布版の設定に全キーを既定値で明記、設定画面のタブ名を「取込列名」にして項目を追加。`mvn -B test` 233件成功。
+- 2026-10-29: 「ユーザー」シートに設定の列を追加（`UserSettingColumns`）。ユーザーの属性（メール通知・通知するプロジェクト・言語・認証方式・パスワード変更を要求）と個人設定 pref（メール非公開・タイムゾーン・コメントの表示順・未保存で移動時に警告・自分の変更は通知しない・高優先度チケットを通知・自動ウォッチ・テキストエリアのフォント・最近使ったプロジェクトの表示数・履歴の既定のタブ・コードハイライトの言語・既定のチケット/プロジェクトクエリ）、パスワード再発行。空欄は変更しない、不正な値は書き込む前に検証エラー、作成・更新とも `pref` と `send_information` は "user" の外で送る（従来 send_information を user 内に送っていた不具合も修正）。API が現在値を返さない項目は値があれば毎回送る（返す場合は比較）。--export は列見出しを出力し、返す値だけ書く。テスト追加で `mvn -B test` 全件成功。
+- 2026-10-29: 「ユーザーの標準カラムが空」の調査: 実際の Redmine 5.x/6.x 形式の `/users.json` 応答を `RedmineClient.listUsers` → `WorkbookExporter` に通すテストで、基本の列（ID・ログインID・姓・名・メールアドレス・管理者・状態）と CF は埋まることを確認（列のずれなし）。空なのは設定の列（メール通知・言語・認証方式・個人設定 pref）で、Redmine の users/index・show.api.rsb が返さないため（書き込み専用）。見出しのセルにコメントで明記し、参照用の列 `UserInfoColumns`（作成日・最終ログイン・パスワード変更日・2段階認証。一覧の応答にあるので個別GET不要。取り込みでは無視）を追加。ユーザー・グループだけのメンテ用に `packaging/dist/export-users.bat`（`--export --targets=users,groups` → users.xlsx）・`users-dry-run.bat`・`users.bat`（`--sync --targets=users,groups`、ドロップなしは users.xlsx）を追加し zip に同梱。設定 `sync.targets`（文字列またはリスト。CLI `--targets` が優先、--sync/--export 両方）と設定画面「ファイル」タブの項目・検証を追加。
 - 未実施: Windows ジョブの実行（GitHub Actions 上でのみ確認可能）、Windows 実機での exe・bat の動作確認、実Redmineでの確認。
+
+## 実行計画（設定画面）
+背景: むさしさんの指示。sync-config.yml を手で書くのがつらいため、設定を編集する画面（Swing、配布版の jlink ランタイムに java.desktop あり）を用意する。
+1. 起動: `--settings [--config=...]` を `RedmineUpsterApplication.main` で Spring 起動前に判定（`settings/SettingsLauncher`）。設定ファイルは同期と同じ探し方（`SyncRunner.defaultConfigCandidates`）。headless ならエラー終了（1）。`--help` に追加。
+2. 配布: `packaging/dist/settings.bat` を追加し、package-windows.ps1 で zip に同梱。
+3. 読み書き: `settings/SettingsDocument`（Swing 非依存）。SnakeYAML で LinkedHashMap の木に読み、画面の項目だけ変更して全体を書き戻す（未知のキー・`${...}` は保持、空欄はキー削除、キー順は固定、文字列は "..."）。保存前に `.bak`、先頭に説明コメント。
+4. 画面: `settings/SettingsWindow`。左にプロジェクト一覧（追加・複製・削除・既定）、右にタブ（接続・ファイル・列・Excel・ステータス・削除・親チケット）、保存時に検証、閉じるときに未保存の確認。
+5. テスト `SettingsDocumentTests`（往復・未知キー・${...}・files の2形式・空欄の削除・.bak・SyncConfigService での再読み込み・配布版設定の往復）、文書（USER_GUIDE・README）。
+
+### 進捗
+- 2026-10-28: 設定画面・settings.bat・SettingsDocument とテストを追加。Xvfb で画面表示（日本語の表示）と、配布版 sync-config.yml の読み込み→保存→CLI（--sync --dry-run）での読み込みを確認。
 
 ## 実行計画（Excel側にRedmineチケットIDを持つ方式への変更）
 背景: むさしさんの指示。Excel側に独自ID（`id`/`WBS_ID`）を持たず、階層・トラッカー・RedmineチケットIDを持つ。ExcelとRedmineのチケットを完全に一致させる。
@@ -117,6 +136,9 @@ java -jar target/redmineUpster.jar --sync --config=sync-config.yml --project="�
 # 単一テストメソッド実行
 ./mvnw test -Dtest=SpreadsheetParserTests#testMethodName
 
+# 設定画面（sync-config.yml を編集。配布版は settings.bat）
+java -jar target/redmineUpster.jar --settings --config=sync-config.yml
+
 # Windows 配布版（Java同梱 exe）の作成（Windows上）／Linux版（動作確認用）
 powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1
 bash packaging/package-linux.sh
@@ -133,6 +155,7 @@ bash packaging/package-linux.sh
 
 ### レイヤー構造
 - `cli/`: CLIコマンド・同期実行
+- `settings/`: 設定画面（`--settings`。Swing、Spring なし）と sync-config.yml の読み書き
 - `service/`: ビジネスロジック
 - `repository/`: JPA リポジトリ
 - `domain/`: エンティティ
@@ -207,7 +230,7 @@ redmineUpster/
 │       ├── java17.md
 │       ├── jenkins.md
 │       └── redmine-apache-passenger.md
-├── packaging/            # jpackage 配布スクリプト・同梱ファイル
+├── packaging/            # jpackage 配布スクリプト・同梱ファイル（dist/ に run.bat・settings.bat など）
 ├── samples/
 │   ├── sync-config.example.yml  # 設定ファイルサンプル
 │   └── wbs_*.csv         # WBSサンプル

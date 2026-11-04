@@ -106,6 +106,19 @@ class DiffCalculatorTests {
 	}
 
 	@Test
+	@DisplayName("説明列はMarkdown・改行・インデントをそのまま送る（CRLFはLFに）。空欄なら送らない")
+	void calculate_descriptionKeepsMarkdown() {
+		Map<String, String> withDescription = row("", "サマリ", "A", "", "");
+		withDescription.put("説明", "## 見出し\r\n- 項目\r\n    ```\r\n    code\r\n    ```");
+		DiffPlan plan = calculate(projectConfig(), List.of(withDescription, row("", "タスク", "A", "B", "")));
+
+		assertThat(plan.errors()).isEmpty();
+		assertThat(byRow(plan, 2).payload().get("description"))
+				.isEqualTo("## 見出し\n- 項目\n    ```\n    code\n    ```");
+		assertThat(byRow(plan, 3).payload()).doesNotContainKey("description");
+	}
+
+	@Test
 	@DisplayName("親は階層列から決まり、親→子の順に並ぶ（途中の空欄列も扱える）")
 	void calculate_resolvesParentFromHierarchy() {
 		DiffPlan plan = calculate(projectConfig(), List.of(
@@ -137,6 +150,9 @@ class DiffCalculatorTests {
 				.contains("行3")
 				.contains("A > B > C")
 				.contains("親行 [A > B]");
+		// 書き戻し用の行ごとの理由（行番号・階層パスのラベルなし）
+		assertThat(plan.rowErrors()).containsOnlyKeys(3);
+		assertThat(plan.rowErrors().get(3)).singleElement().asString().startsWith("親行 [A > B] がファイルにありません");
 	}
 
 	@Test
@@ -163,6 +179,8 @@ class DiffCalculatorTests {
 		assertThat(plan.errors()).hasSize(2);
 		assertThat(plan.errors().get(0)).contains("行2").contains("数値ではありません");
 		assertThat(plan.errors().get(1)).contains("行4").contains("チケットID 20").contains("行3");
+		assertThat(plan.rowErrors()).containsOnlyKeys(2, 4);
+		assertThat(plan.rowErrors().get(2)).containsExactly("チケットIDが数値ではありません: abc");
 	}
 
 	@Test
@@ -289,5 +307,35 @@ class DiffCalculatorTests {
 		assertThat(plan.errors()).isEmpty();
 		assertThat(byRow(plan, 3).parentRowNumber()).isEqualTo(2);
 		assertThat(byRow(plan, 3).levelPath()).isEqualTo("新eD拡張 > 業務共通");
+	}
+
+	@Test
+	@DisplayName("件名・担当者・着手実績・完了実績の列名を設定で変えられる（BY_DATES のステータス判定も設定の列を使う）")
+	void configurableStandardColumns() {
+		ProjectConfig config = projectConfig();
+		ColumnsConfig columns = config.getSync().getColumns();
+		columns.setSubjectColumn("件名");
+		columns.setAssigneeColumn("担当者");
+		columns.setStartActualColumn("開始実績");
+		columns.setDueActualColumn("終了実績");
+		Map<String, String> parent = row("", "サマリ", "設計", "", "");
+		Map<String, String> started = row("", "タスク", "設計", "画面", "");
+		started.put("件名", "画面設計書の作成");
+		started.put("担当者", "tanaka");
+		started.put("開始実績", "2026/10/01");
+		started.put("担当", "無視される");
+		Map<String, String> closed = row("", "タスク", "設計", "DB", "");
+		closed.put("開始実績", "2026/10/01");
+		closed.put("終了実績", "2026/10/05");
+		closed.put("着手実績", "既定の列名は使わない");
+
+		DiffPlan plan = calculate(config, List.of(parent, started, closed));
+		assertThat(plan.errors()).isEmpty();
+		assertThat(byRow(plan, 2).status()).isEqualTo(SyncConstants.STATUS_NEW);
+		assertThat(byRow(plan, 3).subject()).isEqualTo("画面設計書の作成");
+		assertThat(byRow(plan, 3).payload()).containsEntry("assignee", "tanaka");
+		assertThat(byRow(plan, 3).status()).isEqualTo(SyncConstants.STATUS_IN_PROGRESS);
+		assertThat(byRow(plan, 4).subject()).isEqualTo("DB");
+		assertThat(byRow(plan, 4).status()).isEqualTo(SyncConstants.STATUS_CLOSED);
 	}
 }

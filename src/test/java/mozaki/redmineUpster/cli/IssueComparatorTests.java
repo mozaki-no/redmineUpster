@@ -82,6 +82,16 @@ class IssueComparatorTests {
 	}
 
 	@Test
+	@DisplayName("説明はRedmineのCRLF・末尾の空白の違いを無視して比較する")
+	void changedFields_description() {
+		Map<String, Object> issue = redmineIssue();
+		issue.put("description", "# 見出し\r\n\r\n- a\r\n");
+		assertThat(IssueComparator.changedFields(Map.of("description", "# 見出し\n\n- a"), issue)).isEmpty();
+		assertThat(IssueComparator.changedFields(Map.of("description", "# 見出し\n\n- b"), issue))
+				.containsExactly("description");
+	}
+
+	@Test
 	@DisplayName("送信しない項目（空欄の日付など）は比較しない。Redmineで空の項目に値を送る場合は変更あり")
 	void changedFields_onlySentFields() {
 		Map<String, Object> issue = redmineIssue();

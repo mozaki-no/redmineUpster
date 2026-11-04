@@ -1,6 +1,8 @@
 package mozaki.redmineUpster.cli;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 
 import org.springframework.boot.CommandLineRunner;
@@ -33,7 +35,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --config}: 設定ファイルパス（省略時は SYNC_CONFIG_PATH、なければカレントディレクトリ／
  *       実行ファイルと同じフォルダの sync-config.yml）</li>
  *   <li>{@code --project}: プロジェクト名（省略時はdefault=trueのプロジェクト）</li>
- *   <li>{@code --file}: CSV/Excelファイルパス（必須）</li>
+ *   <li>{@code --file}: CSV/Excelファイルパス。複数指定すると指定した順に1つずつ同期
+ *       （省略時は設定 sync.files のファイル。どちらもなければエラー）</li>
  *   <li>{@code --dry-run}: ドライランモード（省略時はfalse）</li>
  *   <li>{@code --log-dir}: ログ出力ディレクトリ（省略時はカレントディレクトリの logs フォルダ）</li>
  *   <li>{@code --debug}: デバッグモード（詳細なログを出力、省略時はfalse）</li>
@@ -41,8 +44,15 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --sheet} / {@code --table}: Excel の読み込み元（シート名・番号／テーブル名。設定 sync.excel より優先）</li>
  *   <li>{@code --virtual-parents} / {@code --no-virtual-parents}: 親行がない行の祖先を仮想親チケットとして
  *       作成する／しない（設定 sync.virtualParents.enabled より優先）</li>
+ *   <li>{@code --no-result-columns}: 同期結果（最終同期日時・同期結果・エラー理由）を入力ファイルに書き込まない
+ *       （設定 sync.resultColumns.enabled より優先）</li>
+ *   <li>{@code --root-issue}: ルートチケットのID。今回同期するすべてのファイルの最上位の行を、このチケットの子にする
+ *       （設定 sync.files の rootIssueId より優先）。
+ *       {@code --export} と指定すると、このチケットの配下だけを出力</li>
  *   <li>{@code --targets}: 同期・出力する対象（tickets,users,groups のカンマ区切り。省略時はファイルにある表すべて）</li>
  *   <li>{@code --export}: 同期の代わりに、プロジェクトのチケットとユーザー・グループを {@code --file} の .xlsx に出力</li>
+ *   <li>{@code --settings}: 設定ファイル（{@code --config}、省略時は同期と同じ探し方）を編集する設定画面を開く。
+ *       Spring を起動せずに {@code RedmineUpsterApplication#main} で処理する（配布版の settings.bat）</li>
  *   <li>{@code --help}: 使い方を表示</li>
  *   <li>{@code --relink-parent} / {@code --reset-sync}: 廃止（指定しても無視し、警告を出す）</li>
  * </ul>
@@ -89,39 +99,79 @@ public class SyncCommand implements CommandLineRunner {
                 System.exit(1);
                 return;
             }
+            if (getArgValues(args, "--file").size() > 1) {
+                System.err.println("Error: --export の --file（出力先）は1つだけ指定してください");
+                System.exit(1);
+                return;
+            }
+            Long exportRoot;
+            try {
+                exportRoot = parseRootIssue(getArgValue(args, "--root-issue"));
+            } catch (IllegalArgumentException e) {
+                System.err.println("Error: " + e.getMessage());
+                System.exit(1);
+                return;
+            }
             System.exit(exportRunner.run(getArgValue(args, "--config"), getArgValue(args, "--project"), out,
-                    getArgValue(args, "--log-dir"), hasArg(args, "--debug"), targets));
+                    getArgValue(args, "--log-dir"), hasArg(args, "--debug"), targets, exportRoot));
             return;
         }
 
         // 引数を解析
         String configPath = getArgValue(args, "--config");
         String projectName = getArgValue(args, "--project");
-        String filePath = getArgValue(args, "--file");
+        List<String> filePaths = getArgValues(args, "--file");
         boolean dryRun = hasArg(args, "--dry-run");
         String logDir = getArgValue(args, "--log-dir");
         boolean debug = hasArg(args, "--debug");
         boolean forceUpdate = hasArg(args, "--force-update");
         ExcelSource excelSource = new ExcelSource(getArgValue(args, "--sheet"), getArgValue(args, "--table"));
+        Long rootIssueId;
+        try {
+            rootIssueId = parseRootIssue(getArgValue(args, "--root-issue"));
+        } catch (IllegalArgumentException e) {
+            System.err.println("Error: " + e.getMessage());
+            System.exit(1);
+            return;
+        }
         for (String removed : REMOVED_OPTIONS) {
             if (hasArg(args, removed)) {
                 System.err.println("WARN: " + removed + " は廃止されました（チケットID列方式では不要のため無視します）");
             }
         }
 
-        // --fileは必須
-        if (filePath == null || filePath.isBlank()) {
-            System.err.println("Error: --file argument is required");
-            System.err.println();
-            printUsage();
-            System.exit(1);
-            return;
-        }
-
-        // 同期実行
-        int exitCode = syncRunner.run(configPath, projectName, filePath, dryRun, logDir, debug, forceUpdate,
-                excelSource, parseVirtualParents(args), targets);
+        // --file は省略可（省略時は設定 sync.files のファイル。どちらもなければ SyncRunner がエラーにする）
+        // 同期実行（複数ファイルは指定した順に1つずつ）
+        int exitCode = syncRunner.runFiles(configPath, projectName, filePaths, dryRun, logDir, debug, forceUpdate,
+                excelSource, parseVirtualParents(args), targets, rootIssueId, hasArg(args, "--no-result-columns"));
         System.exit(exitCode);
+    }
+
+    /**
+     * {@code --root-issue=<チケットID>} の値を解析します（先頭の # は省略可）。
+     *
+     * @param value 引数の値（null可）
+     * @return チケットID（指定なしはnull）
+     * @throws IllegalArgumentException 正の整数でない場合
+     */
+    static Long parseRootIssue(String value) {
+        if (value == null) {
+            return null;
+        }
+        String text = value.trim();
+        if (text.startsWith("#")) {
+            text = text.substring(1).trim();
+        }
+        try {
+            long id = Long.parseLong(text);
+            if (id > 0) {
+                return id;
+            }
+        } catch (NumberFormatException e) {
+            // 下でエラーにする
+        }
+        throw new IllegalArgumentException("--root-issue にはルートチケットのチケット番号（数値）を指定してください: "
+                + value);
     }
 
     /**
@@ -174,16 +224,37 @@ public class SyncCommand implements CommandLineRunner {
     }
 
     /**
+     * 同じ引数を複数回指定した場合の値をすべて取得します（例: {@code --file=a.xlsx --file=b.xlsx}）。
+     *
+     * @param args 引数配列
+     * @param argName 引数名（例: "--file"）
+     * @return 引数の値（指定した順。空欄の値は除く。見つからない場合は空のリスト）
+     */
+    static List<String> getArgValues(String[] args, String argName) {
+        String prefix = argName + "=";
+        List<String> values = new ArrayList<>();
+        for (String arg : args) {
+            if (arg.startsWith(prefix) && !arg.substring(prefix.length()).isBlank()) {
+                values.add(arg.substring(prefix.length()));
+            }
+        }
+        return values;
+    }
+
+    /**
      * 使用方法を表示します。
      */
     private void printUsage() {
         System.out.println("Usage: redmineUpster --sync --file=<CSV/Excel> [options]");
         System.out.println("       redmineUpster --export --file=<output.xlsx> [options]");
+        System.out.println("       redmineUpster --settings [--config=<path>]   (open the settings window)");
         System.out.println("       (java -jar redmineUpster.jar --sync --file=<CSV/Excel> [options])");
         System.out.println();
         System.out.println("Options:");
         System.out.println("  --sync                  Run sync (may be omitted when --file is given)");
-        System.out.println("  --file=<path>           CSV/Excel file path (required)");
+        System.out.println("  --file=<path>           CSV/Excel file path. Repeat it to sync several files one after");
+        System.out.println("                          another in the given order (--file=a.xlsx --file=b.xlsx).");
+        System.out.println("                          If omitted, the files listed in sync.files of the config are used");
         System.out.println("  --config=<path>         Config file (default: SYNC_CONFIG_PATH, else sync-config.yml");
         System.out.println("                          in the current folder or next to the executable)");
         System.out.println("  --project=<name>        Project name (default: the project with default: true)");
@@ -195,15 +266,37 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --table=<name>          Excel table to read (default: sync.excel.table; overrides --sheet)");
         System.out.println("  --virtual-parents       Auto-create missing ancestor rows as virtual parent tickets");
         System.out.println("  --no-virtual-parents    Treat missing parent rows as errors (overrides sync.virtualParents)");
-        System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: all sheets in the file)");
+        System.out.println("  --no-result-columns     Do not write the sync result columns (最終同期日時/同期結果/エラー理由)");
+        System.out.println("                          back to the input file (overrides sync.resultColumns.enabled)");
+        System.out.println("  --root-issue=<id>       Root ticket: top-level rows of every file in this run become");
+        System.out.println("                          children of this Redmine issue (overrides rootIssueId in sync.files).");
+        System.out.println("                          With --export: export only the tickets under this issue (the root");
+        System.out.println("                          itself is not exported; default: rootIssueId of the --file in sync.files)");
+        System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: sync.targets, else all sheets in the file)");
         System.out.println("  --export                Export tickets of the project, users and groups to --file (.xlsx)");
         System.out.println("                          The exported file can be used as --file for --sync as it is");
+        System.out.println("  --settings              Open the settings window to edit the config file (sync-config.yml).");
+        System.out.println("                          Comments in the file are replaced on save; the previous file is");
+        System.out.println("                          kept as sync-config.yml.bak");
         System.out.println("  --help                  Show this help");
+        System.out.println();
+        System.out.println("Several Excel files for one project:");
+        System.out.println("  One sync-config.yml is enough. List ALL the files of the project in sync.files:");
+        System.out.println("  every file is validated first (nothing is written if any file has errors), then synced");
+        System.out.println("  one by one. Logical delete only targets tickets that are in none of the processed or");
+        System.out.println("  listed files, so syncing one file never logically deletes another file's tickets.");
+        System.out.println("  A file can have its own root ticket: files: [{ path: wbs-a.xlsx, rootIssueId: 123 }].");
+        System.out.println("  When every synced file has a root ticket, logical delete only targets tickets under");
+        System.out.println("  those root tickets (root tickets and their ancestors are never logically deleted).");
         System.out.println();
         System.out.println("Example:");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx --dry-run");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS-A.xlsx --file=WBS-B.xlsx");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml   (files listed in sync.files)");
+        System.out.println("  redmineUpster --sync --config=sync-config.yml --file=WBS.xlsx --root-issue=123");
         System.out.println("  redmineUpster --export --config=sync-config.yml --file=redmine.xlsx");
+        System.out.println("  redmineUpster --export --config=sync-config.yml --file=WBS-A.xlsx --root-issue=123");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=redmine.xlsx --targets=users,groups");
     }
 }

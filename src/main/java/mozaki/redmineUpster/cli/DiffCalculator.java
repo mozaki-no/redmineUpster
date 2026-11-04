@@ -85,6 +85,7 @@ public class DiffCalculator {
         List<Map<String, String>> rows = sheet.rows();
         List<Integer> rowNumbers = sheet.rowNumbers();
         List<String> errors = new ArrayList<>();
+        Map<Integer, List<String>> rowErrors = new LinkedHashMap<>();
 
         Set<String> availableColumns = new HashSet<>(sheet.headers());
         if (availableColumns.isEmpty() && !rows.isEmpty()) {
@@ -126,14 +127,15 @@ public class DiffCalculator {
                 }
             }
             if (deepest < 0) {
-                errors.add("行" + rowNumber + ": 階層列（" + String.join("/", hierarchyColumns) + "）がすべて空です");
+                rowError(errors, rowErrors, rowNumber, "行" + rowNumber,
+                        "階層列（" + String.join("/", hierarchyColumns) + "）がすべて空です");
                 continue;
             }
             if (cells.get(0).isBlank()) {
                 // 一番浅い階層列が空欄の行は、前行の値を引き継ぐ前提のシート（セル結合なし）の可能性が高いため、
                 // 最上位として作成せずエラーにする
-                errors.add("行" + rowNumber + " [" + joinPath(cells) + "]: " + hierarchyColumns.get(0)
-                        + "が空欄です（同じ値が続く場合は各行に入力するかセル結合してください。"
+                rowError(errors, rowErrors, rowNumber, "行" + rowNumber + " [" + joinPath(cells) + "]",
+                        hierarchyColumns.get(0) + "が空欄です（同じ値が続く場合は各行に入力するかセル結合してください。"
                         + "空欄を前行の値で補うには sync.columns.fillDownHierarchy: true）");
                 continue;
             }
@@ -148,13 +150,14 @@ public class DiffCalculator {
             if (!rawId.isBlank()) {
                 issueId = parseTicketId(rawId);
                 if (issueId == null) {
-                    errors.add("行" + rowNumber + " [" + levelPath + "]: チケットIDが数値ではありません: " + rawId);
+                    rowError(errors, rowErrors, rowNumber, "行" + rowNumber + " [" + levelPath + "]",
+                            "チケットIDが数値ではありません: " + rawId);
                     continue;
                 }
             }
             parsed.add(new RowData(rowNumber, row, issueId, deepest, levelPath,
                     toKey(ownCells), parentCells.isEmpty() ? null : toKey(parentCells), joinPath(parentCells),
-                    resolveSubject(row, ownCells), names, parentCells));
+                    resolveSubject(row, ownCells, names), names, parentCells));
         }
 
         // 2. 重複チェック（階層パス・チケットID）
@@ -164,15 +167,15 @@ public class DiffCalculator {
         for (RowData data : parsed) {
             RowData samePath = byKey.putIfAbsent(data.key, data);
             if (samePath != null) {
-                errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 階層パスが行" + samePath.rowNumber
-                        + "と重複しています");
+                rowError(errors, rowErrors, data.rowNumber, data.label(),
+                        "階層パスが行" + samePath.rowNumber + "と重複しています");
                 invalid.add(data);
             }
             if (data.issueId != null) {
                 RowData sameId = byIssueId.putIfAbsent(data.issueId, data);
                 if (sameId != null) {
-                    errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: チケットID " + data.issueId
-                            + " が行" + sameId.rowNumber + "と重複しています");
+                    rowError(errors, rowErrors, data.rowNumber, data.label(),
+                            "チケットID " + data.issueId + " が行" + sameId.rowNumber + "と重複しています");
                     invalid.add(data);
                 }
             }
@@ -198,7 +201,7 @@ public class DiffCalculator {
                 } else if (virtualParents) {
                     parentRowNumber = virtuals.ensure(data.parentCells);
                 } else {
-                    errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 親行 [" + data.parentPath
+                    rowError(errors, rowErrors, data.rowNumber, data.label(), "親行 [" + data.parentPath
                             + "] がファイルにありません（祖先を仮想親チケットとして自動作成するには"
                             + " sync.virtualParents.enabled: true または --virtual-parents）");
                     continue;
@@ -211,19 +214,19 @@ public class DiffCalculator {
             if (!trackerValue.isBlank()) {
                 trackerId = resolver.resolve(trackerValue);
                 if (trackerId == null) {
-                    errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: トラッカー「" + trackerValue
+                    rowError(errors, rowErrors, data.rowNumber, data.label(), "トラッカー「" + trackerValue
                             + "」が見つかりません（trackerMap / Redmineのトラッカー名を確認してください）");
                     continue;
                 }
             } else if (defaultTracker != null) {
                 trackerId = resolver.resolve(defaultTracker);
                 if (trackerId == null) {
-                    errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 既定トラッカー「" + defaultTracker
+                    rowError(errors, rowErrors, data.rowNumber, data.label(), "既定トラッカー「" + defaultTracker
                             + "」（sync.tracker.value）が見つかりません");
                     continue;
                 }
             } else if (ACTION_CREATE.equals(action)) {
-                errors.add("行" + data.rowNumber + " [" + data.levelPath + "]: 新規作成する行のトラッカー（"
+                rowError(errors, rowErrors, data.rowNumber, data.label(), "新規作成する行のトラッカー（"
                         + names.trackerColumn + "列）が空です");
                 continue;
             }
@@ -266,7 +269,7 @@ public class DiffCalculator {
         }
 
         items.sort(Comparator.comparingInt(DiffItem::depth).thenComparingInt(DiffItem::rowNumber));
-        return new DiffPlan(items, withSheetName(errors, sheet.sheetName()));
+        return new DiffPlan(items, withSheetName(errors, sheet.sheetName()), rowErrors);
     }
 
     /** 仮想親の行番号（負の仮番号）の開始値 */
@@ -408,6 +411,22 @@ public class DiffCalculator {
      */
     public static List<Long> findLogicalDeleteCandidates(Collection<Long> excelIssueIds,
             Map<Long, Map<String, Object>> projectIssues, Integer deleteStatusId) {
+        return findLogicalDeleteCandidates(excelIssueIds, projectIssues, deleteStatusId, null);
+    }
+
+    /**
+     * 論理削除の候補を求めます（範囲をルートチケットの配下に限定する場合）。
+     *
+     * @param excelIssueIds Excelに記載されたチケットID（論理削除しないチケット）
+     * @param projectIssues 同期先プロジェクトのチケット（チケットID → チケット情報）
+     * @param deleteStatusId 論理削除ステータスID（未設定ならnull）
+     * @param scopeRootIssueIds ルートチケットのID（null ならプロジェクト全体。指定するとこれらの子孫だけを候補にする。
+     *        ルートチケット自身は候補にしない）
+     * @return 論理削除候補のチケットID（昇順）
+     */
+    public static List<Long> findLogicalDeleteCandidates(Collection<Long> excelIssueIds,
+            Map<Long, Map<String, Object>> projectIssues, Integer deleteStatusId,
+            Collection<Long> scopeRootIssueIds) {
         if (projectIssues == null || projectIssues.isEmpty()) {
             return List.of();
         }
@@ -422,9 +441,33 @@ public class DiffCalculator {
             if (deleteStatusId != null && statusId != null && statusId.longValue() == deleteStatusId.longValue()) {
                 continue;
             }
+            if (scopeRootIssueIds != null && !isDescendant(issueId, scopeRootIssueIds, projectIssues)) {
+                continue;
+            }
             candidates.add(issueId);
         }
         return new ArrayList<>(candidates);
+    }
+
+    /**
+     * チケットが、指定したチケットのどれかの子孫かどうかを判定します（親チケットを取得済みのチケットの中でたどる）。
+     *
+     * @param issueId 判定するチケットID
+     * @param ancestorIds 祖先かどうかを調べるチケットID
+     * @param issues チケットID → チケット情報（parent を含む）
+     * @return 子孫ならtrue（自分自身は含まない）
+     */
+    public static boolean isDescendant(Long issueId, Collection<Long> ancestorIds,
+            Map<Long, Map<String, Object>> issues) {
+        Set<Long> visited = new HashSet<>();
+        Long current = IssueComparator.nestedId(issues.get(issueId), "parent");
+        while (current != null && visited.add(current)) {
+            if (ancestorIds.contains(current)) {
+                return true;
+            }
+            current = IssueComparator.nestedId(issues.get(current), "parent");
+        }
+        return false;
     }
 
     /**
@@ -590,6 +633,15 @@ public class DiffCalculator {
         return result;
     }
 
+    /**
+     * 行に結び付く検証エラーを追加します（ログ用の errors には「ラベル: 理由」、書き戻し用の rowErrors には理由）。
+     */
+    private static void rowError(List<String> errors, Map<Integer, List<String>> rowErrors, int rowNumber,
+            String label, String reason) {
+        errors.add(label + ": " + reason);
+        rowErrors.computeIfAbsent(rowNumber, k -> new ArrayList<>()).add(reason);
+    }
+
     private static void trimTrailingBlanks(List<String> cells) {
         while (!cells.isEmpty() && cells.get(cells.size() - 1).isBlank()) {
             cells.remove(cells.size() - 1);
@@ -621,10 +673,10 @@ public class DiffCalculator {
     }
 
     /**
-     * 件名を解決します（タスク列 → 一番深い階層値）。
+     * 件名を解決します（件名列（既定: タスク） → 一番深い階層値）。
      */
-    private String resolveSubject(Map<String, String> row, List<String> hierarchyCells) {
-        String task = value(row, ColumnDefinitions.COL_TASK);
+    private String resolveSubject(Map<String, String> row, List<String> hierarchyCells, ColumnNames names) {
+        String task = value(row, names.subjectColumn);
         if (!task.isBlank()) {
             return task;
         }
@@ -678,8 +730,13 @@ public class DiffCalculator {
         payload.put("dueDate", rowData.duePlan);
         payload.put("startActual", rowData.startActual);
         payload.put("dueActual", rowData.dueActual);
+        // ステータス列の値（空欄なら日付などから決めたステータス。親チケットの自動完了で使用）
+        payload.put("statusCell", rowData.statusValue);
         if (rowData.progress != null) {
             payload.put("progress", rowData.progress);
+        }
+        if (!rowData.description.isBlank()) {
+            payload.put("description", rowData.description);
         }
         Map<String, String> customFields = new LinkedHashMap<>();
         for (String column : customFieldColumns) {
@@ -729,23 +786,29 @@ public class DiffCalculator {
     private static final class ColumnNames {
         private final String ticketIdColumn;
         private final String trackerColumn;
+        private final String subjectColumn;
+        private final String assigneeColumn;
         private final String startDateColumn;
         private final String dueDateColumn;
+        private final String startActualColumn;
+        private final String dueActualColumn;
         private final String statusColumn;
         private final String progressColumn;
+        private final String descriptionColumn;
 
         private ColumnNames(ProjectConfig projectConfig) {
-            ColumnsConfig columns = projectConfig != null && projectConfig.getSync() != null
-                    ? projectConfig.getSync().getColumns() : null;
-            if (columns == null) {
-                columns = new ColumnsConfig();
-            }
-            this.ticketIdColumn = StringUtils.valueOrDefault(columns.getTicketIdColumn(), ColumnDefinitions.COL_TICKET_ID);
-            this.trackerColumn = StringUtils.valueOrDefault(columns.getTrackerColumn(), ColumnDefinitions.COL_TRACKER);
-            this.startDateColumn = StringUtils.valueOrDefault(columns.getStartDateColumn(), ColumnDefinitions.COL_START_PLAN);
-            this.dueDateColumn = StringUtils.valueOrDefault(columns.getDueDateColumn(), ColumnDefinitions.COL_DUE_PLAN);
-            this.statusColumn = StringUtils.valueOrDefault(columns.getStatusColumn(), ColumnDefinitions.COL_STATUS);
-            this.progressColumn = StringUtils.valueOrDefault(columns.getProgressColumn(), ColumnDefinitions.COL_PROGRESS);
+            TicketColumns columns = TicketColumns.of(projectConfig);
+            this.ticketIdColumn = columns.ticketId();
+            this.trackerColumn = columns.tracker();
+            this.subjectColumn = columns.subject();
+            this.assigneeColumn = columns.assignee();
+            this.startDateColumn = columns.startDate();
+            this.dueDateColumn = columns.dueDate();
+            this.startActualColumn = columns.startActual();
+            this.dueActualColumn = columns.dueActual();
+            this.statusColumn = columns.status();
+            this.progressColumn = columns.progress();
+            this.descriptionColumn = columns.description();
         }
     }
 
@@ -769,7 +832,13 @@ public class DiffCalculator {
         private final String dueActual;
         private final String statusValue;
         private final Integer progress;
+        private final String description;
         private final List<String> parentCells;
+
+        /** メッセージ用のラベル（例: 行12 [大分類 > 中分類]） */
+        private String label() {
+            return "行" + rowNumber + " [" + levelPath + "]";
+        }
 
         private RowData(int rowNumber, Map<String, String> row, Long issueId, int depth, String levelPath,
                 String key, String parentKey, String parentPath, String subject, ColumnNames names,
@@ -784,13 +853,16 @@ public class DiffCalculator {
             this.parentKey = parentKey;
             this.parentPath = parentPath;
             this.subject = subject;
-            this.assignee = value(row, ColumnDefinitions.COL_ASSIGNEE);
+            this.assignee = value(row, names.assigneeColumn);
             this.startPlan = value(row, names.startDateColumn);
             this.duePlan = value(row, names.dueDateColumn);
-            this.startActual = value(row, ColumnDefinitions.COL_START_ACTUAL);
-            this.dueActual = value(row, ColumnDefinitions.COL_DUE_ACTUAL);
+            this.startActual = value(row, names.startActualColumn);
+            this.dueActual = value(row, names.dueActualColumn);
             this.statusValue = value(row, names.statusColumn);
             this.progress = parseProgress(value(row, names.progressColumn));
+            // 説明は改行・インデント・Markdown をそのまま送る（改行コードだけ LF にそろえる）
+            String rawDescription = row.get(names.descriptionColumn);
+            this.description = rawDescription == null ? "" : rawDescription.replace("\r\n", "\n").replace('\r', '\n');
         }
     }
 }
