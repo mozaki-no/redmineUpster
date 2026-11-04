@@ -33,7 +33,6 @@ import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.service.SyncConfigService;
 import mozaki.redmineUpster.service.TicketIdWriter;
 import mozaki.redmineUpster.util.StringUtils;
-import mozaki.redmineUpster.util.ColumnDefinitions;
 
 /**
  * 同期実行サービス。
@@ -165,6 +164,30 @@ public class SyncRunner {
      * @param targets 対象（null ならファイルにある表すべて）
      * @return 成功の場合は0、失敗の場合は1
      */
+    /** {@link #configuredTargets} の戻り値: sync.targets が不正 */
+    static final Set<SyncTarget> CONFIG_TARGETS_INVALID = java.util.Collections.unmodifiableSet(
+            EnumSet.noneOf(SyncTarget.class));
+
+    /**
+     * 設定の sync.targets（CLI の --targets がないときの既定）。
+     *
+     * @return 対象（未設定なら null、不正なら {@link #CONFIG_TARGETS_INVALID}）
+     */
+    static Set<SyncTarget> configuredTargets(ProjectConfig projectConfig, FileLogger logger) {
+        String raw = projectConfig.getSync() != null ? projectConfig.getSync().getTargets() : null;
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            Set<SyncTarget> targets = SyncTarget.parse(raw);
+            logger.info("Targets (設定 sync.targets): " + targets);
+            return targets;
+        } catch (IllegalArgumentException ex) {
+            logger.error("設定 sync.targets: " + ex.getMessage().replace("--targets", "sync.targets"));
+            return CONFIG_TARGETS_INVALID;
+        }
+    }
+
     public int runFiles(String configPath, String projectName, List<String> filePaths, boolean dryRun, String logDir,
             boolean debug, boolean forceUpdate, ExcelSource cliExcelSource, Boolean cliVirtualParents,
             Set<SyncTarget> targets) {
@@ -265,6 +288,16 @@ public class SyncRunner {
                 logger.debug("Project ID: " + projectConfig.getRedmine().getProjectId());
             }
             SyncConfig syncConfig = projectConfig.getSync();
+            if (targets == null) {
+                Set<SyncTarget> configured = configuredTargets(projectConfig, logger);
+                if (configured == CONFIG_TARGETS_INVALID) {
+                    return 1;
+                }
+                if (configured != null) {
+                    targets = configured;
+                    selected = configured;
+                }
+            }
             state.resultColumns = resultColumns(projectConfig, noResultColumns, logger);
             state.projectConfig = projectConfig;
 
@@ -417,10 +450,13 @@ public class SyncRunner {
         private ExcelSource excelSource;
         private ExcelSource usersSource;
         private ExcelSource groupsSource;
+        /** グループメンバーのシート（グループを同期し、シートがある場合だけ） */
+        private ExcelSource groupMembersSource;
         private boolean doTickets;
         private ParsedSheet parsed;
         private ParsedSheet usersSheet;
         private ParsedSheet groupsSheet;
+        private ParsedSheet groupMembersSheet;
         private Map<Long, Map<String, Object>> users;
         private Map<Long, Map<String, Object>> groups;
         private DirectorySync.Plan<DirectorySync.UserRow> userPlan;
@@ -625,6 +661,10 @@ public class SyncRunner {
                 ? directorySource(syncConfig != null ? syncConfig.getGroups() : null,
                         DirectorySync.DEFAULT_GROUPS_SHEET, sheetNames)
                 : null;
+        job.groupMembersSource = job.groupsSource != null
+                ? directorySource(syncConfig != null ? syncConfig.getGroupMembers() : null,
+                        DirectorySync.DEFAULT_GROUP_MEMBERS_SHEET, sheetNames)
+                : null;
         if (isCsv && (targets != null && (selected.contains(SyncTarget.USERS)
                 || selected.contains(SyncTarget.GROUPS)))) {
             logger.warn("CSVファイルのため、ユーザー・グループは同期しません（Excel のシートで指定してください）");
@@ -645,7 +685,7 @@ public class SyncRunner {
         job.excelSource = excelSource;
         boolean doTickets = selected.contains(SyncTarget.TICKETS);
         if (doTickets && !isCsv && excelSource.isDefault() && !sheetNames.isEmpty()
-                && isDirectorySheet(sheetNames.get(0), job.usersSource, job.groupsSource)) {
+                && isDirectorySheet(sheetNames.get(0), job.usersSource, job.groupsSource, job.groupMembersSource)) {
             logger.info("先頭シート「" + sheetNames.get(0) + "」はユーザー・グループの表のため、チケットは同期しません");
             doTickets = false;
         }
@@ -696,6 +736,11 @@ public class SyncRunner {
             job.groupsSheet = spreadsheetParser.parseFromPath(filePath, job.groupsSource);
             logger.info("Groups: " + job.groupsSource.describe() + " " + job.groupsSheet.rows().size() + " rows");
         }
+        if (job.groupMembersSource != null) {
+            job.groupMembersSheet = spreadsheetParser.parseFromPath(filePath, job.groupMembersSource);
+            logger.info("Group Members: " + job.groupMembersSource.describe() + " "
+                    + job.groupMembersSheet.rows().size() + " rows（ここに書いたグループはこの行がメンバーのすべてになります）");
+        }
         return job;
     }
 
@@ -704,6 +749,41 @@ public class SyncRunner {
      *
      * @return 検証エラー（なければ空）
      */
+    /**
+     * ユーザーのシートの「通知するプロジェクト」に識別子・名前があれば、プロジェクトを取得して ID に解決する関数を返します。
+     * 数値（ID）だけなら取得しません（null）。
+     */
+    private static java.util.function.Function<String, Long> projectResolver(
+            mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet sheet, RedmineClient client, FileLogger logger) {
+        boolean needed = false;
+        for (Map<String, String> row : sheet.rows()) {
+            String raw = row.get(UserSettingColumns.COL_NOTIFIED_PROJECTS);
+            if (raw != null) {
+                for (String token : UserSettingColumns.splitList(raw)) {
+                    if (!token.matches("#?\\d+") && !"なし".equals(token) && !"none".equalsIgnoreCase(token)) {
+                        needed = true;
+                    }
+                }
+            }
+        }
+        if (!needed) {
+            return null;
+        }
+        Map<String, Long> index = new HashMap<>();
+        Map<Long, Map<String, Object>> projects = client.listProjects();
+        logger.info("Fetched " + projects.size() + " projects（通知するプロジェクトの解決）");
+        projects.forEach((id, project) -> {
+            for (String key : List.of("identifier", "name")) {
+                Object value = project.get(key);
+                if (value != null) {
+                    index.putIfAbsent(String.valueOf(value).trim().toLowerCase(java.util.Locale.ROOT), id);
+                }
+            }
+            index.putIfAbsent(String.valueOf(id), id);
+        });
+        return token -> index.get(token.trim().toLowerCase(java.util.Locale.ROOT));
+    }
+
     private List<String> validateFile(FileJob job, ProjectConfig projectConfig, RedmineClient client,
             Boolean cliVirtualParents, FileLogger logger) {
         List<String> validationErrors = new ArrayList<>();
@@ -720,7 +800,8 @@ public class SyncRunner {
             logger.info("Fetched " + job.users.size() + " users");
         }
         if (job.usersSheet != null) {
-            job.userPlan = DirectorySync.parseUsers(job.usersSheet, job.users);
+            job.userPlan = DirectorySync.parseUsers(job.usersSheet, job.users,
+                    projectResolver(job.usersSheet, client, logger));
             validationErrors.addAll(job.userPlan.errors());
         }
         if (job.groupsSheet != null) {
@@ -730,7 +811,8 @@ public class SyncRunner {
             if (job.userPlan != null) {
                 job.userPlan.rows().forEach(row -> knownLogins.add(row.login()));
             }
-            job.groupPlan = DirectorySync.parseGroups(job.groupsSheet, job.groups, knownLogins);
+            job.groupPlan = DirectorySync.parseGroups(job.groupsSheet, job.groupMembersSheet, job.groups,
+                    knownLogins);
             validationErrors.addAll(job.groupPlan.errors());
         }
         if (job.doTickets) {
@@ -1462,10 +1544,7 @@ public class SyncRunner {
     }
 
     private static String statusColumn(ProjectConfig projectConfig) {
-        SyncConfig syncConfig = projectConfig != null ? projectConfig.getSync() : null;
-        String statusColumn = syncConfig != null && syncConfig.getColumns() != null
-                ? syncConfig.getColumns().getStatusColumn() : null;
-        return statusColumn == null || statusColumn.isBlank() ? ColumnDefinitions.COL_STATUS : statusColumn;
+        return TicketColumns.of(projectConfig).status();
     }
 
     /**
@@ -1593,8 +1672,8 @@ public class SyncRunner {
         return sheetNames.contains(defaultSheet) ? new ExcelSource(defaultSheet, null) : null;
     }
 
-    private static boolean isDirectorySheet(String sheetName, ExcelSource usersSource, ExcelSource groupsSource) {
-        for (ExcelSource source : new ExcelSource[] { usersSource, groupsSource }) {
+    private static boolean isDirectorySheet(String sheetName, ExcelSource... sources) {
+        for (ExcelSource source : sources) {
             if (source != null && source.table() == null && sheetName.equals(source.sheet())) {
                 return true;
             }
@@ -1669,7 +1748,7 @@ public class SyncRunner {
      *
      * @return 候補のパス（重複なし）
      */
-    static List<Path> defaultConfigCandidates() {
+    public static List<Path> defaultConfigCandidates() {
         Set<Path> candidates = new LinkedHashSet<>();
         candidates.add(Paths.get(DEFAULT_CONFIG_FILE).toAbsolutePath().normalize());
         Path appDir = applicationDirectory();

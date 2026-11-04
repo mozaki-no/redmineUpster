@@ -51,6 +51,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *       {@code --export} と指定すると、このチケットの配下だけを出力</li>
  *   <li>{@code --targets}: 同期・出力する対象（tickets,users,groups のカンマ区切り。省略時はファイルにある表すべて）</li>
  *   <li>{@code --export}: 同期の代わりに、プロジェクトのチケットとユーザー・グループを {@code --file} の .xlsx に出力</li>
+ *   <li>{@code --settings}: 設定ファイル（{@code --config}、省略時は同期と同じ探し方）を編集する設定画面を開く。
+ *       Spring を起動せずに {@code RedmineUpsterApplication#main} で処理する（配布版の settings.bat）</li>
  *   <li>{@code --help}: 使い方を表示</li>
  *   <li>{@code --relink-parent} / {@code --reset-sync}: 廃止（指定しても無視し、警告を出す）</li>
  * </ul>
@@ -245,6 +247,7 @@ public class SyncCommand implements CommandLineRunner {
     private void printUsage() {
         System.out.println("Usage: redmineUpster --sync --file=<CSV/Excel> [options]");
         System.out.println("       redmineUpster --export --file=<output.xlsx> [options]");
+        System.out.println("       redmineUpster --settings [--config=<path>]   (open the settings window)");
         System.out.println("       (java -jar redmineUpster.jar --sync --file=<CSV/Excel> [options])");
         System.out.println();
         System.out.println("Options:");
@@ -269,9 +272,12 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("                          children of this Redmine issue (overrides rootIssueId in sync.files).");
         System.out.println("                          With --export: export only the tickets under this issue (the root");
         System.out.println("                          itself is not exported; default: rootIssueId of the --file in sync.files)");
-        System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: all sheets in the file)");
+        System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: sync.targets, else all sheets in the file)");
         System.out.println("  --export                Export tickets of the project, users and groups to --file (.xlsx)");
         System.out.println("                          The exported file can be used as --file for --sync as it is");
+        System.out.println("  --settings              Open the settings window to edit the config file (sync-config.yml).");
+        System.out.println("                          Comments in the file are replaced on save; the previous file is");
+        System.out.println("                          kept as sync-config.yml.bak");
         System.out.println("  --help                  Show this help");
         System.out.println();
         System.out.println("Several Excel files for one project:");

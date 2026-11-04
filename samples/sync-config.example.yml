@@ -6,6 +6,9 @@ projects:
       apiKey: "${REDMINE_API_KEY}"  # 環境変数展開対応
       projectId: "project-a"
     sync:
+      # 同期・出力する対象の既定（tickets, users, groups のカンマ区切り。--targets が優先。省略時はファイルにある表すべて）
+      # "users,groups" にすると、このプロジェクトはユーザー・グループだけをメンテする（users.bat / export-users.bat は常にこの指定）
+      # targets: "tickets,users,groups"
       # トラッカー列が空欄の行に使う既定トラッカー（名前またはID）
       tracker:
         enabled: true
@@ -85,6 +88,11 @@ projects:
       #   sheet: "ユーザー"
       # groups:
       #   sheet: "グループ"
+      # グループのメンバー（1行に「グループ名・ログインID」を1組。省略時はシート「グループメンバー」）。
+      # このシートに書いたグループは、シートの行がメンバーのすべてになる（ない人はメンバーから外す）。
+      # 書いていないグループのメンバーは変更しない。ログインIDが空欄の行だけのグループはメンバー0人にする
+      # groupMembers:
+      #   sheet: "グループメンバー"
       # 列設定（省略時はデフォルト値を使用）
       columns:
         # チケットID列（空欄=新規作成、値あり=そのチケットを更新。新規作成したIDはここへ書き戻す）
@@ -103,14 +111,26 @@ projects:
         # fillDownHierarchy: false
         # 同期結果の書き戻し先の列（なければヘッダの末尾に追加。Excel のテーブルはテーブルを右に広げる）。
         # この3列は同期の差分には使わない（値を変えても Redmine は更新されない）
-        # lastSyncedAtColumn: "最終同期日時"   # yyyy/MM/dd HH:mm:ss（文字列）。1回の実行で全行同じ値
-        # syncResultColumn: "同期結果"         # 作成／更新／変更なし／エラー／未実行
-        # syncErrorColumn: "エラー理由"        # エラー・未実行の理由（成功した行は空にする）
-        # Redmineに反映する日付/ステータス列
+        lastSyncedAtColumn: "最終同期日時"   # yyyy/MM/dd HH:mm:ss（文字列）。1回の実行で全行同じ値
+        syncResultColumn: "同期結果"         # 作成／更新／変更なし／エラー／未実行
+        syncErrorColumn: "エラー理由"        # エラー・未実行の理由（成功した行は空にする）
+        # ---- 標準フィールドの取込列名（WBS の見出しの名前。--export もこの名前で出力する） ----
+        # 件名（値があればこの列を件名にする。空欄の行は一番深い階層列の値が件名）
+        subjectColumn: "タスク"
+        # ステータス（ステータス名またはID。status.statusMap で変換）
+        statusColumn: "ステータス"
+        # 担当者（ログインID・氏名・メールアドレス・グループ名）
+        assigneeColumn: "担当"
+        # 開始日・期日（yyyy/M/d、yyyy-MM-dd、Excel の日付）
         startDateColumn: "着手予定"
         dueDateColumn: "完了予定"
-        statusColumn: "ステータス"
+        # 着手実績・完了実績（status.mode が BY_DATES でステータス列が空欄のとき、値があれば 進行中／完了 にする）
+        startActualColumn: "着手実績"
+        dueActualColumn: "完了実績"
+        # 進捗率（0〜100。% 付きも可）
         progressColumn: "進捗率"
+        # 説明（セル内の改行・Markdown はそのまま。空欄なら Redmine の説明を変更しない）
+        descriptionColumn: "説明"
         # 必須列（CSVに必ず含める列）
         required:
           - "チケットID"

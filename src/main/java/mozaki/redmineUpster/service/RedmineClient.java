@@ -1,6 +1,7 @@
 package mozaki.redmineUpster.service;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -333,6 +334,62 @@ public class RedmineClient {
 	}
 
 	/**
+	 * トラッカーの詳細を取得します（GET /trackers.json。参照用シートの出力に使用）。
+	 * <p>
+	 * 各要素は id, name, default_status, description、Redmine 5 以降は enabled_standard_fields
+	 * （このトラッカーで使う標準フィールド）を含みます。
+	 * </p>
+	 *
+	 * @return トラッカー（Redmine の並び順）
+	 */
+	public List<Map<String, Object>> listTrackerDetails() {
+		return getList("/trackers.json", "trackers");
+	}
+
+	/**
+	 * チケットのステータスの詳細を取得します（GET /issue_statuses.json。参照用シートの出力に使用）。
+	 *
+	 * @return ステータス（id, name, is_closed。Redmine の並び順）
+	 */
+	public List<Map<String, Object>> listIssueStatusDetails() {
+		return getList("/issue_statuses.json", "issue_statuses");
+	}
+
+	/**
+	 * カスタムフィールドの定義を取得します（GET /custom_fields.json。管理者の API キーが必要）。
+	 * <p>
+	 * 各要素は id, name, customized_type, field_format, is_required, multiple, default_value,
+	 * possible_values（リストの選択肢 {value, label}）、trackers（チケットのカスタムフィールドを使うトラッカー）などを含みます。
+	 * </p>
+	 *
+	 * @return カスタムフィールド（Redmine の並び順）
+	 */
+	public List<Map<String, Object>> listCustomFields() {
+		return getList("/custom_fields.json", "custom_fields");
+	}
+
+	/**
+	 * ページングしない一覧を取得します。
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	private List<Map<String, Object>> getList(String path, String listKey) {
+		String url = baseUrl + path;
+		debugLog("Request URL: GET " + url);
+		ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, buildEntity(null), Map.class);
+		List<Map<String, Object>> result = new ArrayList<>();
+		Map body = response.getBody();
+		if (body != null && body.get(listKey) instanceof List<?> list) {
+			for (Object element : list) {
+				if (element instanceof Map item) {
+					result.add(new LinkedHashMap<>((Map<String, Object>) item));
+				}
+			}
+		}
+		debugLog(listKey + " fetched: " + result.size());
+		return result;
+	}
+
+	/**
 	 * ユーザーを作成します（POST /users.json）。
 	 *
 	 * @param user ユーザー情報
@@ -343,6 +400,17 @@ public class RedmineClient {
 	}
 
 	/**
+	 * ユーザーを作成します（POST /users.json）。"user" の外に送る項目（個人設定 "pref"、"send_information"）付き。
+	 *
+	 * @param user ユーザー情報
+	 * @param extras "user" と並べて送る項目
+	 * @return 作成されたユーザーのID（取得できない場合はnull）
+	 */
+	public Long createUser(Map<String, Object> user, Map<String, Object> extras) {
+		return post("/users.json", "user", user, extras);
+	}
+
+	/**
 	 * ユーザーを更新します（PUT /users/{id}.json）。
 	 *
 	 * @param userId ユーザーID
@@ -350,6 +418,26 @@ public class RedmineClient {
 	 */
 	public void updateUser(Long userId, Map<String, Object> user) {
 		put("/users/" + userId + ".json", "user", user);
+	}
+
+	/**
+	 * ユーザーを更新します（PUT /users/{id}.json）。"user" の外に送る項目（個人設定 "pref"、"send_information"）付き。
+	 *
+	 * @param userId ユーザーID
+	 * @param user 更新する項目
+	 * @param extras "user" と並べて送る項目
+	 */
+	public void updateUser(Long userId, Map<String, Object> user, Map<String, Object> extras) {
+		put("/users/" + userId + ".json", "user", user, extras);
+	}
+
+	/**
+	 * プロジェクトを全件取得します（GET /projects.json。ページング）。
+	 *
+	 * @return プロジェクトID → プロジェクト情報（identifier・name など）
+	 */
+	public Map<Long, Map<String, Object>> listProjects() {
+		return listPaged("/projects.json", "projects", Map.of());
 	}
 
 	/**
@@ -374,8 +462,13 @@ public class RedmineClient {
 
 	@SuppressWarnings("rawtypes")
 	private Long post(String path, String rootKey, Map<String, Object> content) {
+		return post(path, rootKey, content, Map.of());
+	}
+
+	private Long post(String path, String rootKey, Map<String, Object> content, Map<String, Object> extra) {
 		String url = baseUrl + path;
-		Map<String, Object> requestBody = Map.of(rootKey, content);
+		Map<String, Object> requestBody = new LinkedHashMap<>(extra);
+		requestBody.put(rootKey, content);
 		debugLog("Request URL: POST " + url);
 		debugLog("Request body: " + formatBodyForLog(maskPassword(requestBody)));
 		ResponseEntity<Map> response = restTemplate.postForEntity(url, buildEntity(requestBody), Map.class);
@@ -388,8 +481,13 @@ public class RedmineClient {
 	}
 
 	private void put(String path, String rootKey, Map<String, Object> content) {
+		put(path, rootKey, content, Map.of());
+	}
+
+	private void put(String path, String rootKey, Map<String, Object> content, Map<String, Object> extra) {
 		String url = baseUrl + path;
-		Map<String, Object> requestBody = Map.of(rootKey, content);
+		Map<String, Object> requestBody = new LinkedHashMap<>(extra);
+		requestBody.put(rootKey, content);
 		debugLog("Request URL: PUT " + url);
 		debugLog("Request body: " + formatBodyForLog(maskPassword(requestBody)));
 		restTemplate.put(url, buildEntity(requestBody));

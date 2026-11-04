@@ -157,7 +157,7 @@ public class DiffCalculator {
             }
             parsed.add(new RowData(rowNumber, row, issueId, deepest, levelPath,
                     toKey(ownCells), parentCells.isEmpty() ? null : toKey(parentCells), joinPath(parentCells),
-                    resolveSubject(row, ownCells), names, parentCells));
+                    resolveSubject(row, ownCells, names), names, parentCells));
         }
 
         // 2. 重複チェック（階層パス・チケットID）
@@ -673,10 +673,10 @@ public class DiffCalculator {
     }
 
     /**
-     * 件名を解決します（タスク列 → 一番深い階層値）。
+     * 件名を解決します（件名列（既定: タスク） → 一番深い階層値）。
      */
-    private String resolveSubject(Map<String, String> row, List<String> hierarchyCells) {
-        String task = value(row, ColumnDefinitions.COL_TASK);
+    private String resolveSubject(Map<String, String> row, List<String> hierarchyCells, ColumnNames names) {
+        String task = value(row, names.subjectColumn);
         if (!task.isBlank()) {
             return task;
         }
@@ -786,26 +786,29 @@ public class DiffCalculator {
     private static final class ColumnNames {
         private final String ticketIdColumn;
         private final String trackerColumn;
+        private final String subjectColumn;
+        private final String assigneeColumn;
         private final String startDateColumn;
         private final String dueDateColumn;
+        private final String startActualColumn;
+        private final String dueActualColumn;
         private final String statusColumn;
         private final String progressColumn;
         private final String descriptionColumn;
 
         private ColumnNames(ProjectConfig projectConfig) {
-            ColumnsConfig columns = projectConfig != null && projectConfig.getSync() != null
-                    ? projectConfig.getSync().getColumns() : null;
-            if (columns == null) {
-                columns = new ColumnsConfig();
-            }
-            this.ticketIdColumn = StringUtils.valueOrDefault(columns.getTicketIdColumn(), ColumnDefinitions.COL_TICKET_ID);
-            this.trackerColumn = StringUtils.valueOrDefault(columns.getTrackerColumn(), ColumnDefinitions.COL_TRACKER);
-            this.startDateColumn = StringUtils.valueOrDefault(columns.getStartDateColumn(), ColumnDefinitions.COL_START_PLAN);
-            this.dueDateColumn = StringUtils.valueOrDefault(columns.getDueDateColumn(), ColumnDefinitions.COL_DUE_PLAN);
-            this.statusColumn = StringUtils.valueOrDefault(columns.getStatusColumn(), ColumnDefinitions.COL_STATUS);
-            this.progressColumn = StringUtils.valueOrDefault(columns.getProgressColumn(), ColumnDefinitions.COL_PROGRESS);
-            this.descriptionColumn = StringUtils.valueOrDefault(columns.getDescriptionColumn(),
-                    ColumnDefinitions.COL_DESCRIPTION);
+            TicketColumns columns = TicketColumns.of(projectConfig);
+            this.ticketIdColumn = columns.ticketId();
+            this.trackerColumn = columns.tracker();
+            this.subjectColumn = columns.subject();
+            this.assigneeColumn = columns.assignee();
+            this.startDateColumn = columns.startDate();
+            this.dueDateColumn = columns.dueDate();
+            this.startActualColumn = columns.startActual();
+            this.dueActualColumn = columns.dueActual();
+            this.statusColumn = columns.status();
+            this.progressColumn = columns.progress();
+            this.descriptionColumn = columns.description();
         }
     }
 
@@ -850,11 +853,11 @@ public class DiffCalculator {
             this.parentKey = parentKey;
             this.parentPath = parentPath;
             this.subject = subject;
-            this.assignee = value(row, ColumnDefinitions.COL_ASSIGNEE);
+            this.assignee = value(row, names.assigneeColumn);
             this.startPlan = value(row, names.startDateColumn);
             this.duePlan = value(row, names.dueDateColumn);
-            this.startActual = value(row, ColumnDefinitions.COL_START_ACTUAL);
-            this.dueActual = value(row, ColumnDefinitions.COL_DUE_ACTUAL);
+            this.startActual = value(row, names.startActualColumn);
+            this.dueActual = value(row, names.dueActualColumn);
             this.statusValue = value(row, names.statusColumn);
             this.progress = parseProgress(value(row, names.progressColumn));
             // 説明は改行・インデント・Markdown をそのまま送る（改行コードだけ LF にそろえる）

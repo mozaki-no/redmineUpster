@@ -46,14 +46,31 @@ public class DirectorySync {
     /** 新規作成時だけ使うパスワード（空欄なら Redmine が自動生成してメールで通知） */
     public static final String COL_PASSWORD = "パスワード";
     public static final String COL_GROUP_NAME = "グループ名";
-    /** グループのメンバー（ログインIDをカンマ・改行区切り。空欄なら変更しない） */
+    /**
+     * グループのメンバー（ログインIDをカンマ・改行区切り。空欄なら変更しない）。
+     * 以前の --export が出力していた列で、取り込みでは引き続き使えます（今の --export は「グループメンバー」シートに出力）。
+     */
     public static final String COL_MEMBERS = "メンバー";
+    /** グループメンバーの既定のシート名 */
+    public static final String DEFAULT_GROUP_MEMBERS_SHEET = "グループメンバー";
+    /** グループメンバーのシートの氏名列（参照用。取り込みでは使わない） */
+    public static final String COL_MEMBER_NAME = "氏名";
 
     /** ユーザーの列（出力順） */
     public static final List<String> USER_COLUMNS = List.of(COL_ID, COL_LOGIN, COL_LASTNAME, COL_FIRSTNAME, COL_MAIL,
             COL_ADMIN, COL_STATUS, COL_PASSWORD);
-    /** グループの列（出力順） */
-    public static final List<String> GROUP_COLUMNS = List.of(COL_ID, COL_GROUP_NAME, COL_MEMBERS);
+    /** ユーザーの列（出力順。基本の列＋設定の列 {@link UserSettingColumns}＋参照用の列 {@link UserInfoColumns}） */
+    public static final List<String> USER_EXPORT_COLUMNS;
+    static {
+        List<String> columns = new ArrayList<>(USER_COLUMNS);
+        columns.addAll(UserSettingColumns.COLUMN_NAMES);
+        columns.addAll(UserInfoColumns.COLUMN_NAMES);
+        USER_EXPORT_COLUMNS = java.util.Collections.unmodifiableList(columns);
+    }
+    /** グループの列（出力順。メンバーは「グループメンバー」シートに出力する） */
+    public static final List<String> GROUP_COLUMNS = List.of(COL_ID, COL_GROUP_NAME);
+    /** グループメンバーの列（出力順。1行に1人。ログインIDが空欄の行は「メンバーなし」） */
+    public static final List<String> GROUP_MEMBER_COLUMNS = List.of(COL_GROUP_NAME, COL_LOGIN, COL_MEMBER_NAME);
 
     /** 状態の表示名（1=有効, 2=登録, 3=ロック） */
     public static final Map<Integer, String> STATUS_LABELS = Map.of(1, "有効", 2, "登録", 3, "ロック");
@@ -72,10 +89,18 @@ public class DirectorySync {
      * @param status 状態（null＝変更しない）
      * @param password 新規作成時のパスワード（空欄なら自動生成）
      * @param customFields 「CF:名前」列の値（{@code {id, value}}。空欄の列は含まない）
+     * @param settings 設定の列（ユーザーの属性・個人設定。空欄の列は含まない）
      */
     public record UserRow(int rowNumber, Long id, boolean matchedByName, String login, String lastname,
             String firstname, String mail, Boolean admin, Integer status, String password,
-            List<Map<String, Object>> customFields) {
+            List<Map<String, Object>> customFields, UserSettingColumns.Values settings) {
+        public UserRow(int rowNumber, Long id, boolean matchedByName, String login, String lastname,
+                String firstname, String mail, Boolean admin, Integer status, String password,
+                List<Map<String, Object>> customFields) {
+            this(rowNumber, id, matchedByName, login, lastname, firstname, mail, admin, status, password,
+                    customFields, UserSettingColumns.Values.NONE);
+        }
+
         public UserRow(int rowNumber, Long id, boolean matchedByName, String login, String lastname,
                 String firstname, String mail, Boolean admin, Integer status, String password) {
             this(rowNumber, id, matchedByName, login, lastname, firstname, mail, admin, status, password, List.of());
@@ -143,6 +168,19 @@ public class DirectorySync {
      * @return 解析結果
      */
     public static Plan<UserRow> parseUsers(ParsedSheet sheet, Map<Long, Map<String, Object>> existingUsers) {
+        return parseUsers(sheet, existingUsers, null);
+    }
+
+    /**
+     * ユーザーのシートを解析・検証します。
+     *
+     * @param sheet シート
+     * @param existingUsers Redmine のユーザー（ID → ユーザー）
+     * @param projects 「通知するプロジェクト」の解決（識別子・名前・ID → ID。null なら ID の数値だけ）
+     * @return 解析結果
+     */
+    public static Plan<UserRow> parseUsers(ParsedSheet sheet, Map<Long, Map<String, Object>> existingUsers,
+            java.util.function.Function<String, Long> projects) {
         List<String> errors = new ArrayList<>();
         List<UserRow> rows = new ArrayList<>();
         requireColumns(sheet, List.of(COL_ID, COL_LOGIN), "ユーザー", errors);
@@ -193,6 +231,12 @@ public class DirectorySync {
                 errors.add(prefix + ex.getMessage());
                 continue;
             }
+            List<String> settingErrors = new ArrayList<>();
+            UserSettingColumns.Values settings = UserSettingColumns.parse(row, projects, settingErrors);
+            if (!settingErrors.isEmpty()) {
+                settingErrors.forEach(message -> errors.add(prefix + message));
+                continue;
+            }
             List<Map<String, Object>> customFields = new ArrayList<>();
             List<String> unknownFields = customFieldCells(row, userFields, customFields);
             if (!unknownFields.isEmpty()) {
@@ -201,7 +245,7 @@ public class DirectorySync {
             }
             UserRow user = new UserRow(rowNumber, id, matchedByName, login, value(row, COL_LASTNAME),
                     value(row, COL_FIRSTNAME), value(row, COL_MAIL), admin, status, value(row, COL_PASSWORD),
-                    customFields);
+                    customFields, settings);
             if (id == null) {
                 List<String> missing = new ArrayList<>();
                 for (String column : List.of(COL_LASTNAME, COL_FIRSTNAME, COL_MAIL)) {
@@ -252,18 +296,22 @@ public class DirectorySync {
             try {
                 if (row.id() == null) {
                     Map<String, Object> payload = createUserPayload(row);
+                    Map<String, Object> pref = row.settings().pref();
                     if (dryRun) {
-                        logger.info("DRY_RUN CREATE " + row.label());
+                        logger.info("DRY_RUN CREATE " + row.label() + (pref.isEmpty() ? "" : " pref=" + pref.keySet()));
                         created++;
                         continue;
                     }
-                    Long newId = client.createUser(payload);
+                    Long newId = client.createUser(payload, createExtras(row));
                     if (newId == null) {
                         addError(errors, logger, "作成失敗: " + row.label() + " 理由=レスポンスにIDがありません");
                         continue;
                     }
                     Map<String, Object> user = new LinkedHashMap<>(payload);
                     user.put("id", newId);
+                    if (!pref.isEmpty()) {
+                        user.put("pref", new LinkedHashMap<>(pref));
+                    }
                     existingUsers.put(newId, user);
                     writeBack.put(row.rowNumber(), newId);
                     logger.info("created " + row.label() + " -> #" + newId
@@ -280,12 +328,49 @@ public class DirectorySync {
                     unchanged++;
                     continue;
                 }
+                Map<String, Object> current = existingUsers.get(row.id());
+                @SuppressWarnings("unchecked")
+                Map<String, Object> pref = changes.get("pref") instanceof Map<?, ?> map
+                        ? new LinkedHashMap<>((Map<String, Object>) map) : new LinkedHashMap<>();
+                changes.remove("pref");
+                boolean resetPassword = Boolean.TRUE.equals(changes.remove("generate_password"));
+                List<String> changed = new ArrayList<>(changes.keySet());
+                pref.keySet().forEach(key -> changed.add("pref." + key));
+                if (resetPassword) {
+                    changed.add("パスワード再発行");
+                }
                 if (dryRun) {
-                    logger.info("DRY_RUN UPDATE " + row.label() + " changes=" + changes.keySet());
+                    logger.info("DRY_RUN UPDATE " + row.label() + " changes=" + changed);
                 } else {
-                    client.updateUser(row.id(), changes);
-                    existingUsers.get(row.id()).putAll(changes);
-                    logger.info("updated " + row.label() + " changes=" + changes.keySet());
+                    Map<String, Object> extras = new LinkedHashMap<>();
+                    Map<String, Object> user = new LinkedHashMap<>(changes);
+                    if (!pref.isEmpty()) {
+                        extras.put("pref", pref);
+                    }
+                    if (resetPassword) {
+                        user.put("generate_password", true);
+                        extras.put("send_information", true);
+                    }
+                    if (extras.isEmpty()) {
+                        client.updateUser(row.id(), changes);
+                    } else {
+                        // Redmine は "user" がないと更新できないため、属性の変更がなければログインIDだけ送る
+                        if (user.isEmpty()) {
+                            user.put("login", text(current.get("login")));
+                        }
+                        client.updateUser(row.id(), user, extras);
+                    }
+                    if (!pref.isEmpty()) {
+                        Map<String, Object> currentPref = new LinkedHashMap<>();
+                        Map<?, ?> before = UserSettingColumns.currentPref(current);
+                        if (before != null) {
+                            before.forEach((k, v) -> currentPref.put(String.valueOf(k), v));
+                        }
+                        currentPref.putAll(pref);
+                        current.put("pref", currentPref);
+                    }
+                    current.putAll(changes);
+                    logger.info("updated " + row.label() + " changes=" + changed);
                 }
                 updated++;
             } catch (RuntimeException ex) {
@@ -310,9 +395,9 @@ public class DirectorySync {
         if (!row.customFields().isEmpty()) {
             payload.put("custom_fields", apiFields(row.customFields()));
         }
+        payload.putAll(row.settings().user());
         if (row.password().isEmpty()) {
             payload.put("generate_password", true);
-            payload.put("send_information", true);
         } else {
             payload.put("password", row.password());
         }
@@ -336,7 +421,32 @@ public class DirectorySync {
             changes.put("status", row.status());
         }
         putCustomFieldChanges(changes, row.customFields(), current);
+        // 設定の列。Redmine の API が返さない項目（個人設定・メール通知など）は、セルに値があれば毎回送る
+        changes.putAll(UserSettingColumns.changed(row.settings().user(), current));
+        Map<String, Object> pref = UserSettingColumns.changed(row.settings().pref(),
+                UserSettingColumns.currentPref(current));
+        if (!pref.isEmpty()) {
+            changes.put("pref", pref);
+        }
+        if (row.settings().resetPassword()) {
+            changes.put("generate_password", true);
+        }
         return changes;
+    }
+
+    /**
+     * 新規作成で "user" の外に送る項目（個人設定 pref、パスワードを自動生成したときの send_information）。
+     */
+    static Map<String, Object> createExtras(UserRow row) {
+        Map<String, Object> extras = new LinkedHashMap<>();
+        if (!row.settings().pref().isEmpty()) {
+            extras.put("pref", row.settings().pref());
+        }
+        if (row.password().isEmpty()) {
+            // Redmine は send_information を "user" の外（トップレベル）で受け取る
+            extras.put("send_information", true);
+        }
+        return extras;
     }
 
     // ---------------------------------------------------------------- グループ
@@ -351,12 +461,41 @@ public class DirectorySync {
      */
     public static Plan<GroupRow> parseGroups(ParsedSheet sheet, Map<Long, Map<String, Object>> existingGroups,
             Set<String> knownLogins) {
+        return parseGroups(sheet, null, existingGroups, knownLogins);
+    }
+
+    /**
+     * グループのシートとグループメンバーのシートを解析・検証します。
+     * <p>
+     * グループメンバーのシートは1行に「グループ名・ログインID」を1組書きます。シートに書いたグループは、
+     * シートの行がメンバーのすべてになります（ない人はメンバーから外す）。ログインIDが空欄の行だけのグループは
+     * メンバーを0人にします。シートに書いていないグループのメンバーは変更しません（グループのシートの
+     * 「メンバー」列に書いた場合はその値）。同じグループを「メンバー」列とグループメンバーのシートの両方に
+     * 書くとエラーです。グループメンバーのシートのグループ名は、グループのシートにある必要があります。
+     * </p>
+     *
+     * @param sheet グループのシート
+     * @param membersSheet グループメンバーのシート（null ならメンバーは「メンバー」列だけで決める）
+     * @param existingGroups Redmine のグループ（ID → グループ）
+     * @param knownLogins メンバーに指定できるログインID（Redmine のユーザーと、ユーザーのシートで作成するユーザー）
+     * @return 解析結果
+     */
+    public static Plan<GroupRow> parseGroups(ParsedSheet sheet, ParsedSheet membersSheet,
+            Map<Long, Map<String, Object>> existingGroups, Set<String> knownLogins) {
         List<String> errors = new ArrayList<>();
         List<GroupRow> rows = new ArrayList<>();
         requireColumns(sheet, List.of(COL_ID, COL_GROUP_NAME), "グループ", errors);
+        if (membersSheet != null) {
+            requireColumns(membersSheet, List.of(COL_GROUP_NAME, COL_LOGIN), "グループメンバー", errors);
+        }
         if (!errors.isEmpty()) {
             return new Plan<>(rows, errors);
         }
+        // グループメンバーのシート: グループ名（小文字）→ メンバーのログインID（書いた順）
+        Map<String, List<String>> sheetMembers = new LinkedHashMap<>();
+        Map<String, String> sheetGroupNames = new LinkedHashMap<>();
+        Map<String, Integer> sheetGroupRows = new HashMap<>();
+        Set<String> invalidGroups = new HashSet<>();
         Map<String, Long> byName = new HashMap<>();
         for (Map.Entry<Long, Map<String, Object>> entry : existingGroups.entrySet()) {
             byName.put(text(entry.getValue().get("name")).toLowerCase(Locale.ROOT), entry.getKey());
@@ -365,6 +504,37 @@ public class DirectorySync {
         for (String login : knownLogins) {
             known.add(login.toLowerCase(Locale.ROOT));
         }
+        if (membersSheet != null) {
+            for (int i = 0; i < membersSheet.rows().size(); i++) {
+                Map<String, String> row = membersSheet.rows().get(i);
+                int rowNumber = membersSheet.rowNumbers().get(i);
+                String prefix = "グループメンバー 行" + rowNumber + ": ";
+                String groupName = value(row, COL_GROUP_NAME);
+                String login = value(row, COL_LOGIN);
+                if (groupName.isEmpty()) {
+                    if (!login.isEmpty()) {
+                        errors.add(prefix + "グループ名が空欄です（ログインID: " + login + "）");
+                    }
+                    continue;
+                }
+                String key = groupName.toLowerCase(Locale.ROOT);
+                sheetGroupNames.putIfAbsent(key, groupName);
+                sheetGroupRows.putIfAbsent(key, rowNumber);
+                List<String> members = sheetMembers.computeIfAbsent(key, k -> new ArrayList<>());
+                if (login.isEmpty()) {
+                    continue;
+                }
+                if (!known.contains(login.toLowerCase(Locale.ROOT))) {
+                    errors.add(prefix + "メンバーのログインIDが見つかりません: " + login + " [" + groupName + "]");
+                    invalidGroups.add(key);
+                    continue;
+                }
+                if (members.stream().noneMatch(m -> m.equalsIgnoreCase(login))) {
+                    members.add(login);
+                }
+            }
+        }
+        Set<String> usedSheetGroups = new HashSet<>();
         Map<String, CustomFieldColumns.Definition> groupFields = CustomFieldColumns.definitions(
                 existingGroups.values());
         Map<String, Integer> seenNames = new HashMap<>();
@@ -416,7 +586,20 @@ public class DirectorySync {
                     continue;
                 }
             }
-            Integer sameName = seenNames.putIfAbsent(name.toLowerCase(Locale.ROOT), rowNumber);
+            String nameKey = name.toLowerCase(Locale.ROOT);
+            if (sheetMembers.containsKey(nameKey)) {
+                usedSheetGroups.add(nameKey);
+                if (members != null) {
+                    errors.add(prefix + "メンバーが「" + COL_MEMBERS + "」列とグループメンバーのシート（行"
+                            + sheetGroupRows.get(nameKey) + "）の両方に書かれています。どちらか一方にしてください [" + name + "]");
+                    continue;
+                }
+                if (invalidGroups.contains(nameKey)) {
+                    continue;
+                }
+                members = new ArrayList<>(sheetMembers.get(nameKey));
+            }
+            Integer sameName = seenNames.putIfAbsent(nameKey, rowNumber);
             if (sameName != null) {
                 errors.add(prefix + "グループ名「" + name + "」が行" + sameName + "と重複しています");
                 continue;
@@ -435,6 +618,12 @@ public class DirectorySync {
                 continue;
             }
             rows.add(new GroupRow(rowNumber, id, matchedByName, name, members, customFields));
+        }
+        for (Map.Entry<String, String> entry : sheetGroupNames.entrySet()) {
+            if (!usedSheetGroups.contains(entry.getKey()) && !seenNames.containsKey(entry.getKey())) {
+                errors.add("グループメンバー 行" + sheetGroupRows.get(entry.getKey()) + ": グループ「" + entry.getValue()
+                        + "」がグループのシートにありません（グループのシートに行を追加してください）");
+            }
         }
         return new Plan<>(rows, errors);
     }
