@@ -88,6 +88,11 @@ public class SyncConfigProperties {
 		 * 同期対象のRedmineプロジェクトID。
 		 */
 		private String projectId;
+
+		/**
+		 * HTTP(S) プロキシ設定（省略・host 空欄なら直接接続）。
+		 */
+		private ProxyConfig proxy;
 	}
 
 	/**

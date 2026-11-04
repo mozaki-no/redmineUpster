@@ -104,6 +104,7 @@ public class ExportRunner {
             RedmineClient client = redmineClientFactory.createClient(projectConfig);
             client.setLogger(logger);
             logger.info("Redmine URL: " + client.getBaseUrl());
+            logger.info("Proxy: " + client.getConnectionDescription());
 
             Map<Long, Map<String, Object>> issues = null;
             Long rootIssueId = null;

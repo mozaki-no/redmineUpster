@@ -37,6 +37,15 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 - 2026-10-29: 「ユーザーの標準カラムが空」の調査: 実際の Redmine 5.x/6.x 形式の `/users.json` 応答を `RedmineClient.listUsers` → `WorkbookExporter` に通すテストで、基本の列（ID・ログインID・姓・名・メールアドレス・管理者・状態）と CF は埋まることを確認（列のずれなし）。空なのは設定の列（メール通知・言語・認証方式・個人設定 pref）で、Redmine の users/index・show.api.rsb が返さないため（書き込み専用）。見出しのセルにコメントで明記し、参照用の列 `UserInfoColumns`（作成日・最終ログイン・パスワード変更日・2段階認証。一覧の応答にあるので個別GET不要。取り込みでは無視）を追加。ユーザー・グループだけのメンテ用に `packaging/dist/export-users.bat`（`--export --targets=users,groups` → users.xlsx）・`users-dry-run.bat`・`users.bat`（`--sync --targets=users,groups`、ドロップなしは users.xlsx）を追加し zip に同梱。設定 `sync.targets`（文字列またはリスト。CLI `--targets` が優先、--sync/--export 両方）と設定画面「ファイル」タブの項目・検証を追加。
 - 未実施: Windows ジョブの実行（GitHub Actions 上でのみ確認可能）、Windows 実機での exe・bat の動作確認、実Redmineでの確認。
 
+## 実行計画（プロキシ対応）
+背景: Windows 配布版（Java同梱 exe）が社内の HTTPS の Redmine に、Basic 認証が必要な社内プロキシ経由で接続できない（直接接続でタイムアウト、-Dhttps.proxyHost では 407）。
+1. 設定: `redmine.proxy`（host・port（既定 8080）・user・password・noProxyHosts（リストまたは `|`/カンマ区切り、`*` 可））。`${ENV}` 展開。host 空欄なら従来どおり（JVM の -Dhttps.proxyHost などに従う）。既定の RedmineProperties にも `redmine.proxy.*`。
+2. 接続: プロキシ設定ごとに RestTemplate（`ProxyRequestFactory`、Buffering は維持）。接続ごとの Authenticator（設定のプロキシ host:port の PROXY 要求にだけ返す）。user があれば `jdk.http.auth.tunneling/proxying.disabledSchemes` を空に（HttpURLConnection のクラス初期化時に1回だけ読むため、設定読み込み時＝最初の接続より前に設定。-D 指定があればそれに従う）。
+3. 設定画面（接続タブ）・検証、ログ `Proxy: host:port（認証あり／なし）` または直接接続、テスト、文書。
+
+### 進捗
+- 2026-11-04: `ProxyConfig`・`ProxyRequestFactory`・設定読み込み・設定画面・ログを追加。http の Redmine は 407 で再送できない本文付きリクエストのため Proxy-Authorization を最初から付ける（https は CONNECT で認証し、ヘッダーはトンネル内に送らない）。テスト `ProxyConfigTests`・`ProxyConnectionTests`（ローカルの Basic 認証必須プロキシで http の GET/POST・https の CONNECT・407・noProxyHosts）・`SettingsDocumentTests` 追加。JAVA_TOOL_OPTIONS なしの JVM で jar を実行し、CONNECT が 407 → 認証付きで再送されトンネル確立することを確認。未実施: Windows 実機・実プロキシでの確認（NTLM/Negotiate も提示するプロキシでは JDK がそちらを優先する可能性）。
+
 ## 実行計画（設定画面）
 背景: むさしさんの指示。sync-config.yml を手で書くのがつらいため、設定を編集する画面（Swing、配布版の jlink ランタイムに java.desktop あり）を用意する。
 1. 起動: `--settings [--config=...]` を `RedmineUpsterApplication.main` で Spring 起動前に判定（`settings/SettingsLauncher`）。設定ファイルは同期と同じ探し方（`SyncRunner.defaultConfigCandidates`）。headless ならエラー終了（1）。`--help` に追加。

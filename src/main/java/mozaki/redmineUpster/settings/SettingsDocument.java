@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import mozaki.redmineUpster.config.ProxyConfig;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -51,7 +52,8 @@ public class SettingsDocument {
     /** キーの並び順（ここにないキーは後ろに元の順で並べる） */
     private static final List<String> ROOT_ORDER = List.of("projects");
     private static final List<String> PROJECT_ORDER = List.of("name", "default", "redmine", "sync");
-    private static final List<String> REDMINE_ORDER = List.of("baseUrl", "apiKey", "projectId");
+    private static final List<String> REDMINE_ORDER = List.of("baseUrl", "apiKey", "projectId", "proxy");
+    private static final List<String> PROXY_ORDER = List.of("host", "port", "user", "password", "noProxyHosts");
     private static final List<String> SYNC_ORDER = List.of("targets", "files", "trackerMap", "deletion", "virtualParents",
             "autoCloseParents", "resultColumns", "status", "excel", "users", "groups", "groupMembers", "columns",
             "customFieldMap",
@@ -249,6 +251,48 @@ public class SettingsDocument {
             remove(node, dottedPath);
         } else {
             put(node, dottedPath, value.trim());
+        }
+    }
+
+    /**
+     * 文字列を前後の空白も含めてそのまま設定します（パスワード用）。空文字列の場合はキーを削除します。
+     *
+     * @param node 起点
+     * @param dottedPath パス
+     * @param value 値
+     */
+    public static void setStringExact(Map<String, Object> node, String dottedPath, String value) {
+        if (value == null || value.isEmpty()) {
+            remove(node, dottedPath);
+        } else {
+            put(node, dottedPath, value);
+        }
+    }
+
+    /**
+     * プロキシを通さないホストを読みます（リスト・| やカンマ区切りの文字列のどちらでも）。
+     *
+     * @param project プロジェクト
+     * @return "|" 区切りの文字列（なければ空文字列）
+     */
+    public static String getNoProxyHosts(Map<String, Object> project) {
+        return String.join("|", ProxyConfig.parseHostList(get(project, "redmine.proxy.noProxyHosts")));
+    }
+
+    /**
+     * プロキシを通さないホストを設定します。1つなら文字列、複数ならリストで書きます。空欄はキーを削除します。
+     *
+     * @param project プロジェクト
+     * @param value "|"・カンマ・空白区切りの文字列
+     */
+    public static void setNoProxyHosts(Map<String, Object> project, String value) {
+        List<String> hosts = ProxyConfig.parseHostList(value);
+        if (hosts.isEmpty()) {
+            remove(project, "redmine.proxy.noProxyHosts");
+        } else if (hosts.size() == 1) {
+            put(project, "redmine.proxy.noProxyHosts", hosts.get(0));
+        } else {
+            put(project, "redmine.proxy.noProxyHosts", new ArrayList<Object>(hosts));
         }
     }
 
@@ -567,6 +611,7 @@ public class SettingsDocument {
             if (isBlank(getString(project, "redmine.projectId"))) {
                 errors.add(label + ": プロジェクト識別子を入力してください");
             }
+            validateProxy(project, label, errors);
             if (!isNumberOrEnv(getString(project, "sync.deletion.statusId"))) {
                 errors.add(label + ": 削除扱いのステータス番号は数値で入力してください");
             }
@@ -593,6 +638,26 @@ public class SettingsDocument {
             errors.add("既定のプロジェクトを1つだけ選んでください（現在 " + defaults + " 件）");
         }
         return errors;
+    }
+
+    private static void validateProxy(Map<String, Object> project, String label, List<String> errors) {
+        String host = getString(project, "redmine.proxy.host");
+        String port = getString(project, "redmine.proxy.port");
+        String user = getString(project, "redmine.proxy.user");
+        String password = getString(project, "redmine.proxy.password");
+        if (!isBlank(port) && !ENV_REF.matcher(port.trim()).matches()) {
+            String text = port.trim();
+            boolean valid = text.matches("\\d{1,5}") && Integer.parseInt(text) >= 1 && Integer.parseInt(text) <= 65535;
+            if (!valid) {
+                errors.add(label + ": プロキシのポートは 1〜65535 の数値で入力してください");
+            }
+        }
+        if (isBlank(host) && (!isBlank(port) || !isBlank(user) || !isBlank(password))) {
+            errors.add(label + ": プロキシのポート・ユーザー名・パスワードを使う場合はプロキシのホストを入力してください");
+        }
+        if (isBlank(user) && !isBlank(password)) {
+            errors.add(label + ": プロキシのパスワードを使う場合はユーザー名も入力してください");
+        }
     }
 
     private static boolean isBlank(String value) {
@@ -651,6 +716,7 @@ public class SettingsDocument {
             case "root" -> ROOT_ORDER;
             case "project" -> PROJECT_ORDER;
             case "redmine" -> REDMINE_ORDER;
+            case "proxy" -> PROXY_ORDER;
             case "sync" -> SYNC_ORDER;
             case "columns" -> COLUMNS_ORDER;
             case "status" -> STATUS_ORDER;
@@ -693,6 +759,7 @@ public class SettingsDocument {
         return switch (context) {
         case "root" -> "projects".equals(name) ? "projects" : "";
         case "project" -> "redmine".equals(name) || "sync".equals(name) ? name : "";
+        case "redmine" -> "proxy".equals(name) ? name : "";
         case "sync" -> switch (name) {
             case "columns", "status", "autoCloseParents", "virtualParents", "files" -> name;
             default -> "";

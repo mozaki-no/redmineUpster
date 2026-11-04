@@ -212,6 +212,12 @@ projects:
       baseUrl: "https://redmine.example.com"
       apiKey: "${REDMINE_API_KEY}"
       projectId: "project-id"
+      proxy:              # HTTP(S) プロキシ（省略・host 空欄なら直接接続。JVM の -Dhttps.proxyHost などがあればそれに従う）
+        host: "proxy.example.co.jp"
+        port: 8080        # 省略時 8080
+        user: "${PROXY_USER}"          # Basic 認証（省略時は認証なし）
+        password: "${PROXY_PASSWORD}"
+        noProxyHosts: ["localhost", "*.internal.example.co.jp"]   # "a|b" や "a,b" の文字列も可
     sync:
       tracker:            # トラッカー列が空欄の行に使う既定値
         enabled: true

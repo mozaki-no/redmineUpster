@@ -5,6 +5,13 @@ projects:
       baseUrl: "https://redmine.example.com"
       apiKey: "${REDMINE_API_KEY}"  # 環境変数展開対応
       projectId: "project-a"
+      # HTTP(S) プロキシ（社内プロキシ経由で接続する場合だけ。host が空欄・省略なら直接接続）
+      # proxy:
+      #   host: "proxy.example.co.jp"
+      #   port: 8080                         # 省略時 8080
+      #   user: "${PROXY_USER}"              # 認証（Basic）が必要な場合だけ
+      #   password: "${PROXY_PASSWORD}"      # 環境変数で渡すのがおすすめ（ファイルに直接書かない）
+      #   noProxyHosts: "localhost|127.0.0.1|*.internal.example.co.jp"  # リストでも可。ワイルドカード * 可
     sync:
       # 同期・出力する対象の既定（tickets, users, groups のカンマ区切り。--targets が優先。省略時はファイルにある表すべて）
       # "users,groups" にすると、このプロジェクトはユーザー・グループだけをメンテする（users.bat / export-users.bat は常にこの指定）

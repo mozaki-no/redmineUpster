@@ -341,6 +341,7 @@ public class SyncRunner {
             RedmineClient client = redmineClientFactory.createClient(projectConfig);
             client.setLogger(logger);
             logger.info("Redmine URL: " + client.getBaseUrl());
+            logger.info("Proxy: " + client.getConnectionDescription());
             logger.info("Redmine Project: " + client.getProjectId());
 
             // 7. すべてのファイルを検証（エラーがあればRedmineに一切書き込まない）
