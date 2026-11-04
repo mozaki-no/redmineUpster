@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.service.RedmineClientFactory;
+import mozaki.redmineUpster.util.BackupLocation;
 
 /**
  * Excel 出力（{@code --export}）の実行クラス。
@@ -138,7 +139,7 @@ public class ExportRunner {
             }
             Path out = Paths.get(filePath);
             if (Files.exists(out)) {
-                Path backup = out.resolveSibling(out.getFileName() + ".bak");
+                Path backup = BackupLocation.of(projectConfig.getBackupDir()).backupFor(out);
                 Files.copy(out, backup, StandardCopyOption.REPLACE_EXISTING);
                 logger.info("既存のファイルを " + backup + " に退避して上書きします");
             }

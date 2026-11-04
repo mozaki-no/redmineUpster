@@ -63,6 +63,12 @@ public class SyncConfigProperties {
 		 * 同期設定。
 		 */
 		private SyncConfig sync;
+
+		/**
+		 * バックアップ（.bak）の保存先フォルダ（絶対パスに解決済み）。
+		 * プロジェクトの sync.backup.dir、なければ設定ファイル全体の backup.dir。null なら元のファイルと同じフォルダ。
+		 */
+		private String backupDir;
 	}
 
 	/**

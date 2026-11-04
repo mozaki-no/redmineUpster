@@ -1,3 +1,8 @@
+# バックアップ（.bak）の保存先（全プロジェクト共通・設定画面で保存したときの sync-config.yml.bak も）。
+# 省略・空欄なら元のファイルと同じフォルダ。相対パスは この設定ファイルのフォルダ基準。${ENV} 可。
+# プロジェクトごとに変える場合は sync.backup.dir（こちらが優先）
+# backup:
+#   dir: "backup"
 projects:
   - name: "本番環境"
     default: true

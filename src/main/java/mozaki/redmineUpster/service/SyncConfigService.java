@@ -142,8 +142,13 @@ public class SyncConfigService {
 		}
 
 		loadedProjects = new ArrayList<>();
+		String commonBackupDir = backupDir(root.get("backup"), "backup");
 		for (Map<String, Object> projectMap : projectsList) {
 			ProjectConfig projectConfig = parseProjectConfig(projectMap);
+			Object sync = projectMap.get("sync");
+			String projectBackupDir = sync instanceof Map<?, ?> syncMap
+					? backupDir(syncMap.get("backup"), "sync.backup") : null;
+			projectConfig.setBackupDir(projectBackupDir != null ? projectBackupDir : commonBackupDir);
 			validate(projectConfig);
 			loadedProjects.add(projectConfig);
 		}
@@ -238,6 +243,31 @@ public class SyncConfigService {
 			ProxyConfig.allowBasicProxyAuthentication();
 		}
 		return config;
+	}
+
+	/**
+	 * backup の値（{@code { dir: ... }}）から保存先フォルダを解決します。相対パスは設定ファイルのフォルダ基準。
+	 *
+	 * @param value backup の値
+	 * @param key エラーメッセージ用のキー
+	 * @return 絶対パス（未設定・空欄なら null）
+	 */
+	private String backupDir(Object value, String key) {
+		if (value == null) {
+			return null;
+		}
+		if (!(value instanceof Map<?, ?> map)) {
+			throw new IllegalArgumentException(key + " must be a map (dir)");
+		}
+		String dir = blankToNull(expandEnvVars(stringOrNull(map.get("dir"))));
+		if (dir == null) {
+			return null;
+		}
+		Path path = Paths.get(dir);
+		if (!path.isAbsolute() && configBaseDir != null) {
+			path = configBaseDir.resolve(path);
+		}
+		return path.toAbsolutePath().normalize().toString();
 	}
 
 	private static String stringOrNull(Object value) {
@@ -676,6 +706,16 @@ public class SyncConfigService {
 	 * @return 環境変数が展開された文字列。nullが渡された場合はnullを返す
 	 */
 	public String expandEnvVars(String value) {
+		return expandEnv(value);
+	}
+
+	/**
+	 * {@link #expandEnvVars(String)} の static 版（設定画面などで使用）。
+	 *
+	 * @param value 展開する文字列
+	 * @return 展開後の文字列（null は null）
+	 */
+	public static String expandEnv(String value) {
 		if (value == null) {
 			return null;
 		}

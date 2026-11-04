@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import mozaki.redmineUpster.config.ProxyConfig;
+import mozaki.redmineUpster.util.BackupLocation;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -43,21 +44,22 @@ public class SettingsDocument {
     static final String HEADER = """
             # redmineUpster 設定ファイル（設定画面で保存しました。UTF-8）
             # 項目の説明は USER_GUIDE.md、または設定画面（settings.bat）の各項目にマウスを置くと表示されます。
-            # 画面で保存すると、このファイルのコメントは消えます（保存前の内容は sync-config.yml.bak に残ります）。
+            # 画面で保存すると、このファイルのコメントは消えます（保存前の内容は sync-config.yml.bak に残ります。
+            # backup.dir を設定した場合はそのフォルダ）。
             """;
 
     /** 環境変数参照（${NAME} / ${NAME:既定値}） */
     private static final Pattern ENV_REF = Pattern.compile(".*\\$\\{[^}]+}.*");
 
     /** キーの並び順（ここにないキーは後ろに元の順で並べる） */
-    private static final List<String> ROOT_ORDER = List.of("projects");
+    private static final List<String> ROOT_ORDER = List.of("backup", "projects");
     private static final List<String> PROJECT_ORDER = List.of("name", "default", "redmine", "sync");
     private static final List<String> REDMINE_ORDER = List.of("baseUrl", "apiKey", "projectId", "proxy");
     private static final List<String> PROXY_ORDER = List.of("host", "port", "user", "password", "noProxyHosts");
     private static final List<String> SYNC_ORDER = List.of("targets", "files", "trackerMap", "deletion", "virtualParents",
             "autoCloseParents", "resultColumns", "status", "excel", "users", "groups", "groupMembers", "columns",
             "customFieldMap",
-            "customFieldDateColumns", "tracker");
+            "customFieldDateColumns", "tracker", "backup");
     private static final List<String> COLUMNS_ORDER = List.of("ticketIdColumn", "trackerColumn", "hierarchy",
             "fillDownHierarchy", "subjectColumn", "statusColumn", "assigneeColumn", "startDateColumn",
             "dueDateColumn", "startActualColumn", "dueActualColumn", "progressColumn", "descriptionColumn",
@@ -612,6 +614,8 @@ public class SettingsDocument {
                 errors.add(label + ": プロジェクト識別子を入力してください");
             }
             validateProxy(project, label, errors);
+            validateBackupDir(getString(project, "sync.backup.dir"), label + ": バックアップの保存先（このプロジェクト）",
+                    errors);
             if (!isNumberOrEnv(getString(project, "sync.deletion.statusId"))) {
                 errors.add(label + ": 削除扱いのステータス番号は数値で入力してください");
             }
@@ -634,10 +638,28 @@ public class SettingsDocument {
                 }
             }
         }
+        validateBackupDir(getBackupDir(), "バックアップの保存先（共通）", errors);
         if (defaults != 1) {
             errors.add("既定のプロジェクトを1つだけ選んでください（現在 " + defaults + " 件）");
         }
         return errors;
+    }
+
+    private void validateBackupDir(String value, String label, List<String> errors) {
+        if (isBlank(value) || value.contains("${")) {
+            return;
+        }
+        try {
+            Path dir = Path.of(value.trim());
+            if (!dir.isAbsolute()) {
+                dir = getBaseDir().resolve(dir);
+            }
+            if (Files.exists(dir) && !Files.isDirectory(dir)) {
+                errors.add(label + " はフォルダではなくファイルです: " + value);
+            }
+        } catch (java.nio.file.InvalidPathException e) {
+            errors.add(label + " のパスが正しくありません: " + value);
+        }
     }
 
     private static void validateProxy(Map<String, Object> project, String label, List<String> errors) {
@@ -660,6 +682,41 @@ public class SettingsDocument {
         }
     }
 
+    /**
+     * @return 設定ファイル全体のバックアップの保存先（backup.dir。なければ空文字列）
+     */
+    public String getBackupDir() {
+        String value = getString(root, "backup.dir");
+        return value == null ? "" : value;
+    }
+
+    /**
+     * 設定ファイル全体のバックアップの保存先（backup.dir）を設定します。空欄はキーを削除します。
+     *
+     * @param value フォルダ（相対パスは設定ファイルのフォルダ基準、${...} 可）
+     */
+    public void setBackupDir(String value) {
+        setString(root, "backup.dir", value);
+    }
+
+    /**
+     * 設定ファイル自身のバックアップの保存先（backup.dir。相対パスは設定ファイルのフォルダ基準）。
+     * プロジェクトごとの sync.backup.dir は同期・出力のファイルにだけ使い、設定ファイルには使いません。
+     *
+     * @return 保存先
+     */
+    public BackupLocation backupLocation() {
+        String dir = mozaki.redmineUpster.service.SyncConfigService.expandEnv(getBackupDir()).trim();
+        if (dir.isEmpty()) {
+            return BackupLocation.BESIDE_ORIGINAL;
+        }
+        Path resolved = Path.of(dir);
+        if (!resolved.isAbsolute()) {
+            resolved = getBaseDir().resolve(resolved);
+        }
+        return BackupLocation.of(resolved.toString());
+    }
+
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
@@ -679,7 +736,7 @@ public class SettingsDocument {
             Files.createDirectories(parent);
         }
         if (Files.isRegularFile(path)) {
-            backup = path.resolveSibling(path.getFileName() + ".bak");
+            backup = backupLocation().backupFor(path);
             Files.copy(path, backup, StandardCopyOption.REPLACE_EXISTING);
         }
         Files.writeString(path, toYaml(), StandardCharsets.UTF_8);

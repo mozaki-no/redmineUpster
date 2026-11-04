@@ -46,6 +46,14 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 ### 進捗
 - 2026-11-04: `ProxyConfig`・`ProxyRequestFactory`・設定読み込み・設定画面・ログを追加。http の Redmine は 407 で再送できない本文付きリクエストのため Proxy-Authorization を最初から付ける（https は CONNECT で認証し、ヘッダーはトンネル内に送らない）。テスト `ProxyConfigTests`・`ProxyConnectionTests`（ローカルの Basic 認証必須プロキシで http の GET/POST・https の CONNECT・407・noProxyHosts）・`SettingsDocumentTests` 追加。JAVA_TOOL_OPTIONS なしの JVM で jar を実行し、CONNECT が 407 → 認証付きで再送されトンネル確立することを確認。未実施: Windows 実機・実プロキシでの確認（NTLM/Negotiate も提示するプロキシでは JDK がそちらを優先する可能性）。
 
+## 実行計画（バックアップの保存先）
+背景: .bak（WBS の書き戻し・--export の上書き・設定画面の保存）を元のファイルの隣以外にも置けるようにする。
+1. 設定: 最上位 `backup.dir`（全体共通。設定画面で保存する sync-config.yml.bak にも使う）と `sync.backup.dir`（プロジェクトごと・優先）。相対パスは設定ファイルのフォルダ基準、`${ENV}` 可、空欄は従来どおり隣。
+2. `util/BackupLocation`: フォルダがなければ作成、同名は上書き。1回の実行で別フォルダの同じファイル名があれば `<名前>.<フォルダ名>-<CRC32>.bak`。CLI オプションは追加しない。
+
+### 進捗
+- 2026-11-04: `BackupLocation`・設定の読み込み（`ProjectConfig.backupDir` に解決済みの絶対パス）・TicketIdWriter／SyncRunner（ユーザー・グループ・チケットの書き戻し）・ExportRunner・SettingsDocument（保存・検証）・設定画面（ファイルタブ、フォルダ選択）・文書。テスト `BackupLocationTests`・`MultiFileSyncTests` に追加。
+
 ## 実行計画（設定画面）
 背景: むさしさんの指示。sync-config.yml を手で書くのがつらいため、設定を編集する画面（Swing、配布版の jlink ランタイムに java.desktop あり）を用意する。
 1. 起動: `--settings [--config=...]` を `RedmineUpsterApplication.main` で Spring 起動前に判定（`settings/SettingsLauncher`）。設定ファイルは同期と同じ探し方（`SyncRunner.defaultConfigCandidates`）。headless ならエラー終了（1）。`--help` に追加。
