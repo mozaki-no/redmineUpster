@@ -1,6 +1,13 @@
+# バックアップ（.bak）の保存先（全プロジェクト共通・設定画面で保存したときの sync-config.yml.bak も）。
+# 省略・空欄なら元のファイルと同じフォルダ。相対パスは この設定ファイルのフォルダ基準。${ENV} 可。
+# プロジェクトごとに変える場合は sync.backup.dir（こちらが優先）
+# （backup: は .bak の置き場所。下の fullBackup: は --backup の全内容の書き出しで、別の設定）
+# backup:
+#   dir: "backup"
+
 # 全内容のバックアップ（backup.bat / --backup。Redmine が使えなくなったときに中身を見るための読み取り専用の .xlsx）の既定。
 # 行頭の # を外すと有効。プロジェクトごとに変える場合は、そのプロジェクトの sync: の下に同じ形で fullBackup: を書く（項目ごとに優先）。
-# 同期の .bak（書き戻し前の退避）とは別のもの
+# 同期の .bak（書き戻し前の退避。上の backup: で保存先を指定）とは別のもの
 # fullBackup:
 #   dir: "backup"          # 出力先フォルダ（相対パスはこのファイルのフォルダ基準。省略時は実行したフォルダの backup）
 #   keep: 0                # 残す世代数（プロジェクトごと。0 = すべて残す。例: 7 なら新しい7つを残して古いものを削除）
@@ -16,6 +23,13 @@ projects:
       baseUrl: "https://redmine.example.com"
       apiKey: "${REDMINE_API_KEY}"  # 環境変数展開対応
       projectId: "project-a"
+      # HTTP(S) プロキシ（社内プロキシ経由で接続する場合だけ。host が空欄・省略なら直接接続）
+      # proxy:
+      #   host: "proxy.example.co.jp"
+      #   port: 8080                         # 省略時 8080
+      #   user: "${PROXY_USER}"              # 認証（Basic）が必要な場合だけ
+      #   password: "${PROXY_PASSWORD}"      # 環境変数で渡すのがおすすめ（ファイルに直接書かない）
+      #   noProxyHosts: "localhost|127.0.0.1|*.internal.example.co.jp"  # リストでも可。ワイルドカード * 可
     sync:
       # 同期・出力する対象の既定（tickets, users, groups のカンマ区切り。--targets が優先。省略時はファイルにある表すべて）
       # "users,groups" にすると、このプロジェクトはユーザー・グループだけをメンテする（users.bat / export-users.bat は常にこの指定）
@@ -57,6 +71,7 @@ projects:
       # virtualParents:
       #   enabled: true
       #   trackerId: "サマリ"   # 仮想親のトラッカー（名前またはID。省略時は「サマリ」）
+      #   status: "新規"   # 仮想親を作成するときのステータス（名前またはID。省略時は Redmine の既定。既存の仮想親は変更しない）
       # 子チケットがすべて完了した親チケットを、同期の最後に自動で完了にする（孫→子→親と再帰的に）。
       # 親の行の「ステータス」列が空欄なら、親のステータスは Redmine の現在値のまま（日付からは決めない）。
       # 行頭の # を外すと有効（既定は無効）。子は Redmine 上のチケットすべて（Excel にないものも含む）で判定し、

@@ -322,6 +322,24 @@ public final class ParentAutoCloser {
         return new TargetStatus(id, label);
     }
 
+    /**
+     * ステータスの名前またはIDをIDにします（名前は statusMap → Redmine のステータス名。IDは Redmine の一覧にあるもの）。
+     *
+     * @return ステータスID（見つからない場合は null）
+     */
+    public static Long resolveStatusId(String value, StatusConfig statusConfig, Map<String, Long> statuses) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        Map<String, String> statusMap = statusConfig != null && statusConfig.getStatusMap() != null
+                ? statusConfig.getStatusMap() : Map.of();
+        Long id = statusId(value.trim(), statusMap, statuses);
+        if (id != null && isNumeric(value.trim()) && !statuses.isEmpty() && !statuses.containsValue(id)) {
+            return null;
+        }
+        return id;
+    }
+
     private static Long statusId(String value, Map<String, String> statusMap, Map<String, Long> statuses) {
         if (isNumeric(value)) {
             return Long.parseLong(value);

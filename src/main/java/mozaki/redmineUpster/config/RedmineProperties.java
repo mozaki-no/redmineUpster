@@ -7,6 +7,16 @@ public class RedmineProperties {
 	private String baseUrl;
 	private String apiKey;
 	private String projectId;
+	/** HTTP(S) プロキシ設定（redmine.proxy.host など。host 空欄なら直接接続） */
+	private ProxyConfig proxy = new ProxyConfig();
+
+	public ProxyConfig getProxy() {
+		return proxy;
+	}
+
+	public void setProxy(ProxyConfig proxy) {
+		this.proxy = proxy;
+	}
 
 	public String getBaseUrl() {
 		return baseUrl;

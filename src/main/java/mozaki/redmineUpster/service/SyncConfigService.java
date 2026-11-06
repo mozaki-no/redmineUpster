@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.yaml.snakeyaml.Yaml;
 
 import jakarta.annotation.PostConstruct;
+import mozaki.redmineUpster.config.ProxyConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties;
 import mozaki.redmineUpster.config.SyncConfigProperties.ExcelConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
@@ -144,10 +145,15 @@ public class SyncConfigService {
 		loadedProjects = new ArrayList<>();
 		Map<String, Object> globalFullBackup = root.get("fullBackup") instanceof Map<?, ?> m
 				? (Map<String, Object>) m : Map.of();
+		String commonBackupDir = backupDir(root.get("backup"), "backup");
 		for (Map<String, Object> projectMap : projectsList) {
 			ProjectConfig projectConfig = parseProjectConfig(projectMap);
+			Object sync = projectMap.get("sync");
+			String projectBackupDir = sync instanceof Map<?, ?> syncMap
+					? backupDir(syncMap.get("backup"), "sync.backup") : null;
+			projectConfig.setBackupDir(projectBackupDir != null ? projectBackupDir : commonBackupDir);
 			Map<String, Object> merged = new HashMap<>(globalFullBackup);
-			if (projectMap.get("sync") instanceof Map<?, ?> sync && sync.get("fullBackup") instanceof Map<?, ?> own) {
+			if (sync instanceof Map<?, ?> syncMap && syncMap.get("fullBackup") instanceof Map<?, ?> own) {
 				own.forEach((k, v) -> merged.put(String.valueOf(k), v));
 			}
 			projectConfig.setFullBackup(parseFullBackupConfig(merged));
@@ -192,7 +198,92 @@ public class SyncConfigService {
 		config.setBaseUrl(expandEnvVars((String) map.get("baseUrl")));
 		config.setApiKey(expandEnvVars((String) map.get("apiKey")));
 		config.setProjectId(expandEnvVars((String) map.get("projectId")));
+		Object proxy = map.get("proxy");
+		if (proxy instanceof Map<?, ?> proxyMap) {
+			config.setProxy(parseProxyConfig((Map<String, Object>) proxyMap));
+		} else if (proxy != null) {
+			throw new IllegalArgumentException("redmine.proxy must be a map (host, port, user, password, noProxyHosts)");
+		}
 		return config;
+	}
+
+	/**
+	 * Map から ProxyConfig を解析します（値は ${ENV} を展開）。
+	 *
+	 * @param map redmine.proxy の Map
+	 * @return 解析された ProxyConfig
+	 */
+	ProxyConfig parseProxyConfig(Map<String, Object> map) {
+		ProxyConfig config = new ProxyConfig();
+		config.setHost(blankToNull(expandEnvVars(stringOrNull(map.get("host")))));
+		String port = blankToNull(expandEnvVars(stringOrNull(map.get("port"))));
+		if (port != null) {
+			int value;
+			try {
+				value = Integer.parseInt(port.trim());
+			} catch (NumberFormatException e) {
+				throw new IllegalArgumentException("redmine.proxy.port must be numeric: " + port);
+			}
+			if (value < 1 || value > 65535) {
+				throw new IllegalArgumentException("redmine.proxy.port must be 1-65535: " + port);
+			}
+			config.setPort(value);
+		}
+		config.setUser(blankToNull(expandEnvVars(stringOrNull(map.get("user")))));
+		// パスワードは前後の空白も含めてそのまま使う
+		String password = expandEnvVars(stringOrNull(map.get("password")));
+		config.setPassword(password == null || password.isEmpty() ? null : password);
+		Object noProxy = map.get("noProxyHosts");
+		List<String> hosts = new ArrayList<>();
+		// ${NO_PROXY:a|b} のように1つの値に複数ホストが入る場合もあるため、展開してから分ける
+		List<?> rawItems = noProxy instanceof List<?> list ? list : noProxy == null ? List.of() : List.of(noProxy);
+		for (Object item : rawItems) {
+			if (item != null) {
+				hosts.addAll(ProxyConfig.parseHostList(expandEnvVars(String.valueOf(item))));
+			}
+		}
+		config.setNoProxyHosts(hosts);
+		if (!config.isEnabled() && (config.getPort() != null || config.getUser() != null)) {
+			throw new IllegalArgumentException("redmine.proxy.host is required when port or user is set");
+		}
+		if (config.hasCredentials()) {
+			// 最初の HTTP 接続より前（設定の読み込み時）に Basic 認証を許可する
+			ProxyConfig.allowBasicProxyAuthentication();
+		}
+		return config;
+	}
+
+	/**
+	 * backup の値（{@code { dir: ... }}）から保存先フォルダを解決します。相対パスは設定ファイルのフォルダ基準。
+	 *
+	 * @param value backup の値
+	 * @param key エラーメッセージ用のキー
+	 * @return 絶対パス（未設定・空欄なら null）
+	 */
+	private String backupDir(Object value, String key) {
+		if (value == null) {
+			return null;
+		}
+		if (!(value instanceof Map<?, ?> map)) {
+			throw new IllegalArgumentException(key + " must be a map (dir)");
+		}
+		String dir = blankToNull(expandEnvVars(stringOrNull(map.get("dir"))));
+		if (dir == null) {
+			return null;
+		}
+		Path path = Paths.get(dir);
+		if (!path.isAbsolute() && configBaseDir != null) {
+			path = configBaseDir.resolve(path);
+		}
+		return path.toAbsolutePath().normalize().toString();
+	}
+
+	private static String stringOrNull(Object value) {
+		return value == null ? null : String.valueOf(value);
+	}
+
+	private static String blankToNull(String value) {
+		return value == null || value.isBlank() ? null : value.trim();
 	}
 
 	/**
@@ -272,6 +363,10 @@ public class SyncConfigService {
 					: virtualParentsMap.get("tracker");
 			if (tracker != null && !expandEnvVars(tracker.toString()).isBlank()) {
 				virtualParents.setTracker(expandEnvVars(tracker.toString()).trim());
+			}
+			Object virtualStatus = virtualParentsMap.get("status");
+			if (virtualStatus != null && !expandEnvVars(virtualStatus.toString()).isBlank()) {
+				virtualParents.setStatus(expandEnvVars(virtualStatus.toString()).trim());
 			}
 			config.setVirtualParents(virtualParents);
 		}
@@ -671,6 +766,16 @@ public class SyncConfigService {
 	 * @return 環境変数が展開された文字列。nullが渡された場合はnullを返す
 	 */
 	public String expandEnvVars(String value) {
+		return expandEnv(value);
+	}
+
+	/**
+	 * {@link #expandEnvVars(String)} の static 版（設定画面などで使用）。
+	 *
+	 * @param value 展開する文字列
+	 * @return 展開後の文字列（null は null）
+	 */
+	public static String expandEnv(String value) {
 		if (value == null) {
 			return null;
 		}

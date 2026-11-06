@@ -28,6 +28,7 @@ import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
 import mozaki.redmineUpster.service.ExcelSource;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.service.RedmineClientFactory;
+import mozaki.redmineUpster.util.BackupLocation;
 import mozaki.redmineUpster.service.SpreadsheetParser;
 import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.service.SyncConfigService;
@@ -336,11 +337,20 @@ public class SyncRunner {
                 }
                 jobs.add(job);
             }
+            BackupLocation backupLocation = BackupLocation.of(projectConfig.getBackupDir())
+                    .withFiles(jobs.stream().map(j -> Paths.get(j.filePath)).toList());
+            for (FileJob job : jobs) {
+                job.writeBack.backupLocation = backupLocation;
+            }
+            if (backupLocation.dir() != null) {
+                logger.info("Backup folder: " + backupLocation.dir());
+            }
 
             // 6. Redmineクライアント作成（トラッカー名の解決・存在確認に使用）
             RedmineClient client = redmineClientFactory.createClient(projectConfig);
             client.setLogger(logger);
             logger.info("Redmine URL: " + client.getBaseUrl());
+            logger.info("Proxy: " + client.getConnectionDescription());
             logger.info("Redmine Project: " + client.getProjectId());
 
             // 7. すべてのファイルを検証（エラーがあればRedmineに一切書き込まない）
@@ -354,6 +364,8 @@ public class SyncRunner {
                 }
             }
             validationErrors.addAll(validateRootIssues(jobs, client, deleteStatusId(syncConfig), state, logger));
+            validationErrors.addAll(validateVirtualParentStatus(jobs, projectConfig, client, cliVirtualParents,
+                    state, logger));
             if (!validationErrors.isEmpty()) {
                 logger.error("入力ファイルの検証エラー: " + validationErrors.size() + "件（Redmineは更新していません）");
                 for (String error : validationErrors) {
@@ -516,6 +528,8 @@ public class SyncRunner {
         /** 論理削除したチケット（dry-run では論理削除する予定のチケット）と、そのステータス */
         private List<Long> deletedIssueIds = List.of();
         private Integer deletedStatusId;
+        /** 仮想親を作成するときのステータスID（sync.virtualParents.status。未設定なら null） */
+        private Long virtualParentStatusId;
         /** 終了ステータスのID（親チケットの自動完了が有効な場合だけ取得。取得できなければ null） */
         private Set<Long> closedStatusIds;
         /** 論理削除のために読み込んだ（同期しない）sync.files のファイルのチケットID（親チケットの自動完了でも使用） */
@@ -837,6 +851,57 @@ public class SyncRunner {
         return validationErrors;
     }
 
+    /**
+     * sync.virtualParents.status（仮想親を作成するときのステータス）を解決します（仮想親が有効な場合だけ）。
+     * 見つからない場合は検証エラーにします（Redmineには書き込まない）。
+     */
+    private static List<String> validateVirtualParentStatus(List<FileJob> jobs, ProjectConfig projectConfig,
+            RedmineClient client, Boolean cliVirtualParents, RunState state, FileLogger logger) {
+        state.virtualParentStatusId = null;
+        SyncConfig syncConfig = projectConfig.getSync();
+        String configured = syncConfig != null && syncConfig.getVirtualParents() != null
+                ? syncConfig.getVirtualParents().getStatus() : null;
+        boolean enabled = cliVirtualParents != null ? cliVirtualParents
+                : DiffCalculator.isVirtualParentsEnabled(projectConfig);
+        if (configured == null || configured.isBlank() || !enabled
+                || jobs.stream().noneMatch(job -> job.doTickets)) {
+            return List.of();
+        }
+        Map<String, Long> statuses;
+        try {
+            statuses = client.listIssueStatuses();
+        } catch (RuntimeException ex) {
+            return List.of("sync.virtualParents.status「" + configured + "」を確認できません（ステータスの一覧を取得できません: "
+                    + ex.getMessage() + "）");
+        }
+        Long id = ParentAutoCloser.resolveStatusId(configured, syncConfig.getStatus(),
+                statuses == null ? Map.of() : statuses);
+        if (id == null) {
+            return List.of("sync.virtualParents.status「" + configured + "」が Redmine のステータスにありません"
+                    + "（ステータス名・statusMap の名前・ステータスIDのいずれかを指定してください）");
+        }
+        state.virtualParentStatusId = id;
+        logger.info("Virtual Parent Status: " + configured + " (status_id=" + id + "。仮想親を作成するときだけ設定します)");
+        return List.of();
+    }
+
+    /**
+     * 新規作成する仮想親に、作成時のステータス（解決済みのID）を設定します（既存の仮想親は変更しない）。
+     */
+    static List<DiffItem> withVirtualParentCreateStatus(List<DiffItem> items, Long statusId) {
+        List<DiffItem> result = new ArrayList<>(items.size());
+        for (DiffItem item : items) {
+            if (item.virtual() && SyncConstants.ACTION_CREATE.equals(item.action())) {
+                result.add(new DiffItem(item.rowNumber(), item.issueId(), item.subject(), item.levelPath(),
+                        item.depth(), item.parentRowNumber(), item.action(), String.valueOf(statusId),
+                        item.trackerId(), item.payload(), true));
+            } else {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
     private DiffPlan calculatePlan(ParsedSheet parsed, ProjectConfig projectConfig, RedmineClient client,
             Boolean cliVirtualParents, FileLogger logger) {
         SyncConfig syncConfig = projectConfig.getSync();
@@ -922,6 +987,9 @@ public class SyncRunner {
                 long virtualExisting = items.stream().filter(i -> i.virtual() && i.issueId() != null).count();
                 logger.info("  VIRTUAL_PARENT: " + virtualTotal + "（既存 " + virtualExisting + " / 新規作成 "
                         + (virtualTotal - virtualExisting) + "。上の CREATE 件数に含まれます）");
+                if (state.virtualParentStatusId != null) {
+                    items = withVirtualParentCreateStatus(items, state.virtualParentStatusId);
+                }
             }
 
             // 親チケットの自動完了が有効な場合、親の行はステータス列が空欄なら Redmine の現在のステータスのままにする
@@ -988,11 +1056,9 @@ public class SyncRunner {
             return;
         }
         try {
-            TicketIdWriter.WriteBackResult writeBack = statusValues == null
-                    ? ticketIdWriter.writeBack(filePath, ticketIdColumn, createdIssueIds, job.excelSource,
-                            !writeBackState.backupMade, syncResults)
-                    : ticketIdWriter.writeBack(filePath, ticketIdColumn, createdIssueIds, job.excelSource,
-                            !writeBackState.backupMade, syncResults, statusValues);
+            TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeBack(filePath, ticketIdColumn,
+                    createdIssueIds, job.excelSource, !writeBackState.backupMade, syncResults, statusValues,
+                    writeBackState.backupLocation);
             writeBackState.backupMade |= writeBack.backup() != null;
             for (String note : writeBack.notes()) {
                 logger.info(note);
@@ -1619,6 +1685,8 @@ public class SyncRunner {
     private static final class WriteBackState {
         private boolean backupMade;
         private boolean failed;
+        /** バックアップの保存先（sync.backup.dir / backup.dir。未設定なら元のファイルと同じフォルダ） */
+        private BackupLocation backupLocation = BackupLocation.BESIDE_ORIGINAL;
     }
 
     /**
@@ -1631,7 +1699,7 @@ public class SyncRunner {
         }
         try {
             TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeBack(filePath, idColumn, ids, source,
-                    !state.backupMade);
+                    !state.backupMade, null, null, state.backupLocation);
             state.backupMade |= writeBack.backup() != null;
             writeBack.notes().forEach(logger::info);
             logger.info("Wrote " + (ids.size() - writeBack.failures().size()) + " IDs back to " + source.describe()

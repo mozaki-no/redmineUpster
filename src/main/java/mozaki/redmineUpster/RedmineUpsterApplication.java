@@ -8,12 +8,15 @@ import mozaki.redmineUpster.config.RedmineProperties;
 import mozaki.redmineUpster.config.SyncConfigProperties;
 import mozaki.redmineUpster.config.TrustStoreSetup;
 import mozaki.redmineUpster.settings.SettingsLauncher;
+import mozaki.redmineUpster.util.ConsoleEncoding;
 
 @SpringBootApplication
 @EnableConfigurationProperties({RedmineProperties.class, SyncConfigProperties.class})
 public class RedmineUpsterApplication {
 
 	public static void main(String[] args) {
+		// Jenkins などでコンソールが文字化けしないよう、最初に出力の文字コードを決める
+		ConsoleEncoding.configure(args);
 		// 設定画面（--settings）は Spring を起動せずにすぐ開く
 		if (SettingsLauncher.isRequested(args)) {
 			int exitCode = SettingsLauncher.launch(args);

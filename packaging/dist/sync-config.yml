@@ -1,8 +1,14 @@
 # redmineUpster 設定ファイル（UTF-8 で保存してください。メモ帳なら「UTF-8」を選んで保存）
 # 詳しくは USER_GUIDE.md を参照してください。
+# バックアップ（書き戻し前の WBS・設定画面で保存する前の設定）の .bak を別のフォルダにまとめる場合は # を外す
+# （空欄・省略なら元のファイルと同じフォルダ。相対パスはこのファイルのフォルダ基準。フォルダがなければ作成）
+# （backup: は .bak の置き場所。下の fullBackup: は --backup の全内容の書き出しで、別の設定）
+# backup:
+#   dir: "backup"
+
 # 全内容のバックアップ（backup.bat / --backup。Redmine が使えなくなったときに中身を見るための読み取り専用の .xlsx）の既定。
 # 行頭の # を外すと有効。プロジェクトごとに変える場合は、そのプロジェクトの sync: の下に同じ形で fullBackup: を書く（項目ごとに優先）。
-# 同期の .bak（書き戻し前の退避）とは別のもの
+# 同期の .bak（書き戻し前の退避。上の backup: で保存先を指定）とは別のもの
 # fullBackup:
 #   dir: "backup"          # 出力先フォルダ（相対パスはこのファイルのフォルダ基準。省略時は実行したフォルダの backup）
 #   keep: 0                # 残す世代数（プロジェクトごと。0 = すべて残す。例: 7 なら新しい7つを残して古いものを削除）
@@ -22,6 +28,14 @@ projects:
       apiKey: "${REDMINE_API_KEY}"
       # 同期先プロジェクトの識別子（プロジェクトの URL の /projects/xxxx の xxxx）
       projectId: "my-project"
+      # 社内のプロキシを通して接続する場合だけ、# を外して書き換える（host がなければ直接接続）
+      # パスワードはファイルに直接書かず、setx PROXY_PASSWORD ... で環境変数に入れて "${PROXY_PASSWORD}" と書くのがおすすめ
+      # proxy:
+      #   host: "proxy.example.co.jp"
+      #   port: 8080
+      #   user: "${PROXY_USER}"
+      #   password: "${PROXY_PASSWORD}"
+      #   noProxyHosts: "localhost|127.0.0.1|*.internal.example.co.jp"   # プロキシを通さないホスト（| 区切りかリスト）
     sync:
       # 同期・出力する対象の既定（tickets, users, groups のカンマ区切り。--targets が優先。省略時はファイルにある表すべて）
       # "users,groups" にすると、このプロジェクトはユーザー・グループだけをメンテする（users.bat / export-users.bat は常にこの指定）
@@ -57,6 +71,7 @@ projects:
       # virtualParents:
       #   enabled: true
       #   trackerId: "サマリ"   # 仮想親のトラッカー（名前または番号。省略時は「サマリ」）
+      #   status: "新規"   # 仮想親を作成するときのステータス（名前または番号。省略時は Redmine の既定。既存の仮想親は変更しない）
       # 子チケットがすべて完了した親チケットを、同期の最後に自動で完了にする（孫→子→親と再帰的に）。
       # 親の行の「ステータス」列が空欄なら、親のステータスは Redmine の現在値のまま（日付からは決めない）。
       # 行頭の # を外すと有効（既定は無効）。子は Redmine 上のチケットすべて（Excel にないものも含む）で判定し、

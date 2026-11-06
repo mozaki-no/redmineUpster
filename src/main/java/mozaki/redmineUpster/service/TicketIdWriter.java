@@ -25,6 +25,7 @@ import com.opencsv.CSVReader;
 import com.opencsv.CSVWriter;
 import com.opencsv.exceptions.CsvValidationException;
 
+import mozaki.redmineUpster.util.BackupLocation;
 import mozaki.redmineUpster.util.CsvFileFormat;
 
 /**
@@ -224,6 +225,28 @@ public class TicketIdWriter {
 	 */
 	public WriteBackResult writeBack(String filePath, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
 			ExcelSource source, boolean makeBackup, SyncResults results, ColumnValues values) throws IOException {
+		return writeBack(filePath, ticketIdColumn, rowIssueIds, source, makeBackup, results, values,
+				BackupLocation.BESIDE_ORIGINAL);
+	}
+
+	/**
+	 * {@link #writeBack(String, String, Map, ExcelSource, boolean, SyncResults, ColumnValues)} の
+	 * バックアップの保存先を指定する版。
+	 *
+	 * @param filePath 入力ファイルのパス
+	 * @param ticketIdColumn チケットID列のヘッダ名
+	 * @param rowIssueIds 行番号 → チケットID
+	 * @param source Excel の読み込み元（CSV では無視）
+	 * @param makeBackup バックアップを作成（上書き）する場合 true
+	 * @param results 同期結果（null なら書かない）
+	 * @param values 追加で書く列の値（null なら書かない）
+	 * @param backupLocation バックアップの保存先
+	 * @return 結果（何も書かなかった場合 backup は null）
+	 * @throws IOException 読み書きに失敗した場合
+	 */
+	public WriteBackResult writeBack(String filePath, String ticketIdColumn, Map<Integer, Long> rowIssueIds,
+			ExcelSource source, boolean makeBackup, SyncResults results, ColumnValues values,
+			BackupLocation backupLocation) throws IOException {
 		Path path = Paths.get(filePath);
 		byte[] original = Files.readAllBytes(path);
 		List<String> notes = new ArrayList<>();
@@ -246,7 +269,7 @@ public class TicketIdWriter {
 		if (updated == null) {
 			return new WriteBackResult(null, notes, failures, warnings);
 		}
-		Path backup = path.resolveSibling(path.getFileName().toString() + ".bak");
+		Path backup = (backupLocation == null ? BackupLocation.BESIDE_ORIGINAL : backupLocation).backupFor(path);
 		if (makeBackup) {
 			Files.copy(path, backup, StandardCopyOption.REPLACE_EXISTING);
 		}

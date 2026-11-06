@@ -35,17 +35,37 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 - 2026-10-28: `--export` のグループメンバーを別シート「グループメンバー」（1行に グループ名・ログインID・氏名。メンバーなしはログインID空欄の行）に出力し、「グループ」シートの `メンバー` 列は出力しない（取り込みは従来どおり可）。取り込みは、シートに書いたグループはシートの行がメンバーのすべて・書いていないグループは変更しない・ログインID空欄の行だけなら0人・`メンバー` 列との二重指定やグループのシートにない名前はエラー（`sync.groupMembers.sheet` で変更可）。参照用シート「トラッカー」（標準フィールドの ○）「ステータス」「カスタムフィールド」（トラッカーの ○・取込列名）「カスタムフィールド選択肢」（1行に1つ）を追加（`--sync` では読まない。custom_fields が 403 なら警告して省略）。標準フィールドの取込列名を `TicketColumns` に集約し、`subjectColumn`（タスク）・`assigneeColumn`（担当）・`startActualColumn`（着手実績）・`dueActualColumn`（完了実績）を追加。サンプル・配布版の設定に全キーを既定値で明記、設定画面のタブ名を「取込列名」にして項目を追加。`mvn -B test` 233件成功。
 - 2026-10-29: 「ユーザー」シートに設定の列を追加（`UserSettingColumns`）。ユーザーの属性（メール通知・通知するプロジェクト・言語・認証方式・パスワード変更を要求）と個人設定 pref（メール非公開・タイムゾーン・コメントの表示順・未保存で移動時に警告・自分の変更は通知しない・高優先度チケットを通知・自動ウォッチ・テキストエリアのフォント・最近使ったプロジェクトの表示数・履歴の既定のタブ・コードハイライトの言語・既定のチケット/プロジェクトクエリ）、パスワード再発行。空欄は変更しない、不正な値は書き込む前に検証エラー、作成・更新とも `pref` と `send_information` は "user" の外で送る（従来 send_information を user 内に送っていた不具合も修正）。API が現在値を返さない項目は値があれば毎回送る（返す場合は比較）。--export は列見出しを出力し、返す値だけ書く。テスト追加で `mvn -B test` 全件成功。
 - 2026-10-29: 「ユーザーの標準カラムが空」の調査: 実際の Redmine 5.x/6.x 形式の `/users.json` 応答を `RedmineClient.listUsers` → `WorkbookExporter` に通すテストで、基本の列（ID・ログインID・姓・名・メールアドレス・管理者・状態）と CF は埋まることを確認（列のずれなし）。空なのは設定の列（メール通知・言語・認証方式・個人設定 pref）で、Redmine の users/index・show.api.rsb が返さないため（書き込み専用）。見出しのセルにコメントで明記し、参照用の列 `UserInfoColumns`（作成日・最終ログイン・パスワード変更日・2段階認証。一覧の応答にあるので個別GET不要。取り込みでは無視）を追加。ユーザー・グループだけのメンテ用に `packaging/dist/export-users.bat`（`--export --targets=users,groups` → users.xlsx）・`users-dry-run.bat`・`users.bat`（`--sync --targets=users,groups`、ドロップなしは users.xlsx）を追加し zip に同梱。設定 `sync.targets`（文字列またはリスト。CLI `--targets` が優先、--sync/--export 両方）と設定画面「ファイル」タブの項目・検証を追加。
+- 2026-11-06: 仮想親を作成するときのステータスを設定できるようにした（むさしさんの依頼）。`sync.virtualParents.status`（名前またはID。statusMap → Redmine のステータス名で解決、Redmine にない値は書き込む前に検証エラー、省略時は従来どおり送らない）は作成時だけ送り、既存の仮想親の更新では送らない（dry-run の表示・自動完了の判定にも反映）。設定画面「親チケット」タブに項目を追加、テストを追加。
+- 2026-11-06: Jenkins 実行時のコンソール文字化けを修正（`ConsoleEncoding`。`--console-encoding` ＞ 環境変数 `REDMINEUPSTER_CONSOLE_ENCODING` ＞ JENKINS_URL があれば UTF-8 ＞ 従来どおり。Spring のコンソールログも同じ文字コード）。
 - 未実施: Windows ジョブの実行（GitHub Actions 上でのみ確認可能）、Windows 実機での exe・bat の動作確認、実Redmineでの確認。
+
+## 実行計画（プロキシ対応）
+背景: Windows 配布版（Java同梱 exe）が社内の HTTPS の Redmine に、Basic 認証が必要な社内プロキシ経由で接続できない（直接接続でタイムアウト、-Dhttps.proxyHost では 407）。
+1. 設定: `redmine.proxy`（host・port（既定 8080）・user・password・noProxyHosts（リストまたは `|`/カンマ区切り、`*` 可））。`${ENV}` 展開。host 空欄なら従来どおり（JVM の -Dhttps.proxyHost などに従う）。既定の RedmineProperties にも `redmine.proxy.*`。
+2. 接続: プロキシ設定ごとに RestTemplate（`ProxyRequestFactory`、Buffering は維持）。接続ごとの Authenticator（設定のプロキシ host:port の PROXY 要求にだけ返す）。user があれば `jdk.http.auth.tunneling/proxying.disabledSchemes` を空に（HttpURLConnection のクラス初期化時に1回だけ読むため、設定読み込み時＝最初の接続より前に設定。-D 指定があればそれに従う）。
+3. 設定画面（接続タブ）・検証、ログ `Proxy: host:port（認証あり／なし）` または直接接続、テスト、文書。
+
+### 進捗
+- 2026-11-04: `ProxyConfig`・`ProxyRequestFactory`・設定読み込み・設定画面・ログを追加。http の Redmine は 407 で再送できない本文付きリクエストのため Proxy-Authorization を最初から付ける（https は CONNECT で認証し、ヘッダーはトンネル内に送らない）。テスト `ProxyConfigTests`・`ProxyConnectionTests`（ローカルの Basic 認証必須プロキシで http の GET/POST・https の CONNECT・407・noProxyHosts）・`SettingsDocumentTests` 追加。JAVA_TOOL_OPTIONS なしの JVM で jar を実行し、CONNECT が 407 → 認証付きで再送されトンネル確立することを確認。未実施: Windows 実機・実プロキシでの確認（NTLM/Negotiate も提示するプロキシでは JDK がそちらを優先する可能性）。
+
+## 実行計画（バックアップの保存先）
+背景: .bak（WBS の書き戻し・--export の上書き・設定画面の保存）を元のファイルの隣以外にも置けるようにする。
+1. 設定: 最上位 `backup.dir`（全体共通。設定画面で保存する sync-config.yml.bak にも使う）と `sync.backup.dir`（プロジェクトごと・優先）。相対パスは設定ファイルのフォルダ基準、`${ENV}` 可、空欄は従来どおり隣。
+2. `util/BackupLocation`: フォルダがなければ作成、同名は上書き。1回の実行で別フォルダの同じファイル名があれば `<名前>.<フォルダ名>-<CRC32>.bak`。CLI オプションは追加しない。
+
+### 進捗
+- 2026-11-04: `BackupLocation`・設定の読み込み（`ProjectConfig.backupDir` に解決済みの絶対パス）・TicketIdWriter／SyncRunner（ユーザー・グループ・チケットの書き戻し）・ExportRunner・SettingsDocument（保存・検証）・設定画面（ファイルタブ、フォルダ選択）・文書。テスト `BackupLocationTests`・`MultiFileSyncTests` に追加。
 
 ## 実行計画（全内容のバックアップ）
 背景: むさしさんの依頼。Redmine が使えなくなったときのため、プロジェクトの中身をすべて Excel に書き出す（Jenkins で定期実行）。`--export`（取り込める形）とは別の読み取り専用のバックアップ。
 1. CLI: `--backup [--file=out.xlsx | --backup-dir=dir] [--all-projects] [--keep=N] [--no-journals|--no-attachments|--no-time-entries|--no-wiki]`。既定の出力先 `<fullBackup.dir または ./backup>/<projectId>_yyyyMMdd_HHmmss.xlsx`。
-2. 設定: 最上位 `fullBackup` ＋ プロジェクトの `sync.fullBackup`（項目ごとに優先）。`dir`（設定ファイル基準）・`keep`（既定0＝すべて残す）・`journals`/`attachments`/`timeEntries`/`wiki`（既定 true）・`threads`（既定4）。同期の `.bak` の保存先（別ブランチの `backup.dir`）と混同しないよう `fullBackup` にした。
-3. 実装: `cli/BackupRunner`（設定・一時ファイル `.tmp` → 成功時に改名・失敗時は削除・世代管理）、`cli/FullBackupWriter`（SXSSF。チケットは100件ずつ取得してページごとに書き出し、履歴は `GET /issues/{id}.json?include=journals,watchers,attachments,relations` をスレッドプールで取得して ID 順に書く。任意の一覧は 403/404 などで警告＋シート省略、チケット取得の失敗だけ致命的。通信エラー・5xx は3回まで再試行）、`cli/BackupSheet`（1,048,575 行で `名前(2)` に続ける・32,767 文字超は `_files/long_text/` に全文）、`cli/BackupNames`（ファイル名・Windows 不可文字・UTF-8 でない Linux では ASCII 名に退避）。`RedmineClient.getJson` / `getJsonBySegments` / `downloadAttachment`（応答をバッファしない SimpleClientHttpRequestFactory で `/attachments/download/{id}` をファイルへ）。
+2. 設定: 最上位 `fullBackup` ＋ プロジェクトの `sync.fullBackup`（項目ごとに優先）。`dir`（設定ファイル基準）・`keep`（既定0＝すべて残す）・`journals`/`attachments`/`timeEntries`/`wiki`（既定 true）・`threads`（既定4）。同期の `.bak` の保存先（develop の `backup.dir` / `sync.backup.dir`）と混同しないよう `fullBackup` にした。
+3. 実装: `cli/BackupRunner`（設定・一時ファイル `.tmp` → 成功時に改名・失敗時は削除・世代管理）、`cli/FullBackupWriter`（SXSSF。チケットは100件ずつ取得してページごとに書き出し、履歴は `GET /issues/{id}.json?include=journals,watchers,attachments,relations` をスレッドプールで取得して ID 順に書く。任意の一覧は 403/404 などで警告＋シート省略、チケット取得の失敗だけ致命的。通信エラー・5xx は3回まで再試行）、`cli/BackupSheet`（1,048,575 行で `名前(2)` に続ける・32,767 文字超は `_files/long_text/` に全文）、`cli/BackupNames`（ファイル名・Windows 不可文字・UTF-8 でない Linux では ASCII 名に退避）。`RedmineClient.getJson` / `getJsonBySegments` / `downloadAttachment`（応答をバッファしないリクエストファクトリで `/attachments/download/{id}` をファイルへ。`redmine.proxy` があれば API 呼び出しと同じ `ProxyRequestFactory`（認証付き）を通す）。
 4. 配布: `packaging/dist/backup.bat`（他の bat と同じく /y・REDMINEUPSTER_NO_PROMPT・JENKINS_URL で pause なし、終了コードを返す）、package-windows.ps1 で同梱。設定サンプルにコメントで既定値。設定画面には項目を追加していない（YAML の未知キーとして保持される）。
 
 ### 進捗
 - 2026-11-06: 実装・テスト `BackupTests`（疑似 Redmine の HTTP サーバー: 250件のページング、クローズ済み、CF 列、履歴・ウォッチャー・関連の重複除去、Wiki 403 の警告と省略、長い説明の txt、添付の保存先と API キー、行数上限でのシート分割、致命的エラーで .tmp を残さない、世代管理、--file、設定の重ね合わせ、CLI 解析）。`mvn -B test` 全件成功。jar と Python の疑似 Redmine で通し確認（全シート、添付・Wiki 添付の保存、keep=2 の世代削除）。5万件（履歴なし）約7秒・ヒープ最大約100MB（-Xmx256m）、5万件（履歴あり・4スレッド）約36秒。
+- 2026-11-06: develop（プロキシ・.bak 保存先・仮想親ステータス）を取り込み。添付のダウンロードも `RedmineClientFactory` で設定のプロキシ（認証付き）を通すようにした。
 - 未実施: 実 Redmine・Windows 実機での確認、設定画面への項目追加。
 
 ## 実行計画（設定画面）

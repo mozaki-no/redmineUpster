@@ -69,6 +69,12 @@ public class SyncConfigProperties {
 		 * プロジェクトの sync.fullBackup を項目ごとに重ねたもの（どちらもなければ既定値）。
 		 */
 		private FullBackupConfig fullBackup = new FullBackupConfig();
+
+		/**
+		 * バックアップ（.bak）の保存先フォルダ（絶対パスに解決済み）。
+		 * プロジェクトの sync.backup.dir、なければ設定ファイル全体の backup.dir。null なら元のファイルと同じフォルダ。
+		 */
+		private String backupDir;
 	}
 
 	/**
@@ -118,6 +124,11 @@ public class SyncConfigProperties {
 		 * 同期対象のRedmineプロジェクトID。
 		 */
 		private String projectId;
+
+		/**
+		 * HTTP(S) プロキシ設定（省略・host 空欄なら直接接続）。
+		 */
+		private ProxyConfig proxy;
 	}
 
 	/**
@@ -293,6 +304,12 @@ public class SyncConfigProperties {
 		 * 未設定の場合は「サマリ」。
 		 */
 		private String tracker;
+
+		/**
+		 * 仮想親チケットを作成するときのステータス（名前またはID。名前は statusMap → Redmine のステータス名で解決）。
+		 * 未設定の場合はステータスを送らない（Redmine の既定）。既存の仮想親を更新するときは送りません。
+		 */
+		private String status;
 	}
 
 	/**
