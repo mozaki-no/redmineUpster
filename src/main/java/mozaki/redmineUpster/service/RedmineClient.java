@@ -44,6 +44,7 @@ public class RedmineClient {
 	private final RestTemplate restTemplate;
 	private FileLogger logger;
 	private Long projectNumericId;
+	private String connectionDescription = "直接接続";
 
 	/**
 	 * RedmineClientを構築します。
@@ -556,6 +557,20 @@ public class RedmineClient {
 	 */
 	public String getBaseUrl() {
 		return baseUrl;
+	}
+
+	/**
+	 * @return 接続方法の説明（プロキシ host:port と認証の有無、または直接接続。パスワードは含まない）
+	 */
+	public String getConnectionDescription() {
+		return connectionDescription;
+	}
+
+	/**
+	 * @param connectionDescription 接続方法の説明
+	 */
+	public void setConnectionDescription(String connectionDescription) {
+		this.connectionDescription = connectionDescription;
 	}
 
 	/**

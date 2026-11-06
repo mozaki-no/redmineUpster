@@ -198,6 +198,8 @@ java -jar redmineUpster.jar --sync --file=users.xlsx --targets=users,groups
 
 複数のプロジェクト環境を1ファイルで管理できます。
 
+バックアップ（`.bak`）の保存先は、設定ファイルの最上位の `backup: { dir: "backup" }`（全プロジェクト共通。設定画面で保存したときの `sync-config.yml.bak` もここ）と、プロジェクトごとの `sync.backup.dir`（共通より優先。WBS の書き戻し・`--export` の上書き前の退避に使用）で変えられます。省略・空欄なら従来どおり元のファイルと同じフォルダ。相対パスは設定ファイルのフォルダ基準、`${ENV}` 可、フォルダがなければ作成します。同名の `.bak` は上書きします。ただし1回の実行で別フォルダの同じファイル名（例: `設計/WBS.xlsx` と `開発/WBS.xlsx`）を同期する場合は、`WBS.xlsx.設計-1a2b3c4d.bak` のように元のフォルダ名と識別子を付けて上書きし合わないようにします。
+
 YAML を手で書く代わりに、設定画面でも編集できます（Swing。Spring を起動せずにすぐ開きます）。保存すると YAML のコメントは消え、保存前の内容を `sync-config.yml.bak` に残します（画面にない項目や `${REDMINE_API_KEY}` はそのまま残ります）。配布版では `settings.bat` をダブルクリックします。
 
 ```bash
@@ -212,6 +214,12 @@ projects:
       baseUrl: "https://redmine.example.com"
       apiKey: "${REDMINE_API_KEY}"
       projectId: "project-id"
+      proxy:              # HTTP(S) プロキシ（省略・host 空欄なら直接接続。JVM の -Dhttps.proxyHost などがあればそれに従う）
+        host: "proxy.example.co.jp"
+        port: 8080        # 省略時 8080
+        user: "${PROXY_USER}"          # Basic 認証（省略時は認証なし）
+        password: "${PROXY_PASSWORD}"
+        noProxyHosts: ["localhost", "*.internal.example.co.jp"]   # "a|b" や "a,b" の文字列も可
     sync:
       tracker:            # トラッカー列が空欄の行に使う既定値
         enabled: true

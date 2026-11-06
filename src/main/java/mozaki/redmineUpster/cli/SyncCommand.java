@@ -277,7 +277,7 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("                          The exported file can be used as --file for --sync as it is");
         System.out.println("  --settings              Open the settings window to edit the config file (sync-config.yml).");
         System.out.println("                          Comments in the file are replaced on save; the previous file is");
-        System.out.println("                          kept as sync-config.yml.bak");
+        System.out.println("                          kept as sync-config.yml.bak (in backup.dir if set)");
         System.out.println("  --help                  Show this help");
         System.out.println();
         System.out.println("Several Excel files for one project:");
