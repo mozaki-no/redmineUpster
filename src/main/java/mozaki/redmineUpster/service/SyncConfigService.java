@@ -22,6 +22,7 @@ import mozaki.redmineUpster.config.SyncConfigProperties.ExcelConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ColumnsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.AutoCloseParentsConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.DeletionConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.FullBackupConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.StatusConfig;
@@ -141,8 +142,15 @@ public class SyncConfigService {
 		}
 
 		loadedProjects = new ArrayList<>();
+		Map<String, Object> globalFullBackup = root.get("fullBackup") instanceof Map<?, ?> m
+				? (Map<String, Object>) m : Map.of();
 		for (Map<String, Object> projectMap : projectsList) {
 			ProjectConfig projectConfig = parseProjectConfig(projectMap);
+			Map<String, Object> merged = new HashMap<>(globalFullBackup);
+			if (projectMap.get("sync") instanceof Map<?, ?> sync && sync.get("fullBackup") instanceof Map<?, ?> own) {
+				own.forEach((k, v) -> merged.put(String.valueOf(k), v));
+			}
+			projectConfig.setFullBackup(parseFullBackupConfig(merged));
 			validate(projectConfig);
 			loadedProjects.add(projectConfig);
 		}
@@ -326,6 +334,54 @@ public class SyncConfigService {
 		}
 
 		return config;
+	}
+
+	/**
+	 * 全内容のバックアップ（最上位の fullBackup と sync.fullBackup を重ねたもの）を解析します。
+	 * dir の相対パスは設定ファイルのフォルダ基準。
+	 *
+	 * @param map 設定の Map
+	 * @return 解析した設定
+	 * @throws IllegalArgumentException keep・threads が数値でない場合
+	 */
+	FullBackupConfig parseFullBackupConfig(Map<String, Object> map) {
+		FullBackupConfig config = new FullBackupConfig();
+		String dir = map.get("dir") == null ? "" : expandEnvVars(map.get("dir").toString()).trim();
+		if (!dir.isEmpty()) {
+			Path path = Paths.get(dir);
+			if (!path.isAbsolute() && configBaseDir != null) {
+				path = configBaseDir.resolve(path);
+			}
+			config.setDir(path.normalize().toString());
+		}
+		config.setKeep(parseNonNegativeInt(map.get("keep"), "fullBackup.keep", 0));
+		config.setThreads(Math.max(1, Math.min(16, parseNonNegativeInt(map.get("threads"), "fullBackup.threads", 4))));
+		config.setJournals(parseBoolean(map.get("journals"), true));
+		config.setAttachments(parseBoolean(map.get("attachments"), true));
+		config.setTimeEntries(parseBoolean(map.get("timeEntries"), true));
+		config.setWiki(parseBoolean(map.get("wiki"), true));
+		return config;
+	}
+
+	private int parseNonNegativeInt(Object value, String key, int defaultValue) {
+		String text = value == null ? "" : expandEnvVars(value.toString()).trim();
+		if (text.isEmpty()) {
+			return defaultValue;
+		}
+		try {
+			int number = Integer.parseInt(text);
+			if (number >= 0) {
+				return number;
+			}
+		} catch (NumberFormatException e) {
+			// 下でエラーにする
+		}
+		throw new IllegalArgumentException(key + " は 0 以上の整数で指定してください: " + value);
+	}
+
+	private boolean parseBoolean(Object value, boolean defaultValue) {
+		String text = value == null ? "" : expandEnvVars(value.toString()).trim();
+		return text.isEmpty() ? defaultValue : Boolean.parseBoolean(text);
 	}
 
 	/**

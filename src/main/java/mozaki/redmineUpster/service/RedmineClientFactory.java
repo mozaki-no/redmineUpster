@@ -47,11 +47,14 @@ public class RedmineClientFactory {
 		if (projectConfig.getRedmine() == null) {
 			throw new IllegalArgumentException("Redmine configuration is required in project config");
 		}
-		return new RedmineClient(
+		RedmineClient client = new RedmineClient(
 				projectConfig.getRedmine().getBaseUrl(),
 				projectConfig.getRedmine().getApiKey(),
 				projectConfig.getRedmine().getProjectId(),
 				restTemplate);
+		// 添付ファイルのダウンロードは応答をメモリに溜めない
+		client.setDownloadRequestFactory(new SimpleClientHttpRequestFactory());
+		return client;
 	}
 
 	/**

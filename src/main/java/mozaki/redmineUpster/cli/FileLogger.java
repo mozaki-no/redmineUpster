@@ -124,7 +124,7 @@ public class FileLogger implements AutoCloseable {
      * @param level ログレベル
      * @param message ログメッセージ
      */
-    private void log(String level, String message) {
+    private synchronized void log(String level, String message) {
         String timestamp = LocalDateTime.now().format(TIMESTAMP_FORMATTER);
         String logLine = String.format("[%s] [%s] %s", timestamp, level, message);
 
