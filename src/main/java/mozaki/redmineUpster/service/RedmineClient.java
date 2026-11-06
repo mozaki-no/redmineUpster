@@ -19,6 +19,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import mozaki.redmineUpster.cli.FileLogger;
+import mozaki.redmineUpster.config.ProxyConfig;
 
 /**
  * Redmine APIクライアント。
@@ -27,6 +28,13 @@ import mozaki.redmineUpster.cli.FileLogger;
  * </p>
  */
 public class RedmineClient {
+
+	static {
+		// JDK は HTTPS のトンネル（CONNECT）の Basic 認証可否を、JVM で最初に http/https の接続を開くときに1回だけ読む。
+		// プロキシ設定のないプロジェクトやバックアップのダウンロードが先に接続しても、後のプロキシ認証が 407 にならないよう、
+		// このクライアントで最初の接続を開くより前に必ず許可しておく。
+		ProxyConfig.allowBasicProxyAuthentication();
+	}
 
 	private static final String ISSUES_ENDPOINT = "/issues.json";
 	private static final String API_KEY_HEADER = "X-Redmine-API-Key";

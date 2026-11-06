@@ -60,7 +60,9 @@ public class ProxyConfig {
 	 * プロキシの Basic 認証を許可します（JDK は既定で HTTPS のトンネル（CONNECT）の Basic 認証を禁止している）。
 	 * <p>
 	 * HttpURLConnection はこの値をクラスの初期化時（JVM で最初に http/https の接続を開くとき）に1回だけ読むため、
-	 * 最初の接続より前に呼ぶ必要があります（設定ファイルの読み込み時と RestTemplate の作成時に呼ぶ）。
+	 * 最初の接続（プロキシを使わない接続を含む）より前に呼ぶ必要があります。プロキシ設定の有無にかかわらず、
+	 * 起動直後（main）・RedmineClient のクラス初期化時・RedmineClientFactory の作成時に呼びます
+	 * （設定ファイルの読み込み時などの呼び出しは念のため）。
 	 * 起動時に {@code -D} で指定済みならその指定に従います。
 	 * </p>
 	 */

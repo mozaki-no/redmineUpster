@@ -35,13 +35,12 @@ public class RedmineClientFactory {
 	 * @param defaultProperties デフォルトのRedmine設定
 	 */
 	public RedmineClientFactory(RestTemplateBuilder builder, RedmineProperties defaultProperties) {
+		// JVM で最初の HTTP 接続（プロキシなしの接続を含む）より前に、プロキシの Basic 認証を許可する
+		ProxyConfig.allowBasicProxyAuthentication();
 		this.builder = builder;
 		// プロキシ設定なし: 従来どおり（JVM の -Dhttps.proxyHost などがあればそれに従う）
 		this.directRestTemplate = build(new SimpleClientHttpRequestFactory());
 		this.defaultProperties = defaultProperties;
-		if (defaultProperties.getProxy() != null && defaultProperties.getProxy().hasCredentials()) {
-			ProxyConfig.allowBasicProxyAuthentication();
-		}
 	}
 
 	private RestTemplate build(ClientHttpRequestFactory factory) {
