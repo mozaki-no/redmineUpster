@@ -229,6 +229,26 @@ class SettingsDocumentTests {
     }
 
     @Test
+    @DisplayName("sync.virtualParents.status（仮想親を作成するときのステータス）を保存して読み込め、空欄で削除される")
+    void virtualParentStatus_roundTrip() throws Exception {
+        Path path = write(CONFIG);
+        SettingsDocument doc = SettingsDocument.load(path);
+        Map<String, Object> project = doc.projects().get(0);
+        SettingsDocument.setString(project, "sync.virtualParents.status", "新規");
+        assertThat(doc.validate()).isEmpty();
+        doc.save();
+        String saved = Files.readString(path, StandardCharsets.UTF_8);
+        assertThat(saved).contains("status: \"新規\"");
+        assertThat(loadWithApp(path).get(0).getSync().getVirtualParents().getStatus()).isEqualTo("新規");
+        assertThat(SettingsDocument.getString(SettingsDocument.load(path).projects().get(0),
+                "sync.virtualParents.status")).isEqualTo("新規");
+
+        SettingsDocument.setString(project, "sync.virtualParents.status", "");
+        doc.save();
+        assertThat(loadWithApp(path).get(0).getSync().getVirtualParents().getStatus()).isNull();
+    }
+
+    @Test
     @DisplayName("プロジェクト名の必須・重複、既定はちょうど1つを検証する")
     void validate_projects() throws Exception {
         SettingsDocument doc = SettingsDocument.load(write(CONFIG));

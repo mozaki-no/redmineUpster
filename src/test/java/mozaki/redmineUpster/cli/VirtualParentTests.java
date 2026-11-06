@@ -372,12 +372,14 @@ class VirtualParentTests {
 				"      virtualParents:",
 				"        enabled: true",
 				"        trackerId: サマリ",
+				"        status: 新規",
 				""));
 		SyncConfigService service = new SyncConfigService(new SyncConfigProperties());
 		service.loadConfig(file.toString());
 		ProjectConfig project = service.getDefaultProject().orElseThrow();
 		assertThat(DiffCalculator.isVirtualParentsEnabled(project)).isTrue();
 		assertThat(project.getSync().getVirtualParents().getTracker()).isEqualTo("サマリ");
+		assertThat(project.getSync().getVirtualParents().getStatus()).isEqualTo("新規");
 	}
 
 	@Test

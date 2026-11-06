@@ -182,7 +182,9 @@ public class SyncExecutor {
                         planned.add(planned(item, placeholder, issuePayload, rowIssueIds, placeholderIds,
                                 rootIssueId));
                         logger.info("DRY_RUN CREATE " + item.label() + " subject=" + item.subject()
-                                + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths, rootIssueId));
+                                + " tracker_id=" + item.trackerId() + parentLabel(item, virtualPaths, rootIssueId)
+                                + (item.virtual() && issuePayload.get("status_id") != null
+                                        ? " status_id=" + issuePayload.get("status_id") : ""));
                         outcome(outcomes, item, RowOutcome.Status.CREATED, null);
                         successCount++;
                         continue;
@@ -454,8 +456,15 @@ public class SyncExecutor {
             issue.put("tracker_id", item.trackerId());
         }
 
+        // 仮想親は作成時だけ sync.virtualParents.status（解決済みのID）を送る。未設定なら Redmine の既定。
+        // 既存の仮想親の更新ではステータスを送らない（自動完了・手動の変更を保つ）
+        if (item.virtual() && ACTION_CREATE.equalsIgnoreCase(item.action()) && item.status() != null
+                && isNumeric(item.status().trim())) {
+            issue.put("status_id", Long.parseLong(item.status().trim()));
+        }
+
         StatusConfig statusConfig = projectConfig.getSync() != null ? projectConfig.getSync().getStatus() : null;
-        // 仮想親はステータスを送らない（作成時は Redmine の既定、以後は変更しない）
+        // 仮想親はここではステータスを送らない（上の作成時の指定のみ）
         if (statusConfig != null && statusConfig.isEnabled() && !item.virtual()) {
             String statusValue = resolveStatus(item, payload, statusConfig);
             statusValue = mapStatusValue(statusValue, statusConfig);
