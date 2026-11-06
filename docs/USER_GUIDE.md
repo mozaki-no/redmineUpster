@@ -178,6 +178,7 @@ redmineUpster.exe --sync --config=sync-config.yml --file=WBS.xlsx
 - `--` で始まる引数は exe にそのまま渡します。`=` を含むので引用符で囲んでください: `run.bat /y "--project=本番" "--root-issue=123" "C:\wbs\WBS.xlsx"`
 - ファイルを渡さなければ `sync-config.yml` の `files:` のファイルを使います（自動実行ではこの形がおすすめ）。
 - 実行中に WBS を Excel で開いていると書き戻しに失敗します（終了コード 1）。
+- Jenkins 上では画面（コンソール）出力を UTF-8 で出します。それでも文字化けする場合（Jenkins を Java 17 以前で動かしている等）は、ジョブの環境変数 `REDMINEUPSTER_CONSOLE_ENCODING=MS932` を設定してください（逆に Jenkins 以外で UTF-8 にしたい場合も同じ変数に `UTF-8` を設定）。ログファイル（`logs` フォルダ）は常に UTF-8 です。
 
 Jenkins（Windows エージェント）の例:
 
@@ -384,3 +385,4 @@ Redmine のプロジェクトにあって **WBS に `チケットID` が書か�
 | `メンバーのログインIDが見つかりません` | 「グループメンバー」シートの `ログインID`（または「グループ」シートの `メンバー`）に Redmine にも「ユーザー」シートにもないログインIDがある |
 | `新規作成には 姓・メールアドレス が必要です` | 「ユーザー」シートで `ID` が空欄の行（新規作成）に必須項目がない |
 | 設定ファイルの日本語でエラー・文字化け | `sync-config.yml` を UTF-8 で保存し直す |
+| Jenkins のコンソール出力が文字化けする | ジョブに環境変数 `REDMINEUPSTER_CONSOLE_ENCODING`（UTF-8 か MS932）を設定する |
