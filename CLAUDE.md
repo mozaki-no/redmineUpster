@@ -36,7 +36,25 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 - 2026-10-29: 「ユーザー」シートに設定の列を追加（`UserSettingColumns`）。ユーザーの属性（メール通知・通知するプロジェクト・言語・認証方式・パスワード変更を要求）と個人設定 pref（メール非公開・タイムゾーン・コメントの表示順・未保存で移動時に警告・自分の変更は通知しない・高優先度チケットを通知・自動ウォッチ・テキストエリアのフォント・最近使ったプロジェクトの表示数・履歴の既定のタブ・コードハイライトの言語・既定のチケット/プロジェクトクエリ）、パスワード再発行。空欄は変更しない、不正な値は書き込む前に検証エラー、作成・更新とも `pref` と `send_information` は "user" の外で送る（従来 send_information を user 内に送っていた不具合も修正）。API が現在値を返さない項目は値があれば毎回送る（返す場合は比較）。--export は列見出しを出力し、返す値だけ書く。テスト追加で `mvn -B test` 全件成功。
 - 2026-10-29: 「ユーザーの標準カラムが空」の調査: 実際の Redmine 5.x/6.x 形式の `/users.json` 応答を `RedmineClient.listUsers` → `WorkbookExporter` に通すテストで、基本の列（ID・ログインID・姓・名・メールアドレス・管理者・状態）と CF は埋まることを確認（列のずれなし）。空なのは設定の列（メール通知・言語・認証方式・個人設定 pref）で、Redmine の users/index・show.api.rsb が返さないため（書き込み専用）。見出しのセルにコメントで明記し、参照用の列 `UserInfoColumns`（作成日・最終ログイン・パスワード変更日・2段階認証。一覧の応答にあるので個別GET不要。取り込みでは無視）を追加。ユーザー・グループだけのメンテ用に `packaging/dist/export-users.bat`（`--export --targets=users,groups` → users.xlsx）・`users-dry-run.bat`・`users.bat`（`--sync --targets=users,groups`、ドロップなしは users.xlsx）を追加し zip に同梱。設定 `sync.targets`（文字列またはリスト。CLI `--targets` が優先、--sync/--export 両方）と設定画面「ファイル」タブの項目・検証を追加。
 - 2026-11-06: 仮想親を作成するときのステータスを設定できるようにした（むさしさんの依頼）。`sync.virtualParents.status`（名前またはID。statusMap → Redmine のステータス名で解決、Redmine にない値は書き込む前に検証エラー、省略時は従来どおり送らない）は作成時だけ送り、既存の仮想親の更新では送らない（dry-run の表示・自動完了の判定にも反映）。設定画面「親チケット」タブに項目を追加、テストを追加。
+- 2026-11-06: Jenkins 実行時のコンソール文字化けを修正（`ConsoleEncoding`。`--console-encoding` ＞ 環境変数 `REDMINEUPSTER_CONSOLE_ENCODING` ＞ JENKINS_URL があれば UTF-8 ＞ 従来どおり。Spring のコンソールログも同じ文字コード）。
 - 未実施: Windows ジョブの実行（GitHub Actions 上でのみ確認可能）、Windows 実機での exe・bat の動作確認、実Redmineでの確認。
+
+## 実行計画（プロキシ対応）
+背景: Windows 配布版（Java同梱 exe）が社内の HTTPS の Redmine に、Basic 認証が必要な社内プロキシ経由で接続できない（直接接続でタイムアウト、-Dhttps.proxyHost では 407）。
+1. 設定: `redmine.proxy`（host・port（既定 8080）・user・password・noProxyHosts（リストまたは `|`/カンマ区切り、`*` 可））。`${ENV}` 展開。host 空欄なら従来どおり（JVM の -Dhttps.proxyHost などに従う）。既定の RedmineProperties にも `redmine.proxy.*`。
+2. 接続: プロキシ設定ごとに RestTemplate（`ProxyRequestFactory`、Buffering は維持）。接続ごとの Authenticator（設定のプロキシ host:port の PROXY 要求にだけ返す）。user があれば `jdk.http.auth.tunneling/proxying.disabledSchemes` を空に（HttpURLConnection のクラス初期化時に1回だけ読むため、設定読み込み時＝最初の接続より前に設定。-D 指定があればそれに従う）。
+3. 設定画面（接続タブ）・検証、ログ `Proxy: host:port（認証あり／なし）` または直接接続、テスト、文書。
+
+### 進捗
+- 2026-11-04: `ProxyConfig`・`ProxyRequestFactory`・設定読み込み・設定画面・ログを追加。http の Redmine は 407 で再送できない本文付きリクエストのため Proxy-Authorization を最初から付ける（https は CONNECT で認証し、ヘッダーはトンネル内に送らない）。テスト `ProxyConfigTests`・`ProxyConnectionTests`（ローカルの Basic 認証必須プロキシで http の GET/POST・https の CONNECT・407・noProxyHosts）・`SettingsDocumentTests` 追加。JAVA_TOOL_OPTIONS なしの JVM で jar を実行し、CONNECT が 407 → 認証付きで再送されトンネル確立することを確認。未実施: Windows 実機・実プロキシでの確認（NTLM/Negotiate も提示するプロキシでは JDK がそちらを優先する可能性）。
+
+## 実行計画（バックアップの保存先）
+背景: .bak（WBS の書き戻し・--export の上書き・設定画面の保存）を元のファイルの隣以外にも置けるようにする。
+1. 設定: 最上位 `backup.dir`（全体共通。設定画面で保存する sync-config.yml.bak にも使う）と `sync.backup.dir`（プロジェクトごと・優先）。相対パスは設定ファイルのフォルダ基準、`${ENV}` 可、空欄は従来どおり隣。
+2. `util/BackupLocation`: フォルダがなければ作成、同名は上書き。1回の実行で別フォルダの同じファイル名があれば `<名前>.<フォルダ名>-<CRC32>.bak`。CLI オプションは追加しない。
+
+### 進捗
+- 2026-11-04: `BackupLocation`・設定の読み込み（`ProjectConfig.backupDir` に解決済みの絶対パス）・TicketIdWriter／SyncRunner（ユーザー・グループ・チケットの書き戻し）・ExportRunner・SettingsDocument（保存・検証）・設定画面（ファイルタブ、フォルダ選択）・文書。テスト `BackupLocationTests`・`MultiFileSyncTests` に追加。
 
 ## 実行計画（設定画面）
 背景: むさしさんの指示。sync-config.yml を手で書くのがつらいため、設定を編集する画面（Swing、配布版の jlink ランタイムに java.desktop あり）を用意する。

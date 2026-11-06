@@ -336,6 +336,32 @@ public class SettingsWindow extends JFrame {
 
         form.text("プロジェクト識別子", "redmine.projectId", "例: my-project",
                 "同期先プロジェクトの識別子（プロジェクトの URL の /projects/xxxx の xxxx）");
+
+        form.note("プロキシ（社内のプロキシを通して Redmine に接続する場合だけ。ホストが空欄なら直接接続）");
+        form.text("プロキシのホスト", "redmine.proxy.host", "例: proxy.example.co.jp",
+                "プロキシサーバーのホスト名（空欄なら使わない）");
+        form.number("プロキシのポート", "redmine.proxy.port", "既定: 8080", "プロキシサーバーのポート（1〜65535）");
+        form.text("プロキシのユーザー名", "redmine.proxy.user", "（認証が必要な場合だけ）",
+                "プロキシの認証（Basic 認証）のユーザー名。環境変数を使う場合は ${PROXY_USER} のように書きます");
+        JPasswordField proxyPassword = new JPasswordField(30);
+        JCheckBox showProxy = new JCheckBox("表示");
+        char proxyEcho = proxyPassword.getEchoChar();
+        showProxy.addActionListener(e -> proxyPassword.setEchoChar(showProxy.isSelected() ? (char) 0 : proxyEcho));
+        String proxyTip = "プロキシの認証のパスワード。ファイルに直接書かず、環境変数 PROXY_PASSWORD に入れて "
+                + "${PROXY_PASSWORD} と書くのがおすすめです";
+        JPanel proxyPanel = new JPanel(new BorderLayout(4, 0));
+        proxyPanel.add(proxyPassword, BorderLayout.CENTER);
+        proxyPanel.add(showProxy, BorderLayout.EAST);
+        form.row("プロキシのパスワード", proxyPanel, proxyTip);
+        bind(p -> proxyPassword.setText(nz(SettingsDocument.getString(p, "redmine.proxy.password"))),
+                p -> SettingsDocument.setStringExact(p, "redmine.proxy.password",
+                        new String(proxyPassword.getPassword())));
+        HintTextField noProxy = new HintTextField("例: localhost|*.example.co.jp");
+        form.row("プロキシを通さないホスト", noProxy,
+                "プロキシを通さずに直接接続するホスト（| またはカンマ区切り。*.example.co.jp のようなワイルドカード可）");
+        bind(p -> noProxy.setText(SettingsDocument.getNoProxyHosts(p)),
+                p -> SettingsDocument.setNoProxyHosts(p, noProxy.getText()));
+        form.note("パスワードは環境変数に入れて ${PROXY_PASSWORD} と書くのがおすすめです");
         return form.panel();
     }
 
@@ -382,7 +408,37 @@ public class SettingsWindow extends JFrame {
         form.text("同期・出力する対象", "sync.targets", "（空欄＝ファイルにある表すべて。例: users,groups）",
                 "tickets（チケット）, users（ユーザー）, groups（グループ）のカンマ区切り。"
                         + "users,groups にするとユーザー・グループだけをメンテします（--targets が優先）");
+
+        form.note("バックアップ（.bak）の保存先。空欄なら元のファイルと同じフォルダ。相対パスは設定ファイルのフォルダが基準。");
+        HintTextField commonBackup = folderField(form, "バックアップの保存先（共通）",
+                "（空欄＝元のファイルと同じフォルダ。例: backup）",
+                "すべてのプロジェクトの WBS・出力ファイルと、この設定ファイル自身の .bak の保存先（backup.dir）。"
+                        + "フォルダがなければ作成します。${...} 可");
+        bind(p -> commonBackup.setText(document.getBackupDir()), p -> document.setBackupDir(commonBackup.getText()));
+        HintTextField projectBackup = folderField(form, "バックアップの保存先（このプロジェクト）",
+                "（空欄＝共通の設定）",
+                "このプロジェクトの WBS・出力ファイルの .bak の保存先（sync.backup.dir）。共通の設定より優先します");
+        bind(p -> projectBackup.setText(nz(SettingsDocument.getString(p, "sync.backup.dir"))),
+                p -> SettingsDocument.setString(p, "sync.backup.dir", projectBackup.getText()));
         return form.panel();
+    }
+
+    /** フォルダを入力する欄（「参照...」でフォルダを選ぶ） */
+    private HintTextField folderField(Form form, String label, String hint, String tooltip) {
+        HintTextField field = new HintTextField(hint);
+        JButton browse = new JButton("参照...");
+        browse.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser(document.getBaseDir().toFile());
+            chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+            if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+                field.setText(document.toConfigPath(chooser.getSelectedFile().toPath()));
+            }
+        });
+        JPanel panel = new JPanel(new BorderLayout(4, 0));
+        panel.add(field, BorderLayout.CENTER);
+        panel.add(browse, BorderLayout.EAST);
+        form.row(label, panel, tooltip);
+        return field;
     }
 
     private JComponent columnsTab() {

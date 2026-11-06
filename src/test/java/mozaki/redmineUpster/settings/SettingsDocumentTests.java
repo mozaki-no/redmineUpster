@@ -365,4 +365,85 @@ class SettingsDocumentTests {
                     .isEqualTo(mozaki.redmineUpster.cli.TicketColumns.DEFAULTS);
         }
     }
+
+    @Test
+    @DisplayName("プロキシ設定: 既存の書き方（リスト・${...}）を保ち、画面からの変更がアプリの読み込みに反映される")
+    void proxy_roundTrip() throws Exception {
+        Path path = write("""
+                projects:
+                  - name: "本番"
+                    default: true
+                    redmine:
+                      proxy:
+                        password: "${PROXY_PASSWORD_UNSET_FOR_TEST:pw}"
+                        noProxyHosts: ["localhost", "*.example.co.jp"]
+                        host: "proxy.example.co.jp"
+                        unknownProxyKey: "残す"
+                      baseUrl: "https://redmine.example.co.jp"
+                      apiKey: "${REDMINE_API_KEY}"
+                      projectId: "p"
+                """);
+        SettingsDocument doc = SettingsDocument.load(path);
+        Map<String, Object> project = doc.projects().get(0);
+        assertThat(SettingsDocument.getNoProxyHosts(project)).isEqualTo("localhost|*.example.co.jp");
+        doc.save();
+        String saved = Files.readString(path, StandardCharsets.UTF_8);
+        assertThat(saved).contains("${PROXY_PASSWORD_UNSET_FOR_TEST:pw}").contains("unknownProxyKey");
+        // キーの順: baseUrl, apiKey, projectId, proxy（host, port, user, password, noProxyHosts）
+        assertThat(saved.indexOf("projectId")).isLessThan(saved.indexOf("proxy:"));
+        assertThat(saved.indexOf("host:")).isLessThan(saved.indexOf("password:"));
+        assertThat(saved.indexOf("password:")).isLessThan(saved.indexOf("noProxyHosts:"));
+        assertThat(saved.indexOf("noProxyHosts:")).isLessThan(saved.indexOf("unknownProxyKey"));
+        mozaki.redmineUpster.config.ProxyConfig proxy = loadWithApp(path).get(0).getRedmine().getProxy();
+        assertThat(proxy.getHost()).isEqualTo("proxy.example.co.jp");
+        assertThat(proxy.getPassword()).isEqualTo("pw");
+        assertThat(proxy.getNoProxyHosts()).containsExactly("localhost", "*.example.co.jp");
+
+        // 画面からの変更（ポート・ユーザー・パスワードは前後の空白も保持・除外ホストは | 区切り）
+        SettingsDocument edit = SettingsDocument.load(path);
+        Map<String, Object> p = edit.projects().get(0);
+        SettingsDocument.setNumber(p, "redmine.proxy.port", "3128");
+        SettingsDocument.setString(p, "redmine.proxy.user", " taro ");
+        SettingsDocument.setStringExact(p, "redmine.proxy.password", " sec ret ");
+        SettingsDocument.setNoProxyHosts(p, "a.example | b.example");
+        assertThat(edit.validate()).isEmpty();
+        edit.save();
+        proxy = loadWithApp(path).get(0).getRedmine().getProxy();
+        assertThat(proxy.getPort()).isEqualTo(3128);
+        assertThat(proxy.getUser()).isEqualTo("taro");
+        assertThat(proxy.getPassword()).isEqualTo(" sec ret ");
+        assertThat(proxy.getNoProxyHosts()).containsExactly("a.example", "b.example");
+
+        // ホストを空欄にして他も消すとプロキシのキーは unknownProxyKey だけ残る
+        SettingsDocument clear = SettingsDocument.load(path);
+        Map<String, Object> c = clear.projects().get(0);
+        for (String key : List.of("host", "port", "user")) {
+            SettingsDocument.setString(c, "redmine.proxy." + key, "");
+        }
+        SettingsDocument.setStringExact(c, "redmine.proxy.password", "");
+        SettingsDocument.setNoProxyHosts(c, "");
+        clear.save();
+        proxy = loadWithApp(path).get(0).getRedmine().getProxy();
+        assertThat(proxy.isEnabled()).isFalse();
+    }
+
+    @Test
+    @DisplayName("プロキシ設定の検証: ポートは 1〜65535、ポート・ユーザー・パスワードにはホストが必要")
+    void proxy_validation() throws Exception {
+        Path path = write(CONFIG);
+        SettingsDocument doc = SettingsDocument.load(path);
+        Map<String, Object> p = doc.projects().get(0);
+        SettingsDocument.setNumber(p, "redmine.proxy.port", "70000");
+        assertThat(doc.validate()).anyMatch(e -> e.contains("1〜65535")).anyMatch(e -> e.contains("ホスト"));
+        SettingsDocument.setString(p, "redmine.proxy.host", "proxy");
+        SettingsDocument.setNumber(p, "redmine.proxy.port", "abc");
+        assertThat(doc.validate()).anyMatch(e -> e.contains("1〜65535"));
+        SettingsDocument.setNumber(p, "redmine.proxy.port", "${PROXY_PORT}");
+        assertThat(doc.validate()).isEmpty();
+        SettingsDocument.setStringExact(p, "redmine.proxy.password", "x");
+        assertThat(doc.validate()).anyMatch(e -> e.contains("ユーザー名"));
+        SettingsDocument.setString(p, "redmine.proxy.user", "u");
+        SettingsDocument.setNumber(p, "redmine.proxy.port", "8080");
+        assertThat(doc.validate()).isEmpty();
+    }
 }

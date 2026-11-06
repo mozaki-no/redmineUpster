@@ -144,6 +144,33 @@ class MultiFileSyncTests {
 	}
 
 	@Test
+	@DisplayName("sync.backup.dir: 書き戻しの .bak を設定ファイル基準のフォルダに作り、別フォルダの同名ファイルは上書きし合わない")
+	void backupDir_sameNameFilesDoNotCollide() throws IOException {
+		Files.createDirectories(tempDir.resolve("x"));
+		Files.createDirectories(tempDir.resolve("y"));
+		csv("x/wbs.csv", "1,サマリ,A,", ",タスク,A,a-task");
+		csv("y/wbs.csv", "2,サマリ,B,", ",タスク,B,b-task");
+		String originalX = Files.readString(tempDir.resolve("x/wbs.csv"));
+		String originalY = Files.readString(tempDir.resolve("y/wbs.csv"));
+		Path config = config("x/wbs.csv", "y/wbs.csv");
+		Files.writeString(config, Files.readString(config).replace("    sync:\n", "    sync:\n      backup: { dir: bak }\n"),
+				StandardCharsets.UTF_8);
+
+		assertThat(run(config, List.of(), false)).isZero();
+
+		Path bak = tempDir.resolve("bak");
+		assertThat(tempDir.resolve("x/wbs.csv.bak")).doesNotExist();
+		assertThat(tempDir.resolve("y/wbs.csv.bak")).doesNotExist();
+		try (var stream = Files.list(bak)) {
+			List<Path> backups = stream.sorted().toList();
+			assertThat(backups).hasSize(2);
+			assertThat(backups.get(0).getFileName().toString()).startsWith("wbs.csv.x-");
+			assertThat(Files.readString(backups.get(0))).isEqualTo(originalX);
+			assertThat(Files.readString(backups.get(1))).isEqualTo(originalY);
+		}
+	}
+
+	@Test
 	@DisplayName("--file は複数指定でき、指定した順に値を返す（空欄は無視）")
 	void getArgValues_multipleFiles() {
 		String[] args = { "--sync", "--file=a.xlsx", "--dry-run", "--file=b.xlsx", "--file=", "--files=x" };

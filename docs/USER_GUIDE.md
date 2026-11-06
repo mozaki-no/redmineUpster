@@ -44,6 +44,44 @@ powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1
 
 トラッカー名や列名が違う場合は `trackerMap` / `columns` を合わせてください。`columns:` には標準フィールドの取込列名（見出しの名前）がすべて既定値で書いてあります（下の「取込列名」）。
 
+### プロキシを通して接続する場合
+
+社内のプロキシを通さないと Redmine に届かない場合（タイムアウトする場合）は、`redmine:` の下に `proxy:` を書きます（設定画面では「接続」タブのプロキシの欄）。`host` がなければ直接接続です。
+
+```yaml
+    redmine:
+      baseUrl: "https://redmine.example.co.jp"
+      apiKey: "${REDMINE_API_KEY}"
+      projectId: "my-project"
+      proxy:
+        host: "proxy.example.co.jp"
+        port: 8080                      # 省略時 8080
+        user: "${PROXY_USER}"           # 認証が必要な場合だけ
+        password: "${PROXY_PASSWORD}"   # 環境変数で渡す（おすすめ）
+        noProxyHosts: "localhost|*.internal.example.co.jp"   # プロキシを通さないホスト（| かカンマ区切り。* 可）
+```
+
+- パスワードはファイルに直接書かず、コマンドプロンプトで `setx PROXY_USER yamada` と `setx PROXY_PASSWORD ...` を1回実行して環境変数に入れるのがおすすめです（新しく開いたウィンドウから有効）。ログにパスワードは出ません。
+- ログの先頭に `Proxy: proxy.example.co.jp:8080（認証あり）` のように、使ったプロキシ（または `直接接続`）が出ます。
+- プロキシのホスト名・ポートは、ブラウザの設定（Windows の「設定」→「ネットワークとインターネット」→「プロキシ」）や社内の案内で確認します。
+
+### バックアップ（.bak）の保存先
+
+WBS に チケットID などを書き込む前の内容は `ファイル名.bak` として残ります（既定は元のファイルと同じフォルダ）。別のフォルダにまとめる場合は設定します（設定画面では「ファイル」タブの「バックアップの保存先」、「参照...」でフォルダを選べます）。
+
+```yaml
+backup:            # 全プロジェクト共通（設定画面で保存したときの sync-config.yml.bak もここ）
+  dir: "backup"    # 相対パスは sync-config.yml のフォルダ基準。フォルダがなければ作成
+projects:
+  - name: "本番"
+    sync:
+      backup:
+        dir: "D:/bak/本番"   # このプロジェクトだけ変える場合（共通より優先）
+```
+
+- 同じ名前の `.bak` は上書きされます（従来どおり、直前の1回分）。
+- 1回の実行で、別のフォルダにある同じ名前のファイル（例: `設計\WBS.xlsx` と `開発\WBS.xlsx`）を同期する場合は、`WBS.xlsx.設計-1a2b3c4d.bak` のように元のフォルダ名を付けて区別します。
+
 ### 設定画面で編集する（settings.bat）
 
 `settings.bat` をダブルクリックすると、同じフォルダの `sync-config.yml` を編集する画面が開きます（メモ帳で YAML を書く必要はありません）。
@@ -55,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File packaging\package-windows.ps1
 - 「ファイル」タブで選んだ WBS ファイルが設定ファイルと同じフォルダ（またはその下）にあれば、相対パスで保存します。
 - 「保存」で入力内容を確認し（プロジェクト名・URL・識別子は必須、番号は数値）、問題があれば内容を表示します。
 
-**注意**: 画面で保存すると、`sync-config.yml` の中のコメント（`#` の行）は消えます。保存する前の内容は同じフォルダの `sync-config.yml.bak` に残ります。画面にない項目（`customFieldMap` など）はそのまま残ります。
+**注意**: 画面で保存すると、`sync-config.yml` の中のコメント（`#` の行）は消えます。保存する前の内容は同じフォルダ（下の「バックアップの保存先」を設定した場合はそのフォルダ）の `sync-config.yml.bak` に残ります。画面にない項目（`customFieldMap` など）はそのまま残ります。
 
 ## 3. WBS ファイルの列
 
@@ -141,6 +179,7 @@ redmineUpster.exe --sync --config=sync-config.yml --file=WBS.xlsx
 - `--` で始まる引数は exe にそのまま渡します。`=` を含むので引用符で囲んでください: `run.bat /y "--project=本番" "--root-issue=123" "C:\wbs\WBS.xlsx"`
 - ファイルを渡さなければ `sync-config.yml` の `files:` のファイルを使います（自動実行ではこの形がおすすめ）。
 - 実行中に WBS を Excel で開いていると書き戻しに失敗します（終了コード 1）。
+- Jenkins 上では画面（コンソール）出力を UTF-8 で出します。それでも文字化けする場合（Jenkins を Java 17 以前で動かしている等）は、ジョブの環境変数 `REDMINEUPSTER_CONSOLE_ENCODING=MS932` を設定してください（逆に Jenkins 以外で UTF-8 にしたい場合も同じ変数に `UTF-8` を設定）。ログファイル（`logs` フォルダ）は常に UTF-8 です。
 
 Jenkins（Windows エージェント）の例:
 
@@ -333,6 +372,8 @@ Redmine のプロジェクトにあって **WBS に `チケットID` が書か�
 | `403 Forbidden` / `404 Not Found`（開始直後） | `projectId` が違う、またはそのプロジェクトの権限がない |
 | `PKIX path building failed` | Redmine の証明書を発行した CA が信頼されていない。Windows 版は Windows の「信頼されたルート証明機関」の CA も使うので、社内CAが Windows に登録されていれば接続できる（ブラウザで開けるのにこのエラーが出る場合は開発担当へ） |
 | `Connection refused` / `UnknownHost` | `baseUrl` の誤り、社内ネットワーク・VPN に未接続 |
+| `connect timed out` / `Read timed out`（開始直後） | プロキシを通さないと届かないネットワーク。`proxy:` の `host`・`port` を設定する（2. の「プロキシを通して接続する場合」） |
+| `Unable to tunnel through proxy. Proxy returns "HTTP/1.1 407 …"` / `407 Proxy Authentication Required` | プロキシの認証に失敗した。`proxy:` の `user`・`password`（環境変数 `PROXY_USER`・`PROXY_PASSWORD`。`setx` の後はウィンドウを開き直す）を確認する。パスワードを変えた直後なら新しいパスワードにする |
 | `入力ファイルの検証エラー` | ログに行番号と理由（親の行がない、大分類が空欄、階層の重複、チケットIDの重複、トラッカー名の誤り）が出る。WBS を直して再実行（Redmine は変更されていない）。親の行がない場合は仮想親（3.）も使える |
 | `仮想親チケットのトラッカー「…」が見つかりません` | `virtualParents:` の `trackerId:` を Redmine にあるトラッカー名か番号にする |
 | `sync.virtualParents.status「…」が Redmine のステータスにありません` | `virtualParents:` の `status:` を Redmine にあるステータス名か番号にする（空欄にすると Redmine の既定） |
@@ -346,3 +387,4 @@ Redmine のプロジェクトにあって **WBS に `チケットID` が書か�
 | `メンバーのログインIDが見つかりません` | 「グループメンバー」シートの `ログインID`（または「グループ」シートの `メンバー`）に Redmine にも「ユーザー」シートにもないログインIDがある |
 | `新規作成には 姓・メールアドレス が必要です` | 「ユーザー」シートで `ID` が空欄の行（新規作成）に必須項目がない |
 | 設定ファイルの日本語でエラー・文字化け | `sync-config.yml` を UTF-8 で保存し直す |
+| Jenkins のコンソール出力が文字化けする | ジョブに環境変数 `REDMINEUPSTER_CONSOLE_ENCODING`（UTF-8 か MS932）を設定する |

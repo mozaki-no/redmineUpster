@@ -53,6 +53,7 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --export}: 同期の代わりに、プロジェクトのチケットとユーザー・グループを {@code --file} の .xlsx に出力</li>
  *   <li>{@code --settings}: 設定ファイル（{@code --config}、省略時は同期と同じ探し方）を編集する設定画面を開く。
  *       Spring を起動せずに {@code RedmineUpsterApplication#main} で処理する（配布版の settings.bat）</li>
+ *   <li>{@code --console-encoding}: コンソール出力の文字コード（Jenkins では既定 UTF-8）</li>
  *   <li>{@code --help}: 使い方を表示</li>
  *   <li>{@code --relink-parent} / {@code --reset-sync}: 廃止（指定しても無視し、警告を出す）</li>
  * </ul>
@@ -277,7 +278,9 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("                          The exported file can be used as --file for --sync as it is");
         System.out.println("  --settings              Open the settings window to edit the config file (sync-config.yml).");
         System.out.println("                          Comments in the file are replaced on save; the previous file is");
-        System.out.println("                          kept as sync-config.yml.bak");
+        System.out.println("                          kept as sync-config.yml.bak (in backup.dir if set)");
+        System.out.println("  --console-encoding=<cs> Console output encoding (default: UTF-8 under Jenkins, else the system's).");
+        System.out.println("                          Env: REDMINEUPSTER_CONSOLE_ENCODING");
         System.out.println("  --help                  Show this help");
         System.out.println();
         System.out.println("Several Excel files for one project:");
