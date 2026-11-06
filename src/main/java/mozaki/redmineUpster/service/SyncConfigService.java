@@ -356,6 +356,10 @@ public class SyncConfigService {
 			if (tracker != null && !expandEnvVars(tracker.toString()).isBlank()) {
 				virtualParents.setTracker(expandEnvVars(tracker.toString()).trim());
 			}
+			Object virtualStatus = virtualParentsMap.get("status");
+			if (virtualStatus != null && !expandEnvVars(virtualStatus.toString()).isBlank()) {
+				virtualParents.setStatus(expandEnvVars(virtualStatus.toString()).trim());
+			}
 			config.setVirtualParents(virtualParents);
 		}
 

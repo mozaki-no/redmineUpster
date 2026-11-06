@@ -26,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import mozaki.redmineUpster.config.SyncConfigProperties;
@@ -504,5 +505,99 @@ class AutoCloseParentsTests {
 		assertThat(autoClose.isIgnoreNotInExcel()).isTrue();
 		assertThat(new AutoCloseParentsConfig().isInProgress()).isTrue();
 		assertThat(new AutoCloseParentsConfig().isIgnoreNotInExcel()).isFalse();
+	}
+
+	// ---------------------------------------------------------------- 仮想親を作成するときのステータス
+
+	private int runForce(Path config) {
+		SyncConfigService configService = new SyncConfigService(new SyncConfigProperties());
+		SyncRunner runner = new SyncRunner(configService, new SpreadsheetParser(), new DiffCalculator(),
+				new SyncExecutor(), factory, new TicketIdWriter(), new DirectorySync());
+		return runner.runFiles(config.toString(), null, List.of(tempDir.resolve("a.csv").toString()), false,
+				tempDir.resolve("logs").toString(), false, true, null, null, null, null);
+	}
+
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private List<Map<String, Object>> virtualCreates() {
+		ArgumentCaptor<Map> captor = ArgumentCaptor.forClass(Map.class);
+		verify(client, Mockito.atLeast(0)).createIssue(captor.capture());
+		return ((List<Map<String, Object>>) (List) captor.getAllValues()).stream()
+				.filter(payload -> VirtualParentMatcher.MARKER.equals(payload.get("description"))).toList();
+	}
+
+	private static String virtualParents(String status) {
+		return "      virtualParents: { enabled: true, trackerId: 2" + (status != null ? ", status: " + status : "")
+				+ " }";
+	}
+
+	@Test
+	@DisplayName("sync.virtualParents.status: 仮想親の作成時だけ指定のステータスを送り、更新では送らない")
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	void virtualParentStatus_sentOnCreateOnly() throws IOException {
+		csv(HEADER, ",タスク,A,B,t1,未着手");
+		Path config = config(false, virtualParents("進行中"));
+
+		assertThat(run(config, false, null)).isEqualTo(0);
+		List<Map<String, Object>> creates = virtualCreates();
+		assertThat(creates).hasSize(2).allSatisfy(payload -> assertThat(payload.get("status_id"))
+				.isEqualTo(IN_PROGRESS));
+		assertThat(logText()).contains("status_id=" + IN_PROGRESS);
+
+		// 既存の仮想親を手動で変えても、更新（強制更新を含む）ではステータスを送らない
+		redmine.values().stream().filter(issue -> !"t1".equals(issue.get("subject")))
+				.forEach(issue -> issue.put("status", Map.of("id", OPEN)));
+		Mockito.clearInvocations(client);
+		assertThat(runForce(config)).isEqualTo(0);
+		verify(client, never()).createIssue(anyMap());
+		ArgumentCaptor<Long> ids = ArgumentCaptor.forClass(Long.class);
+		ArgumentCaptor<Map> payloads = ArgumentCaptor.forClass(Map.class);
+		verify(client, Mockito.atLeastOnce()).updateIssue(ids.capture(), payloads.capture());
+		for (int i = 0; i < ids.getAllValues().size(); i++) {
+			if (!"t1".equals(redmine.get(ids.getAllValues().get(i)).get("subject"))) {
+				assertThat((Map<String, Object>) payloads.getAllValues().get(i)).doesNotContainKey("status_id");
+			}
+		}
+		redmine.values().stream().filter(issue -> !"t1".equals(issue.get("subject")))
+				.forEach(issue -> assertThat(IssueComparator.nestedId(issue, "status")).isEqualTo(OPEN));
+	}
+
+	@Test
+	@DisplayName("sync.virtualParents.status 未設定なら仮想親の作成時もステータスを送らない（Redmine の既定）")
+	void virtualParentStatus_omitted() throws IOException {
+		csv(HEADER, ",タスク,A,B,t1,未着手");
+		assertThat(run(config(false, virtualParents(null)), false, null)).isEqualTo(0);
+		assertThat(virtualCreates()).hasSize(2).allSatisfy(payload -> assertThat(payload).doesNotContainKey(
+				"status_id"));
+	}
+
+	@Test
+	@DisplayName("sync.virtualParents.status は statusMap の名前・ステータスIDでも指定でき、Redmine にない値は書き込む前に検証エラー")
+	void virtualParentStatus_resolutionAndUnknown() throws IOException {
+		csv(HEADER, ",タスク,A,B,t1,未着手");
+		assertThat(run(config(false, virtualParents("未着手")), true, null)).isEqualTo(0);
+		assertThat(logText()).contains("Virtual Parent Status: 未着手 (status_id=" + OPEN);
+
+		assertThat(run(config(false, virtualParents("存在しない")), false, null)).isEqualTo(1);
+		assertThat(logText()).contains("sync.virtualParents.status「存在しない」が Redmine のステータスにありません");
+		assertThat(run(config(false, virtualParents("12345")), false, null)).isEqualTo(1);
+		assertThat(logText()).contains("sync.virtualParents.status「12345」");
+		verify(client, never()).createIssue(anyMap());
+		verify(client, never()).updateIssue(anyLong(), anyMap());
+		assertThat(redmine).isEmpty();
+	}
+
+	@Test
+	@DisplayName("dry-run の自動完了は、作成予定の仮想親を指定のステータスとして判定する（終了なら完了済み扱い）")
+	void virtualParentStatus_dryRunAutoClose() throws IOException {
+		redmine.put(1L, issue(1, "A", null, OPEN));
+		csv(HEADER, "1,タスク,A,,,", ",タスク,A,B,t1,完了");
+
+		assertThat(run(config(true, virtualParents("終了")), true, null)).isEqualTo(0);
+		String log = logText();
+		assertThat(log).contains("DRY_RUN CREATE (仮想親) [A > B]").contains("status_id=" + DONE)
+				.contains("DRY_RUN AUTO_CLOSE #1 「A」");
+		assertThat(log.lines().filter(line -> line.contains("DRY_RUN AUTO_CLOSE")))
+				.noneMatch(line -> line.contains("「B」"));
+		verify(client, never()).createIssue(anyMap());
 	}
 }

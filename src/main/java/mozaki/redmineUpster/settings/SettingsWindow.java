@@ -553,6 +553,9 @@ public class SettingsWindow extends JFrame {
             SettingsDocument.remove(p, "sync.virtualParents.tracker");
             SettingsDocument.setString(p, "sync.virtualParents.trackerId", trackerField.getText());
         });
+        form.text("仮想親を作成するときのステータス", "sync.virtualParents.status", "（なし＝Redmine の既定）",
+                "名前または番号。仮想親を新しく作るときだけ設定する（既存の仮想親のステータスは変えない）。"
+                        + "空欄なら Redmine の既定のステータス");
 
         form.note("親チケットの自動完了: 子チケットがすべて完了した親チケットを、同期の最後に自動で完了にする");
         form.check("親チケットを自動で完了にする", "sync.autoCloseParents.enabled", false,

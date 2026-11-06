@@ -364,6 +364,8 @@ public class SyncRunner {
                 }
             }
             validationErrors.addAll(validateRootIssues(jobs, client, deleteStatusId(syncConfig), state, logger));
+            validationErrors.addAll(validateVirtualParentStatus(jobs, projectConfig, client, cliVirtualParents,
+                    state, logger));
             if (!validationErrors.isEmpty()) {
                 logger.error("入力ファイルの検証エラー: " + validationErrors.size() + "件（Redmineは更新していません）");
                 for (String error : validationErrors) {
@@ -526,6 +528,8 @@ public class SyncRunner {
         /** 論理削除したチケット（dry-run では論理削除する予定のチケット）と、そのステータス */
         private List<Long> deletedIssueIds = List.of();
         private Integer deletedStatusId;
+        /** 仮想親を作成するときのステータスID（sync.virtualParents.status。未設定なら null） */
+        private Long virtualParentStatusId;
         /** 終了ステータスのID（親チケットの自動完了が有効な場合だけ取得。取得できなければ null） */
         private Set<Long> closedStatusIds;
         /** 論理削除のために読み込んだ（同期しない）sync.files のファイルのチケットID（親チケットの自動完了でも使用） */
@@ -847,6 +851,57 @@ public class SyncRunner {
         return validationErrors;
     }
 
+    /**
+     * sync.virtualParents.status（仮想親を作成するときのステータス）を解決します（仮想親が有効な場合だけ）。
+     * 見つからない場合は検証エラーにします（Redmineには書き込まない）。
+     */
+    private static List<String> validateVirtualParentStatus(List<FileJob> jobs, ProjectConfig projectConfig,
+            RedmineClient client, Boolean cliVirtualParents, RunState state, FileLogger logger) {
+        state.virtualParentStatusId = null;
+        SyncConfig syncConfig = projectConfig.getSync();
+        String configured = syncConfig != null && syncConfig.getVirtualParents() != null
+                ? syncConfig.getVirtualParents().getStatus() : null;
+        boolean enabled = cliVirtualParents != null ? cliVirtualParents
+                : DiffCalculator.isVirtualParentsEnabled(projectConfig);
+        if (configured == null || configured.isBlank() || !enabled
+                || jobs.stream().noneMatch(job -> job.doTickets)) {
+            return List.of();
+        }
+        Map<String, Long> statuses;
+        try {
+            statuses = client.listIssueStatuses();
+        } catch (RuntimeException ex) {
+            return List.of("sync.virtualParents.status「" + configured + "」を確認できません（ステータスの一覧を取得できません: "
+                    + ex.getMessage() + "）");
+        }
+        Long id = ParentAutoCloser.resolveStatusId(configured, syncConfig.getStatus(),
+                statuses == null ? Map.of() : statuses);
+        if (id == null) {
+            return List.of("sync.virtualParents.status「" + configured + "」が Redmine のステータスにありません"
+                    + "（ステータス名・statusMap の名前・ステータスIDのいずれかを指定してください）");
+        }
+        state.virtualParentStatusId = id;
+        logger.info("Virtual Parent Status: " + configured + " (status_id=" + id + "。仮想親を作成するときだけ設定します)");
+        return List.of();
+    }
+
+    /**
+     * 新規作成する仮想親に、作成時のステータス（解決済みのID）を設定します（既存の仮想親は変更しない）。
+     */
+    static List<DiffItem> withVirtualParentCreateStatus(List<DiffItem> items, Long statusId) {
+        List<DiffItem> result = new ArrayList<>(items.size());
+        for (DiffItem item : items) {
+            if (item.virtual() && SyncConstants.ACTION_CREATE.equals(item.action())) {
+                result.add(new DiffItem(item.rowNumber(), item.issueId(), item.subject(), item.levelPath(),
+                        item.depth(), item.parentRowNumber(), item.action(), String.valueOf(statusId),
+                        item.trackerId(), item.payload(), true));
+            } else {
+                result.add(item);
+            }
+        }
+        return result;
+    }
+
     private DiffPlan calculatePlan(ParsedSheet parsed, ProjectConfig projectConfig, RedmineClient client,
             Boolean cliVirtualParents, FileLogger logger) {
         SyncConfig syncConfig = projectConfig.getSync();
@@ -932,6 +987,9 @@ public class SyncRunner {
                 long virtualExisting = items.stream().filter(i -> i.virtual() && i.issueId() != null).count();
                 logger.info("  VIRTUAL_PARENT: " + virtualTotal + "（既存 " + virtualExisting + " / 新規作成 "
                         + (virtualTotal - virtualExisting) + "。上の CREATE 件数に含まれます）");
+                if (state.virtualParentStatusId != null) {
+                    items = withVirtualParentCreateStatus(items, state.virtualParentStatusId);
+                }
             }
 
             // 親チケットの自動完了が有効な場合、親の行はステータス列が空欄なら Redmine の現在のステータスのままにする

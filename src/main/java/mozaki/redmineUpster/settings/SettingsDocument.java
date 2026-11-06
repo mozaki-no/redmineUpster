@@ -67,7 +67,7 @@ public class SettingsDocument {
     private static final List<String> STATUS_ORDER = List.of("enabled", "mode", "fixed", "statusMap");
     private static final List<String> AUTO_CLOSE_ORDER = List.of("enabled", "status", "inProgress",
             "inProgressStatus", "ignoreNotInExcel");
-    private static final List<String> VIRTUAL_PARENTS_ORDER = List.of("enabled", "trackerId");
+    private static final List<String> VIRTUAL_PARENTS_ORDER = List.of("enabled", "trackerId", "status");
     private static final List<String> FILE_ORDER = List.of("path", "rootIssueId");
 
     /** ファイル一覧の1行（sync.files の要素） */

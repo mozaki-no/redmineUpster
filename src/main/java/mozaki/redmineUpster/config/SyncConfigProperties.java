@@ -274,6 +274,12 @@ public class SyncConfigProperties {
 		 * 未設定の場合は「サマリ」。
 		 */
 		private String tracker;
+
+		/**
+		 * 仮想親チケットを作成するときのステータス（名前またはID。名前は statusMap → Redmine のステータス名で解決）。
+		 * 未設定の場合はステータスを送らない（Redmine の既定）。既存の仮想親を更新するときは送りません。
+		 */
+		private String status;
 	}
 
 	/**
