@@ -140,6 +140,7 @@ redmineUpster.exe --sync --config=sync-config.yml --file=WBS.xlsx
 - `--` で始まる引数は exe にそのまま渡します。`=` を含むので引用符で囲んでください: `run.bat /y "--project=本番" "--root-issue=123" "C:\wbs\WBS.xlsx"`
 - ファイルを渡さなければ `sync-config.yml` の `files:` のファイルを使います（自動実行ではこの形がおすすめ）。
 - 実行中に WBS を Excel で開いていると書き戻しに失敗します（終了コード 1）。
+- Jenkins から実行すると、画面（コンソール）への出力は UTF-8 になります（日本語が文字化けしないように）。Jenkins 側を Windows-31J で読む設定にしている場合などは、環境変数 `REDMINEUPSTER_CONSOLE_ENCODING`（例: `MS932`、`UTF-8`）で変えられます。logs フォルダのログは常に UTF-8 です。
 
 Jenkins（Windows エージェント）の例:
 

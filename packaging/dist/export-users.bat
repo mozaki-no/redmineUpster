@@ -5,6 +5,9 @@ rem Needs an administrator API key. Tickets are not exported.
 rem Unattended use: /y (or --yes), REDMINEUPSTER_NO_PROMPT=1 or Jenkins (JENKINS_URL) skips the pause.
 rem Other options starting with "--" (quote them, e.g. "--project=xxx") are passed to redmineUpster.exe. The exit code is redmineUpster.exe's.
 setlocal
+rem Under Jenkins the output is read as UTF-8: switch this console to UTF-8 too
+rem (redmineUpster.exe then writes UTF-8 as well; REDMINEUPSTER_CONSOLE_ENCODING overrides it).
+if defined JENKINS_URL if not defined REDMINEUPSTER_CONSOLE_ENCODING chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 set "APPDIR=%~dp0"
 set "NOPROMPT="

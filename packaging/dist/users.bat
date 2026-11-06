@@ -9,6 +9,9 @@ rem "Continue (Y/N)" question and the pause.
 rem Other options starting with "--" (quote them, e.g. "--project=xxx") are passed to redmineUpster.exe.
 rem The exit code is redmineUpster.exe's (0 = success, 1 = any error).
 setlocal
+rem Under Jenkins the output is read as UTF-8: switch this console to UTF-8 too
+rem (redmineUpster.exe then writes UTF-8 as well; REDMINEUPSTER_CONSOLE_ENCODING overrides it).
+if defined JENKINS_URL if not defined REDMINEUPSTER_CONSOLE_ENCODING chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 rem "shift" also shifts %0, so remember this folder first
 set "APPDIR=%~dp0"

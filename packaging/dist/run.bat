@@ -12,6 +12,9 @@ rem Other options starting with "--" are passed to redmineUpster.exe; quote them
 rem e.g.  run.bat /y "--project=xxx" "--root-issue=123" "C:\wbs\wbs.xlsx"
 rem The exit code is redmineUpster.exe's (0 = success, 1 = any error), so Jenkins can detect failures.
 setlocal
+rem Under Jenkins the output is read as UTF-8: switch this console to UTF-8 too
+rem (redmineUpster.exe then writes UTF-8 as well; REDMINEUPSTER_CONSOLE_ENCODING overrides it).
+if defined JENKINS_URL if not defined REDMINEUPSTER_CONSOLE_ENCODING chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 rem "shift" also shifts %0, so remember this folder first
 set "APPDIR=%~dp0"
