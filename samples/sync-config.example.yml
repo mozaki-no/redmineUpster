@@ -1,8 +1,21 @@
 # バックアップ（.bak）の保存先（全プロジェクト共通・設定画面で保存したときの sync-config.yml.bak も）。
 # 省略・空欄なら元のファイルと同じフォルダ。相対パスは この設定ファイルのフォルダ基準。${ENV} 可。
 # プロジェクトごとに変える場合は sync.backup.dir（こちらが優先）
+# （backup: は .bak の置き場所。下の fullBackup: は --backup の全内容の書き出しで、別の設定）
 # backup:
 #   dir: "backup"
+
+# 全内容のバックアップ（backup.bat / --backup。Redmine が使えなくなったときに中身を見るための読み取り専用の .xlsx）の既定。
+# 行頭の # を外すと有効。プロジェクトごとに変える場合は、そのプロジェクトの sync: の下に同じ形で fullBackup: を書く（項目ごとに優先）。
+# 同期の .bak（書き戻し前の退避。上の backup: で保存先を指定）とは別のもの
+# fullBackup:
+#   dir: "backup"          # 出力先フォルダ（相対パスはこのファイルのフォルダ基準。省略時は実行したフォルダの backup）
+#   keep: 0                # 残す世代数（プロジェクトごと。0 = すべて残す。例: 7 なら新しい7つを残して古いものを削除）
+#   journals: true         # 履歴（注記・変更内容）とウォッチャー（チケットごとに1回取得するため件数が多いと時間がかかる）
+#   attachments: true      # 添付ファイルをダウンロードする（<バックアップ名>_files フォルダ）
+#   timeEntries: true      # 作業時間
+#   wiki: true             # Wiki
+#   threads: 4             # チケットの詳細を同時に取得する数（1〜16）
 projects:
   - name: "本番環境"
     default: true

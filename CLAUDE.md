@@ -56,6 +56,18 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 ### 進捗
 - 2026-11-04: `BackupLocation`・設定の読み込み（`ProjectConfig.backupDir` に解決済みの絶対パス）・TicketIdWriter／SyncRunner（ユーザー・グループ・チケットの書き戻し）・ExportRunner・SettingsDocument（保存・検証）・設定画面（ファイルタブ、フォルダ選択）・文書。テスト `BackupLocationTests`・`MultiFileSyncTests` に追加。
 
+## 実行計画（全内容のバックアップ）
+背景: むさしさんの依頼。Redmine が使えなくなったときのため、プロジェクトの中身をすべて Excel に書き出す（Jenkins で定期実行）。`--export`（取り込める形）とは別の読み取り専用のバックアップ。
+1. CLI: `--backup [--file=out.xlsx | --backup-dir=dir] [--all-projects] [--keep=N] [--no-journals|--no-attachments|--no-time-entries|--no-wiki]`。既定の出力先 `<fullBackup.dir または ./backup>/<projectId>_yyyyMMdd_HHmmss.xlsx`。
+2. 設定: 最上位 `fullBackup` ＋ プロジェクトの `sync.fullBackup`（項目ごとに優先）。`dir`（設定ファイル基準）・`keep`（既定0＝すべて残す）・`journals`/`attachments`/`timeEntries`/`wiki`（既定 true）・`threads`（既定4）。同期の `.bak` の保存先（develop の `backup.dir` / `sync.backup.dir`）と混同しないよう `fullBackup` にした。
+3. 実装: `cli/BackupRunner`（設定・一時ファイル `.tmp` → 成功時に改名・失敗時は削除・世代管理）、`cli/FullBackupWriter`（SXSSF。チケットは100件ずつ取得してページごとに書き出し、履歴は `GET /issues/{id}.json?include=journals,watchers,attachments,relations` をスレッドプールで取得して ID 順に書く。任意の一覧は 403/404 などで警告＋シート省略、チケット取得の失敗だけ致命的。通信エラー・5xx は3回まで再試行）、`cli/BackupSheet`（1,048,575 行で `名前(2)` に続ける・32,767 文字超は `_files/long_text/` に全文）、`cli/BackupNames`（ファイル名・Windows 不可文字・UTF-8 でない Linux では ASCII 名に退避）。`RedmineClient.getJson` / `getJsonBySegments` / `downloadAttachment`（応答をバッファしないリクエストファクトリで `/attachments/download/{id}` をファイルへ。`redmine.proxy` があれば API 呼び出しと同じ `ProxyRequestFactory`（認証付き）を通す）。
+4. 配布: `packaging/dist/backup.bat`（他の bat と同じく /y・REDMINEUPSTER_NO_PROMPT・JENKINS_URL で pause なし、終了コードを返す）、package-windows.ps1 で同梱。設定サンプルにコメントで既定値。設定画面には項目を追加していない（YAML の未知キーとして保持される）。
+
+### 進捗
+- 2026-11-06: 実装・テスト `BackupTests`（疑似 Redmine の HTTP サーバー: 250件のページング、クローズ済み、CF 列、履歴・ウォッチャー・関連の重複除去、Wiki 403 の警告と省略、長い説明の txt、添付の保存先と API キー、行数上限でのシート分割、致命的エラーで .tmp を残さない、世代管理、--file、設定の重ね合わせ、CLI 解析）。`mvn -B test` 全件成功。jar と Python の疑似 Redmine で通し確認（全シート、添付・Wiki 添付の保存、keep=2 の世代削除）。5万件（履歴なし）約7秒・ヒープ最大約100MB（-Xmx256m）、5万件（履歴あり・4スレッド）約36秒。
+- 2026-11-06: develop（プロキシ・.bak 保存先・仮想親ステータス）を取り込み。添付のダウンロードも `RedmineClientFactory` で設定のプロキシ（認証付き）を通すようにした。
+- 未実施: 実 Redmine・Windows 実機での確認、設定画面への項目追加。
+
 ## 実行計画（設定画面）
 背景: むさしさんの指示。sync-config.yml を手で書くのがつらいため、設定を編集する画面（Swing、配布版の jlink ランタイムに java.desktop あり）を用意する。
 1. 起動: `--settings [--config=...]` を `RedmineUpsterApplication.main` で Spring 起動前に判定（`settings/SettingsLauncher`）。設定ファイルは同期と同じ探し方（`SyncRunner.defaultConfigCandidates`）。headless ならエラー終了（1）。`--help` に追加。

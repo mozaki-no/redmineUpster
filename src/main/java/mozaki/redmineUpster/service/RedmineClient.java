@@ -13,11 +13,13 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import mozaki.redmineUpster.cli.FileLogger;
+import mozaki.redmineUpster.config.ProxyConfig;
 
 /**
  * Redmine APIクライアント。
@@ -26,6 +28,13 @@ import mozaki.redmineUpster.cli.FileLogger;
  * </p>
  */
 public class RedmineClient {
+
+	static {
+		// JDK は HTTPS のトンネル（CONNECT）の Basic 認証可否を、JVM で最初に http/https の接続を開くときに1回だけ読む。
+		// プロキシ設定のないプロジェクトやバックアップのダウンロードが先に接続しても、後のプロキシ認証が 407 にならないよう、
+		// このクライアントで最初の接続を開くより前に必ず許可しておく。
+		ProxyConfig.allowBasicProxyAuthentication();
+	}
 
 	private static final String ISSUES_ENDPOINT = "/issues.json";
 	private static final String API_KEY_HEADER = "X-Redmine-API-Key";
@@ -44,6 +53,7 @@ public class RedmineClient {
 	private final RestTemplate restTemplate;
 	private FileLogger logger;
 	private Long projectNumericId;
+	private ClientHttpRequestFactory downloadRequestFactory;
 	private String connectionDescription = "直接接続";
 
 	/**
@@ -539,6 +549,85 @@ public class RedmineClient {
 			}
 		}
 		return masked;
+	}
+
+	/**
+	 * 任意の GET の応答（JSON の最上位）を取得します（全内容のバックアップで使用）。
+	 *
+	 * @param path ベースURLからのパス（例: {@code /projects/abc/versions.json}。クエリを含めない）
+	 * @param params クエリパラメータ（書いた順）
+	 * @return 応答の本文（空なら空の Map）
+	 * @throws org.springframework.web.client.RestClientResponseException 4xx/5xx の場合
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public Map<String, Object> getJson(String path, Map<String, ?> params) {
+		UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(baseUrl + path);
+		if (params != null) {
+			params.forEach(builder::queryParam);
+		}
+		URI uri = builder.encode().build().toUri();
+		debugLog("Request URL: GET " + uri);
+		ResponseEntity<Map> response = restTemplate.exchange(uri, HttpMethod.GET, buildEntity(null), Map.class);
+		Map body = response.getBody();
+		return body == null ? new LinkedHashMap<>() : (Map<String, Object>) body;
+	}
+
+	/**
+	 * パスの各部分を URL エンコードして GET の応答を取得します（Wiki のページ名など、/ や ? を含みうる名前に使用）。
+	 *
+	 * @param segments ベースURLからのパスの各部分（例: {@code projects}, {@code abc}, {@code wiki}, {@code ページ名.json}）
+	 * @param params クエリパラメータ
+	 * @return 応答の本文（空なら空の Map）
+	 */
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public Map<String, Object> getJsonBySegments(List<String> segments, Map<String, ?> params) {
+		UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(baseUrl)
+				.pathSegment(segments.toArray(new String[0]));
+		if (params != null) {
+			params.forEach(builder::queryParam);
+		}
+		URI uri = builder.encode().build().toUri();
+		debugLog("Request URL: GET " + uri);
+		ResponseEntity<Map> response = restTemplate.exchange(uri, HttpMethod.GET, buildEntity(null), Map.class);
+		Map body = response.getBody();
+		return body == null ? new LinkedHashMap<>() : (Map<String, Object>) body;
+	}
+
+	/**
+	 * 添付ファイルをダウンロードしてファイルに保存します（{@code GET /attachments/download/{id}}、API キー付き）。
+	 * <p>
+	 * 応答はメモリに溜めずにファイルへ書き込みます（{@link #setDownloadRequestFactory} の設定がある場合）。
+	 * </p>
+	 *
+	 * @param attachmentId 添付ファイルのID
+	 * @param target 保存先（親フォルダは作成済みであること。既にあれば上書き）
+	 * @return 保存したバイト数
+	 * @throws org.springframework.web.client.RestClientException 取得に失敗した場合
+	 */
+	public long downloadAttachment(long attachmentId, java.nio.file.Path target) {
+		String url = baseUrl + "/attachments/download/" + attachmentId;
+		debugLog("Request URL: GET " + url + " -> " + target);
+		RestTemplate template = downloadRequestFactory != null ? new RestTemplate(downloadRequestFactory) : restTemplate;
+		Long size = template.execute(URI.create(url), HttpMethod.GET, request -> {
+			request.getHeaders().set(CONNECTION_HEADER, CONNECTION_CLOSE);
+			if (apiKey != null && !apiKey.isBlank()) {
+				request.getHeaders().set(API_KEY_HEADER, apiKey);
+			}
+		}, response -> {
+			try (java.io.InputStream in = response.getBody()) {
+				return java.nio.file.Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			}
+		});
+		return size == null ? 0 : size;
+	}
+
+	/**
+	 * 添付ファイルのダウンロードに使う（応答をバッファしない）リクエストファクトリを設定します。
+	 *
+	 * @param factory リクエストファクトリ（null なら通常の RestTemplate を使う）
+	 */
+	public void setDownloadRequestFactory(ClientHttpRequestFactory factory) {
+		this.downloadRequestFactory = factory;
 	}
 
 	/**

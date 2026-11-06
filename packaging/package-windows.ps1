@@ -52,6 +52,7 @@ Copy-Item (Join-Path $Root "packaging\dist\run.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\run-dry-run.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\export.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\export-users.bat") $AppDir
+Copy-Item (Join-Path $Root "packaging\dist\backup.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\users.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\users-dry-run.bat") $AppDir
 Copy-Item (Join-Path $Root "packaging\dist\settings.bat") $AppDir

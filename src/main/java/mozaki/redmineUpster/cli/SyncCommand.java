@@ -51,6 +51,9 @@ import mozaki.redmineUpster.service.ExcelSource;
  *       {@code --export} と指定すると、このチケットの配下だけを出力</li>
  *   <li>{@code --targets}: 同期・出力する対象（tickets,users,groups のカンマ区切り。省略時はファイルにある表すべて）</li>
  *   <li>{@code --export}: 同期の代わりに、プロジェクトのチケットとユーザー・グループを {@code --file} の .xlsx に出力</li>
+ *   <li>{@code --backup}: 同期の代わりに、プロジェクトの全内容（チケット・履歴・添付ファイル・作業時間・Wiki など）を
+ *       読み取り専用の .xlsx にバックアップ（{@code --file} / {@code --backup-dir} / {@code --all-projects} /
+ *       {@code --keep} / {@code --no-journals} / {@code --no-attachments} / {@code --no-time-entries} / {@code --no-wiki}）</li>
  *   <li>{@code --settings}: 設定ファイル（{@code --config}、省略時は同期と同じ探し方）を編集する設定画面を開く。
  *       Spring を起動せずに {@code RedmineUpsterApplication#main} で処理する（配布版の settings.bat）</li>
  *   <li>{@code --console-encoding}: コンソール出力の文字コード（Jenkins では既定 UTF-8）</li>
@@ -67,6 +70,7 @@ public class SyncCommand implements CommandLineRunner {
 
     private final SyncRunner syncRunner;
     private final ExportRunner exportRunner;
+    private final BackupRunner backupRunner;
 
     /**
      * コマンドライン引数を解析して同期処理を実行します。
@@ -77,8 +81,24 @@ public class SyncCommand implements CommandLineRunner {
     public void run(String... args) {
         // --sync も --file もない場合（引数なし・--help）は使い方を表示して終了
         if (hasArg(args, "--help") || hasArg(args, "-h")
-                || (!hasArg(args, "--sync") && !hasArg(args, "--file") && !hasArg(args, "--export"))) {
+                || (!hasArg(args, "--sync") && !hasArg(args, "--file") && !hasArg(args, "--export")
+                        && !hasArg(args, "--backup"))) {
             printUsage();
+            return;
+        }
+
+        // 全内容のバックアップ（--backup）
+        if (hasArg(args, "--backup")) {
+            BackupRunner.Overrides overrides;
+            try {
+                overrides = parseBackupOverrides(args);
+            } catch (IllegalArgumentException e) {
+                System.err.println("Error: " + e.getMessage());
+                System.exit(1);
+                return;
+            }
+            System.exit(backupRunner.run(getArgValue(args, "--config"), getArgValue(args, "--project"),
+                    hasArg(args, "--all-projects"), overrides, getArgValue(args, "--log-dir"), hasArg(args, "--debug")));
             return;
         }
 
@@ -176,6 +196,54 @@ public class SyncCommand implements CommandLineRunner {
     }
 
     /**
+     * {@code --backup} の上書きオプションを解析します。
+     *
+     * @param args 引数配列
+     * @return 上書きする値（指定のないものは null）
+     * @throws IllegalArgumentException --file が複数・--keep が 0 以上の整数でない場合
+     */
+    static BackupRunner.Overrides parseBackupOverrides(String[] args) {
+        List<String> files = getArgValues(args, "--file");
+        if (files.size() > 1) {
+            throw new IllegalArgumentException("--backup の --file（出力先）は1つだけ指定してください");
+        }
+        Integer keep = null;
+        for (String arg : args) {
+            if (arg.startsWith("--keep=")) {
+                try {
+                    keep = Integer.parseInt(arg.substring("--keep=".length()).trim());
+                } catch (NumberFormatException e) {
+                    keep = -1;
+                }
+                if (keep < 0) {
+                    throw new IllegalArgumentException("--keep には残す世代数（0 以上の整数。0 はすべて残す）を指定してください: " + arg);
+                }
+            }
+        }
+        String dir = null;
+        for (String arg : args) {
+            if (arg.startsWith("--backup-dir=") && !arg.substring("--backup-dir=".length()).isBlank()) {
+                dir = arg.substring("--backup-dir=".length());
+            }
+        }
+        return new BackupRunner.Overrides(files.isEmpty() ? null : files.get(0), dir, keep,
+                flag(args, "journals"), flag(args, "attachments"), flag(args, "time-entries"), flag(args, "wiki"));
+    }
+
+    /** {@code --<name>} / {@code --no-<name>}（後に書いた方）。どちらもなければ null。 */
+    private static Boolean flag(String[] args, String name) {
+        Boolean result = null;
+        for (String arg : args) {
+            if (arg.equals("--" + name)) {
+                result = Boolean.TRUE;
+            } else if (arg.equals("--no-" + name)) {
+                result = Boolean.FALSE;
+            }
+        }
+        return result;
+    }
+
+    /**
      * {@code --virtual-parents} / {@code --no-virtual-parents} を解析します。
      *
      * @param args 引数配列
@@ -248,6 +316,7 @@ public class SyncCommand implements CommandLineRunner {
     private void printUsage() {
         System.out.println("Usage: redmineUpster --sync --file=<CSV/Excel> [options]");
         System.out.println("       redmineUpster --export --file=<output.xlsx> [options]");
+        System.out.println("       redmineUpster --backup [--file=<output.xlsx> | --backup-dir=<dir>] [--all-projects] [options]");
         System.out.println("       redmineUpster --settings [--config=<path>]   (open the settings window)");
         System.out.println("       (java -jar redmineUpster.jar --sync --file=<CSV/Excel> [options])");
         System.out.println();
@@ -276,6 +345,19 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  --targets=<list>        What to sync/export: tickets,users,groups (default: sync.targets, else all sheets in the file)");
         System.out.println("  --export                Export tickets of the project, users and groups to --file (.xlsx)");
         System.out.println("                          The exported file can be used as --file for --sync as it is");
+        System.out.println("  --backup                Full read-only backup of the project to Excel (in case Redmine is lost):");
+        System.out.println("                          tickets (closed and subprojects included), journals, watchers, relations,");
+        System.out.println("                          attachments (downloaded to <name>_files/), time entries, versions,");
+        System.out.println("                          categories, members, wiki, users, groups and reference lists.");
+        System.out.println("                          Cannot be used as --file for --sync. No prompts: exit code 0 = OK");
+        System.out.println("                          (warnings such as a disabled module are in the log and the 情報 sheet), 1 = failed");
+        System.out.println("                          Default output: <fullBackup.dir or ./backup>/<projectId>_yyyyMMdd_HHmmss.xlsx");
+        System.out.println("  --backup-dir=<dir>      Backup output folder (overrides fullBackup.dir)");
+        System.out.println("  --all-projects          With --backup: back up every project in the config (one file each)");
+        System.out.println("  --keep=<n>              With --backup: keep the newest n backups per project, delete older ones");
+        System.out.println("                          (overrides fullBackup.keep; 0 = keep all; not applied with --file)");
+        System.out.println("  --no-journals --no-attachments --no-time-entries --no-wiki");
+        System.out.println("                          With --backup: skip journals/watchers, attachment download, time entries, wiki");
         System.out.println("  --settings              Open the settings window to edit the config file (sync-config.yml).");
         System.out.println("                          Comments in the file are replaced on save; the previous file is");
         System.out.println("                          kept as sync-config.yml.bak (in backup.dir if set)");
@@ -301,5 +383,6 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  redmineUpster --export --config=sync-config.yml --file=redmine.xlsx");
         System.out.println("  redmineUpster --export --config=sync-config.yml --file=WBS-A.xlsx --root-issue=123");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=redmine.xlsx --targets=users,groups");
+        System.out.println("  redmineUpster --backup --config=sync-config.yml --all-projects --backup-dir=D:\\backup --keep=7");
     }
 }

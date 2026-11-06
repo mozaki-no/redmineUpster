@@ -65,10 +65,40 @@ public class SyncConfigProperties {
 		private SyncConfig sync;
 
 		/**
+		 * 全内容のバックアップ（--backup）の設定。設定ファイル全体の fullBackup に、
+		 * プロジェクトの sync.fullBackup を項目ごとに重ねたもの（どちらもなければ既定値）。
+		 */
+		private FullBackupConfig fullBackup = new FullBackupConfig();
+
+		/**
 		 * バックアップ（.bak）の保存先フォルダ（絶対パスに解決済み）。
 		 * プロジェクトの sync.backup.dir、なければ設定ファイル全体の backup.dir。null なら元のファイルと同じフォルダ。
 		 */
 		private String backupDir;
+	}
+
+	/**
+	 * 全内容のバックアップ（--backup）の設定。
+	 * <p>
+	 * 同期の .bak（書き戻し前の退避）とは別のもの。プロジェクトの中身をすべて読み取り専用の .xlsx に書き出します。
+	 * </p>
+	 */
+	@Data
+	public static class FullBackupConfig {
+		/** 出力先フォルダ（絶対パスに解決済み。null ならカレントディレクトリの backup） */
+		private String dir;
+		/** 残す世代数（プロジェクトごと。0 ならすべて残す） */
+		private int keep;
+		/** 履歴（注記・変更内容）とウォッチャーを出力する（チケットごとに1回の取得が必要） */
+		private boolean journals = true;
+		/** 添付ファイルをダウンロードする（一覧のシートは常に出力） */
+		private boolean attachments = true;
+		/** 作業時間を出力する */
+		private boolean timeEntries = true;
+		/** Wiki を出力する */
+		private boolean wiki = true;
+		/** チケットの詳細（履歴）を同時に取得する数（1〜16） */
+		private int threads = 4;
 	}
 
 	/**
