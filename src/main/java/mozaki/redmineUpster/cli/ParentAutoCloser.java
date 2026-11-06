@@ -322,7 +322,7 @@ public final class ParentAutoCloser {
         return new TargetStatus(id, label);
     }
 
-    private static Long statusId(String value, Map<String, String> statusMap, Map<String, Long> statuses) {
+    static Long statusId(String value, Map<String, String> statusMap, Map<String, Long> statuses) {
         if (isNumeric(value)) {
             return Long.parseLong(value);
         }

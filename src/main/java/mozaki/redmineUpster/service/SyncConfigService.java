@@ -265,6 +265,12 @@ public class SyncConfigService {
 			if (tracker != null && !expandEnvVars(tracker.toString()).isBlank()) {
 				virtualParents.setTracker(expandEnvVars(tracker.toString()).trim());
 			}
+			// status / statusId のどちらでも指定できる（名前またはID）
+			Object status = virtualParentsMap.get("status") != null ? virtualParentsMap.get("status")
+					: virtualParentsMap.get("statusId");
+			if (status != null && !expandEnvVars(status.toString()).isBlank()) {
+				virtualParents.setStatus(expandEnvVars(status.toString()).trim());
+			}
 			config.setVirtualParents(virtualParents);
 		}
 

@@ -846,7 +846,53 @@ public class SyncRunner {
                 : DiffCalculator.isVirtualParentsEnabled(projectConfig);
         logger.info("Virtual Parents: " + virtualParents
                 + (cliVirtualParents != null ? "（コマンドライン指定）" : "（設定 sync.virtualParents.enabled）"));
-        return diffCalculator.calculate(parsed, projectConfig, trackerResolver, logger, virtualParents);
+        DiffPlan plan = diffCalculator.calculate(parsed, projectConfig, trackerResolver, logger, virtualParents);
+        return applyVirtualParentStatus(plan, syncConfig, client, logger);
+    }
+
+    /**
+     * 仮想親のステータス（sync.virtualParents.status）をIDに解決し、仮想親の差分アイテムに設定します。
+     * <p>
+     * 名前は statusMap → Redmine のステータス名で解決します。解決できなければ検証エラー（Redmine は変更しない）。
+     * 未設定なら何もしません（仮想親のステータスは送らない）。
+     * </p>
+     */
+    static DiffPlan applyVirtualParentStatus(DiffPlan plan, SyncConfig syncConfig, RedmineClient client,
+            FileLogger logger) {
+        String configured = virtualParentStatus(syncConfig);
+        if (configured == null || plan.items().stream().noneMatch(DiffItem::virtual)) {
+            return plan;
+        }
+        Map<String, String> statusMap = syncConfig.getStatus() != null && syncConfig.getStatus().getStatusMap() != null
+                ? syncConfig.getStatus().getStatusMap() : Map.of();
+        Map<String, Long> statuses;
+        try {
+            statuses = client != null ? client.listIssueStatuses() : Map.of();
+        } catch (RuntimeException ex) {
+            statuses = null;
+            logger.warn("ステータスの一覧を取得できません: " + ex.getMessage());
+        }
+        Long id = ParentAutoCloser.statusId(configured, statusMap, statuses != null ? statuses : Map.of());
+        if (id == null || (statuses != null && !statuses.isEmpty() && !statuses.containsValue(id))) {
+            List<String> errors = new ArrayList<>(plan.errors());
+            errors.add("仮想親チケットのステータス「" + configured + "」が Redmine のステータスにありません"
+                    + "（sync.virtualParents.status にステータス名または番号を設定するか、statusMap を確認してください）");
+            return new DiffPlan(plan.items(), errors, plan.rowErrors());
+        }
+        logger.info("仮想親チケットのステータス: 「" + configured + "」(status_id=" + id + ")");
+        List<DiffItem> items = new ArrayList<>(plan.items().size());
+        for (DiffItem item : plan.items()) {
+            items.add(item.virtual() ? new DiffItem(item.rowNumber(), item.issueId(), item.subject(),
+                    item.levelPath(), item.depth(), item.parentRowNumber(), item.action(), String.valueOf(id),
+                    item.trackerId(), item.payload(), true) : item);
+        }
+        return new DiffPlan(items, plan.errors(), plan.rowErrors());
+    }
+
+    private static String virtualParentStatus(SyncConfig syncConfig) {
+        String status = syncConfig != null && syncConfig.getVirtualParents() != null
+                ? syncConfig.getVirtualParents().getStatus() : null;
+        return status == null || status.isBlank() ? null : status.trim();
     }
 
     private static Integer deleteStatusId(SyncConfig syncConfig) {
@@ -1393,6 +1439,11 @@ public class SyncRunner {
         Set<Long> synced = new HashSet<>();
         state.planned.forEach(planned -> synced.add(planned.issueId()));
         Set<Long> candidates = ParentAutoCloser.candidates(synced, nodes, protectedIds);
+        if (virtualParentStatus(syncConfig) != null) {
+            // 仮想親のステータスは設定（sync.virtualParents.status）で決めるため、自動完了・進行中にしない
+            state.planned.stream().filter(SyncResult.PlannedIssue::virtual)
+                    .forEach(planned -> candidates.remove(planned.issueId()));
+        }
         boolean ignoreNotInExcel = syncConfig.getAutoCloseParents().isIgnoreNotInExcel();
         Set<Long> managed = ignoreNotInExcel ? excelManagedIssueIds(jobs, listedFiles, projectConfig, cliExcelSource,
                 cliVirtualParents, client, issues, state, logger) : null;

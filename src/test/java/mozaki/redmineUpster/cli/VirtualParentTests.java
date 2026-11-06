@@ -381,6 +381,29 @@ class VirtualParentTests {
 	}
 
 	@Test
+	@DisplayName("設定 sync.virtualParents.status（別名 statusId）を読み込む。未設定なら null")
+	void configParsing_status() throws IOException {
+		for (String key : List.of("status", "statusId")) {
+			Path file = tempDir.resolve("sync-config-" + key + ".yml");
+			Files.writeString(file, String.join("\n",
+					"projects:",
+					"  - name: t",
+					"    default: true",
+					"    redmine: { baseUrl: 'http://x', apiKey: k, projectId: p }",
+					"    sync:",
+					"      virtualParents:",
+					"        enabled: true",
+					"        " + key + ": 新規",
+					""));
+			SyncConfigService service = new SyncConfigService(new SyncConfigProperties());
+			service.loadConfig(file.toString());
+			assertThat(service.getDefaultProject().orElseThrow().getSync().getVirtualParents().getStatus())
+					.isEqualTo("新規");
+		}
+		assertThat(new VirtualParentsConfig().getStatus()).isNull();
+	}
+
+	@Test
 	@DisplayName("CLI: --virtual-parents / --no-virtual-parents は設定より優先（どちらもなければ null＝設定に従う）")
 	void cliFlags() {
 		assertThat(SyncCommand.parseVirtualParents(new String[] { "--sync", "--file=a.csv" })).isNull();

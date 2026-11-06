@@ -505,4 +505,52 @@ class AutoCloseParentsTests {
 		assertThat(new AutoCloseParentsConfig().isInProgress()).isTrue();
 		assertThat(new AutoCloseParentsConfig().isIgnoreNotInExcel()).isFalse();
 	}
+	@Test
+	@DisplayName("virtualParents.status: 仮想親を設定のステータスで作成・更新し、自動完了・進行中の対象にしない")
+	void virtualParentStatus_fixedAndNotAutoClosed() throws IOException {
+		redmine.put(3L, issue(3, "t1", null, DONE));
+		csv(HEADER, "3,タスク,A,,t1,完了", ",タスク,A,,t2,完了");
+		Path config = config(true, "      virtualParents: { enabled: true, trackerId: 2, status: 進行中 }");
+
+		assertThat(run(config, false, null)).isEqualTo(0);
+
+		// 仮想親「A」は名前で指定したステータス（進行中）で作成し、子がすべて完了でも完了にしない
+		Long a = redmine.entrySet().stream().filter(e -> "A".equals(e.getValue().get("subject")))
+				.map(Map.Entry::getKey).findFirst().orElseThrow();
+		assertThat(status(a)).isEqualTo(IN_PROGRESS);
+		assertThat(statusChanges).noneMatch(change -> change[0] == a);
+
+		// Redmine で変えられていても、次の同期で設定のステータスに戻す（同じならスキップ）
+		redmine.get(a).put("status", Map.of("id", OPEN));
+		assertThat(run(config, false, null)).isEqualTo(0);
+		assertThat(status(a)).isEqualTo(IN_PROGRESS);
+		statusChanges.clear();
+		assertThat(run(config, false, null)).isEqualTo(0);
+		verify(client, Mockito.times(1)).updateIssue(Mockito.eq(a), anyMap());
+	}
+
+	@Test
+	@DisplayName("virtualParents.status 未設定なら従来どおり仮想親のステータスは送らず、子がすべて完了なら自動完了する")
+	void virtualParentStatus_unsetKeepsAutoClose() throws IOException {
+		csv(HEADER, ",タスク,A,,t1,完了");
+		Path config = config(true, "      virtualParents: { enabled: true, trackerId: 2 }");
+
+		assertThat(run(config, false, null)).isEqualTo(0);
+
+		Long a = redmine.entrySet().stream().filter(e -> "A".equals(e.getValue().get("subject")))
+				.map(Map.Entry::getKey).findFirst().orElseThrow();
+		assertThat(status(a)).isEqualTo(DONE);
+	}
+
+	@Test
+	@DisplayName("virtualParents.status が Redmine にないステータスなら検証エラーで、Redmine は変更しない")
+	void virtualParentStatus_unknownIsValidationError() throws IOException {
+		csv(HEADER, ",タスク,A,,t1,");
+		Path config = config(false, "      virtualParents: { enabled: true, trackerId: 2, status: 存在しない }");
+
+		assertThat(run(config, false, null)).isNotEqualTo(0);
+
+		verify(client, never()).createIssue(anyMap());
+		assertThat(logText()).contains("仮想親チケットのステータス「存在しない」");
+	}
 }

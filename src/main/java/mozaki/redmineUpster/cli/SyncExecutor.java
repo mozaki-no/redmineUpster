@@ -455,7 +455,11 @@ public class SyncExecutor {
         }
 
         StatusConfig statusConfig = projectConfig.getSync() != null ? projectConfig.getSync().getStatus() : null;
-        // 仮想親はステータスを送らない（作成時は Redmine の既定、以後は変更しない）
+        // 仮想親は sync.virtualParents.status（解決済みのID）があればそれを送り、なければ送らない
+        // （作成時は Redmine の既定、以後は変更しない）
+        if (item.virtual() && item.status() != null && isNumeric(item.status())) {
+            issue.put("status_id", Long.parseLong(item.status()));
+        }
         if (statusConfig != null && statusConfig.isEnabled() && !item.virtual()) {
             String statusValue = resolveStatus(item, payload, statusConfig);
             statusValue = mapStatusValue(statusValue, statusConfig);

@@ -497,6 +497,18 @@ public class SettingsWindow extends JFrame {
             SettingsDocument.remove(p, "sync.virtualParents.tracker");
             SettingsDocument.setString(p, "sync.virtualParents.trackerId", trackerField.getText());
         });
+        // 別名 statusId: で書かれていた場合も読み、保存時は status: にそろえる
+        HintTextField virtualStatusField = new HintTextField("空欄: 送らない（Redmine の既定）");
+        form.row("仮想親のステータス", virtualStatusField, "仮想親のステータス（名前または番号）。"
+                + "設定すると作成・更新のたびにこのステータスにし、親チケットの自動完了・進行中の対象にしない");
+        bind(p -> {
+            String value = SettingsDocument.getString(p, "sync.virtualParents.status");
+            virtualStatusField.setText(nz(value != null ? value
+                    : SettingsDocument.getString(p, "sync.virtualParents.statusId")));
+        }, p -> {
+            SettingsDocument.remove(p, "sync.virtualParents.statusId");
+            SettingsDocument.setString(p, "sync.virtualParents.status", virtualStatusField.getText());
+        });
 
         form.note("親チケットの自動完了: 子チケットがすべて完了した親チケットを、同期の最後に自動で完了にする");
         form.check("親チケットを自動で完了にする", "sync.autoCloseParents.enabled", false,
