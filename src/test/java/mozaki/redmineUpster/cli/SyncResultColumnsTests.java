@@ -157,7 +157,8 @@ class SyncResultColumnsTests {
 		assertThat(lines.get(2).split(",")[4]).isEqualTo(syncedAt);
 		assertThat(tempDir.resolve("a.csv.bak")).hasContent(HEADER + "\n,サマリ,A,\n,タスク,A,a-task");
 		Mockito.verify(writer, Mockito.times(1)).writeBack(anyString(), anyString(), anyMap(),
-				any(ExcelSource.class), Mockito.anyBoolean(), any(TicketIdWriter.SyncResults.class));
+				any(ExcelSource.class), Mockito.anyBoolean(), any(TicketIdWriter.SyncResults.class), Mockito.isNull(),
+				any(mozaki.redmineUpster.util.BackupLocation.class));
 
 		// 再実行: Redmineと同じ値なので変更なし（同期結果の列は差分に使わない）
 		assertThat(run(config, file, false, false)).isEqualTo(0);
@@ -258,7 +259,8 @@ class SyncResultColumnsTests {
 		redmine.put(1L, issue(1, "A", 6, null));
 		Mockito.doThrow(new IOException("The process cannot access the file")).when(writer).writeBack(anyString(),
 				anyString(), anyMap(), any(ExcelSource.class), Mockito.anyBoolean(),
-				any(TicketIdWriter.SyncResults.class));
+				any(TicketIdWriter.SyncResults.class), Mockito.isNull(),
+				any(mozaki.redmineUpster.util.BackupLocation.class));
 
 		assertThat(run(config(), file, false, false)).isEqualTo(0);
 

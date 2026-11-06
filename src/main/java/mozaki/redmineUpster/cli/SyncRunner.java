@@ -28,6 +28,7 @@ import mozaki.redmineUpster.config.SyncConfigProperties.SyncConfig;
 import mozaki.redmineUpster.service.ExcelSource;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.service.RedmineClientFactory;
+import mozaki.redmineUpster.util.BackupLocation;
 import mozaki.redmineUpster.service.SpreadsheetParser;
 import mozaki.redmineUpster.service.SpreadsheetParser.ParsedSheet;
 import mozaki.redmineUpster.service.SyncConfigService;
@@ -336,11 +337,20 @@ public class SyncRunner {
                 }
                 jobs.add(job);
             }
+            BackupLocation backupLocation = BackupLocation.of(projectConfig.getBackupDir())
+                    .withFiles(jobs.stream().map(j -> Paths.get(j.filePath)).toList());
+            for (FileJob job : jobs) {
+                job.writeBack.backupLocation = backupLocation;
+            }
+            if (backupLocation.dir() != null) {
+                logger.info("Backup folder: " + backupLocation.dir());
+            }
 
             // 6. Redmineクライアント作成（トラッカー名の解決・存在確認に使用）
             RedmineClient client = redmineClientFactory.createClient(projectConfig);
             client.setLogger(logger);
             logger.info("Redmine URL: " + client.getBaseUrl());
+            logger.info("Proxy: " + client.getConnectionDescription());
             logger.info("Redmine Project: " + client.getProjectId());
 
             // 7. すべてのファイルを検証（エラーがあればRedmineに一切書き込まない）
@@ -988,11 +998,9 @@ public class SyncRunner {
             return;
         }
         try {
-            TicketIdWriter.WriteBackResult writeBack = statusValues == null
-                    ? ticketIdWriter.writeBack(filePath, ticketIdColumn, createdIssueIds, job.excelSource,
-                            !writeBackState.backupMade, syncResults)
-                    : ticketIdWriter.writeBack(filePath, ticketIdColumn, createdIssueIds, job.excelSource,
-                            !writeBackState.backupMade, syncResults, statusValues);
+            TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeBack(filePath, ticketIdColumn,
+                    createdIssueIds, job.excelSource, !writeBackState.backupMade, syncResults, statusValues,
+                    writeBackState.backupLocation);
             writeBackState.backupMade |= writeBack.backup() != null;
             for (String note : writeBack.notes()) {
                 logger.info(note);
@@ -1619,6 +1627,8 @@ public class SyncRunner {
     private static final class WriteBackState {
         private boolean backupMade;
         private boolean failed;
+        /** バックアップの保存先（sync.backup.dir / backup.dir。未設定なら元のファイルと同じフォルダ） */
+        private BackupLocation backupLocation = BackupLocation.BESIDE_ORIGINAL;
     }
 
     /**
@@ -1631,7 +1641,7 @@ public class SyncRunner {
         }
         try {
             TicketIdWriter.WriteBackResult writeBack = ticketIdWriter.writeBack(filePath, idColumn, ids, source,
-                    !state.backupMade);
+                    !state.backupMade, null, null, state.backupLocation);
             state.backupMade |= writeBack.backup() != null;
             writeBack.notes().forEach(logger::info);
             logger.info("Wrote " + (ids.size() - writeBack.failures().size()) + " IDs back to " + source.describe()
