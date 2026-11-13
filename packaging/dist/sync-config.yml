@@ -17,6 +17,8 @@
 #   timeEntries: true      # 作業時間
 #   wiki: true             # Wiki
 #   threads: 4             # チケットの詳細を同時に取得する数（1〜16）
+#   allRedmineProjects: false  # true = Redmine の全プロジェクト（YAMLにないものも。--all-redmine-projects と同じ。
+#                              # 接続は既定のプロジェクトの設定。すべて見るには管理者の API キーが必要）
 projects:
   - name: "本番"
     default: true

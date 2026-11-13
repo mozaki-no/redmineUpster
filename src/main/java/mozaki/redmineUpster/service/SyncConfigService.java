@@ -455,6 +455,7 @@ public class SyncConfigService {
 		config.setAttachments(parseBoolean(map.get("attachments"), true));
 		config.setTimeEntries(parseBoolean(map.get("timeEntries"), true));
 		config.setWiki(parseBoolean(map.get("wiki"), true));
+		config.setAllRedmineProjects(parseBoolean(map.get("allRedmineProjects"), false));
 		return config;
 	}
 

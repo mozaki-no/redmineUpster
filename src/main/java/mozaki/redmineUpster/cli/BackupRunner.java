@@ -9,8 +9,12 @@ import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -19,6 +23,7 @@ import org.springframework.stereotype.Component;
 import lombok.RequiredArgsConstructor;
 import mozaki.redmineUpster.config.SyncConfigProperties.FullBackupConfig;
 import mozaki.redmineUpster.config.SyncConfigProperties.ProjectConfig;
+import mozaki.redmineUpster.config.SyncConfigProperties.RedmineConfig;
 import mozaki.redmineUpster.service.RedmineClient;
 import mozaki.redmineUpster.service.RedmineClientFactory;
 import mozaki.redmineUpster.service.SyncConfigService;
@@ -35,6 +40,10 @@ import mozaki.redmineUpster.service.SyncConfigService;
  * 成功後、{@code keep} 世代より古い同じプロジェクトのバックアップ（このツールの名前のものだけ）を削除します。
  * 対話の確認はなく、Jenkins などから実行できます（終了コード: 成功 0（警告があっても）、失敗 1）。
  * </p>
+ * <p>
+ * {@code --all-redmine-projects}（または {@code fullBackup.allRedmineProjects: true}）では、設定にないものも含めて
+ * Redmine の全プロジェクトを1つずつバックアップします（サブプロジェクトは別のファイルにし、親のファイルには含めません）。
+ * </p>
  */
 @Component
 @RequiredArgsConstructor
@@ -42,6 +51,8 @@ public class BackupRunner {
 
     /** 出力先フォルダの既定（カレントディレクトリ基準） */
     static final String DEFAULT_DIR = "backup";
+    /** プロジェクト一覧の1ページの件数（Redmine の上限） */
+    static final int PROJECTS_PAGE_SIZE = 100;
 
     private final SyncRunner syncRunner;
     private final SyncConfigService syncConfigService;
@@ -67,7 +78,7 @@ public class BackupRunner {
     }
 
     /**
-     * バックアップを実行します。
+     * バックアップを実行します（Redmine の全プロジェクトは設定の {@code fullBackup.allRedmineProjects} に従う）。
      *
      * @param configPath 設定ファイルパス（null なら既定の場所）
      * @param projectName プロジェクト名（null ならデフォルトプロジェクト。allProjects なら無視）
@@ -79,11 +90,35 @@ public class BackupRunner {
      */
     public int run(String configPath, String projectName, boolean allProjects, Overrides overrides, String logDir,
             boolean debug) {
-        return run(configPath, projectName, allProjects, overrides, logDir, debug, BackupSheet.EXCEL_MAX_DATA_ROWS);
+        return run(configPath, projectName, allProjects, false, overrides, logDir, debug);
+    }
+
+    /**
+     * バックアップを実行します。
+     *
+     * @param configPath 設定ファイルパス（null なら既定の場所）
+     * @param projectName プロジェクト名（null ならデフォルトプロジェクト。allProjects なら無視）
+     * @param allProjects 設定のすべてのプロジェクトをバックアップする場合 true（1プロジェクト1ファイル）
+     * @param allRedmineProjects Redmine の全プロジェクト（設定にないものも）をバックアップする場合 true
+     *        （false でも設定の {@code fullBackup.allRedmineProjects} が true なら有効。allProjects より優先）
+     * @param overrides CLI の上書き
+     * @param logDir ログ出力ディレクトリ（null ならカレントディレクトリの logs）
+     * @param debug デバッグモード
+     * @return 成功（警告があっても）なら 0、1つでも失敗したら 1
+     */
+    public int run(String configPath, String projectName, boolean allProjects, boolean allRedmineProjects,
+            Overrides overrides, String logDir, boolean debug) {
+        return run(configPath, projectName, allProjects, allRedmineProjects, overrides, logDir, debug,
+                BackupSheet.EXCEL_MAX_DATA_ROWS);
     }
 
     int run(String configPath, String projectName, boolean allProjects, Overrides overrides, String logDir,
             boolean debug, int maxDataRows) {
+        return run(configPath, projectName, allProjects, false, overrides, logDir, debug, maxDataRows);
+    }
+
+    int run(String configPath, String projectName, boolean allProjects, boolean allRedmineProjects,
+            Overrides overrides, String logDir, boolean debug, int maxDataRows) {
         Overrides o = overrides == null ? Overrides.none() : overrides;
         FileLogger logger = null;
         try {
@@ -95,12 +130,37 @@ public class BackupRunner {
                 logger.error("出力先は .xlsx にしてください: " + o.file());
                 return 1;
             }
+            if (allRedmineProjects && o.file() != null) {
+                logger.error("--all-redmine-projects と --file は同時に指定できません（--backup-dir を使ってください）");
+                return 1;
+            }
             if (allProjects && o.file() != null) {
                 logger.error("--all-projects と --file は同時に指定できません（--backup-dir を使ってください）");
                 return 1;
             }
             if (!syncRunner.loadConfig(configPath, logger)) {
                 return 1;
+            }
+            if (!allRedmineProjects) {
+                ProjectConfig selected = allProjects ? defaultOrFirstProject()
+                        : syncRunner.resolveProject(projectName, logger);
+                if (selected != null && selected.getFullBackup() != null
+                        && selected.getFullBackup().isAllRedmineProjects()) {
+                    allRedmineProjects = true;
+                    logger.info("設定の fullBackup.allRedmineProjects により Redmine の全プロジェクトをバックアップします");
+                    if (o.file() != null) {
+                        logger.error("fullBackup.allRedmineProjects が有効なときは --file を指定できません"
+                                + "（--backup-dir を使ってください）");
+                        return 1;
+                    }
+                }
+            }
+            LocalDateTime now = LocalDateTime.now().withNano(0);
+            if (allRedmineProjects) {
+                if (allProjects) {
+                    logger.info("--all-projects は無視します（Redmine の全プロジェクトをバックアップします）");
+                }
+                return runAllRedmineProjects(projectName, o, logger, now, maxDataRows);
             }
             List<ProjectConfig> projects = new ArrayList<>();
             if (allProjects) {
@@ -116,9 +176,8 @@ public class BackupRunner {
                 return 1;
             }
             int failed = 0;
-            LocalDateTime now = LocalDateTime.now().withNano(0);
             for (ProjectConfig project : projects) {
-                if (!backupProject(project, o, logger, now, maxDataRows)) {
+                if (!backupProject(project, o, logger, now, maxDataRows, false)) {
                     failed++;
                 }
             }
@@ -141,8 +200,152 @@ public class BackupRunner {
         }
     }
 
-    private boolean backupProject(ProjectConfig project, Overrides o, FileLogger logger, LocalDateTime now,
+    private ProjectConfig defaultOrFirstProject() {
+        return syncConfigService.getDefaultProject().orElseGet(() -> {
+            List<ProjectConfig> all = syncConfigService.getAllProjects();
+            return all.isEmpty() ? null : all.get(0);
+        });
+    }
+
+    /**
+     * Redmine の全プロジェクト（{@code GET /projects.json}。API キーで見えるもの。アーカイブ済みは返らない）を
+     * 1プロジェクト1ファイルでバックアップします。接続には選んだプロジェクト（--project または既定）の設定を使い、
+     * オプションは redmine.projectId（識別子または数値ID）と baseUrl が同じ設定のプロジェクトがあればその設定、
+     * なければ選んだプロジェクトの設定です。サブプロジェクトは別のファイルになるため、各ファイルには含めません。
+     */
+    private int runAllRedmineProjects(String projectName, Overrides o, FileLogger logger, LocalDateTime now,
             int maxDataRows) {
+        ProjectConfig selected = syncRunner.resolveProject(projectName, logger);
+        if (selected == null) {
+            logger.error("No project configuration found");
+            return 1;
+        }
+        if (selected.getRedmine() == null || selected.getRedmine().getBaseUrl() == null
+                || selected.getRedmine().getBaseUrl().isBlank()) {
+            logger.error("redmine.baseUrl が設定されていません: " + selected.getName());
+            return 1;
+        }
+        logger.info("接続に使う設定: " + selected.getName());
+        List<Map<String, Object>> redmineProjects;
+        try {
+            RedmineClient client = redmineClientFactory.createClient(selected);
+            client.setLogger(logger);
+            logger.info("Redmine URL: " + client.getBaseUrl());
+            redmineProjects = listRedmineProjects(client);
+        } catch (Exception e) {
+            logger.error("Redmine のプロジェクト一覧を取得できません: " + FullBackupWriter.describe(e));
+            return 1;
+        }
+        logger.info("Redmine の全プロジェクト: " + redmineProjects.size() + " 件");
+        if (redmineProjects.isEmpty()) {
+            logger.warn("バックアップするプロジェクトがありません（API キーで見えるプロジェクトがありません）");
+            return 0;
+        }
+        int failed = 0;
+        for (Map<String, Object> redmineProject : redmineProjects) {
+            ProjectConfig project = forRedmineProject(selected, redmineProject);
+            if (!backupProject(project, o, logger, now, maxDataRows, true)) {
+                failed++;
+            }
+        }
+        logger.info("=== Backup finished: " + (redmineProjects.size() - failed) + " / " + redmineProjects.size()
+                + " projects succeeded ===");
+        return failed == 0 ? 0 : 1;
+    }
+
+    /**
+     * {@code GET /projects.json} を100件ずつ（total_count まで）取得します。
+     */
+    static List<Map<String, Object>> listRedmineProjects(RedmineClient client) {
+        List<Map<String, Object>> all = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        int offset = 0;
+        while (true) {
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("limit", PROJECTS_PAGE_SIZE);
+            params.put("offset", offset);
+            Map<String, Object> page = client.getJson("/projects.json", params);
+            List<Map<String, Object>> items = new ArrayList<>();
+            if (page.get("projects") instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> project = (Map<String, Object>) map;
+                        items.add(project);
+                    }
+                }
+            }
+            for (Map<String, Object> project : items) {
+                String identifier = identifierOf(project);
+                if (identifier != null && seen.add(identifier)) {
+                    all.add(project);
+                }
+            }
+            int total = page.get("total_count") instanceof Number n ? n.intValue() : -1;
+            offset += items.size();
+            if (items.isEmpty() || total < 0 || offset >= total) {
+                return all;
+            }
+        }
+    }
+
+    private static String identifierOf(Map<String, Object> project) {
+        Object identifier = project.get("identifier");
+        if (identifier != null && !identifier.toString().isBlank()) {
+            return identifier.toString().trim();
+        }
+        Object id = project.get("id");
+        return id == null ? null : id.toString().trim();
+    }
+
+    /**
+     * Redmine のプロジェクトをバックアップするための設定を作ります（接続は selected、projectId は Redmine の識別子、
+     * fullBackup は同じ Redmine・同じプロジェクトの設定があればそれ、なければ selected のもの）。
+     */
+    private ProjectConfig forRedmineProject(ProjectConfig selected, Map<String, Object> redmineProject) {
+        String identifier = identifierOf(redmineProject);
+        String numericId = redmineProject.get("id") == null ? null : redmineProject.get("id").toString().trim();
+        ProjectConfig settings = selected;
+        for (ProjectConfig candidate : syncConfigService.getAllProjects()) {
+            RedmineConfig redmine = candidate.getRedmine();
+            if (redmine == null || redmine.getProjectId() == null
+                    || !sameBaseUrl(redmine.getBaseUrl(), selected.getRedmine().getBaseUrl())) {
+                continue;
+            }
+            String projectId = redmine.getProjectId().trim();
+            if (projectId.equals(identifier) || projectId.equals(numericId)) {
+                settings = candidate;
+                break;
+            }
+        }
+        RedmineConfig redmine = new RedmineConfig();
+        redmine.setBaseUrl(selected.getRedmine().getBaseUrl());
+        redmine.setApiKey(selected.getRedmine().getApiKey());
+        redmine.setProxy(selected.getRedmine().getProxy());
+        redmine.setProjectId(identifier);
+        ProjectConfig project = new ProjectConfig();
+        Object name = redmineProject.get("name");
+        project.setName((name == null ? identifier : name.toString()) + " (" + identifier + ")"
+                + (settings != selected ? "［設定: " + settings.getName() + "］" : ""));
+        project.setRedmine(redmine);
+        project.setFullBackup(settings.getFullBackup());
+        return project;
+    }
+
+    static boolean sameBaseUrl(String a, String b) {
+        return normalizeUrl(a).equals(normalizeUrl(b));
+    }
+
+    private static String normalizeUrl(String url) {
+        String text = url == null ? "" : url.trim().toLowerCase(Locale.ROOT);
+        while (text.endsWith("/")) {
+            text = text.substring(0, text.length() - 1);
+        }
+        return text;
+    }
+
+    private boolean backupProject(ProjectConfig project, Overrides o, FileLogger logger, LocalDateTime now,
+            int maxDataRows, boolean ownOnly) {
         logger.info("--- Project: " + project.getName() + " ---");
         if (project.getRedmine() == null || project.getRedmine().getProjectId() == null
                 || project.getRedmine().getProjectId().isBlank()) {
@@ -154,7 +357,7 @@ public class BackupRunner {
                 o.journals() != null ? o.journals() : config.isJournals(),
                 o.attachments() != null ? o.attachments() : config.isAttachments(),
                 o.timeEntries() != null ? o.timeEntries() : config.isTimeEntries(),
-                o.wiki() != null ? o.wiki() : config.isWiki(), config.getThreads(), maxDataRows);
+                o.wiki() != null ? o.wiki() : config.isWiki(), config.getThreads(), maxDataRows, ownOnly);
         int keep = o.keep() != null ? o.keep() : config.getKeep();
         String identifier = project.getRedmine().getProjectId().trim();
 

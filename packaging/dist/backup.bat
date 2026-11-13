@@ -5,6 +5,8 @@ rem backup\<project>_yyyyMMdd_HHmmss.xlsx (+ backup\<same name>_files\ for attac
 rem It is for reading when Redmine is lost; it cannot be dragged onto run.bat (use export.bat for that).
 rem Folder / generations to keep / contents: fullBackup in sync-config.yml, or options such as
 rem "--backup-dir=D:\backup" "--keep=7" "--all-projects" "--no-attachments" "--project=xxx".
+rem "--all-redmine-projects" backs up EVERY project on the Redmine server, not only the ones in sync-config.yml
+rem (one file per project; same as fullBackup.allRedmineProjects: true; use an admin API key to see all projects).
 rem Unattended use (Jenkins, Task Scheduler): /y (or --yes), REDMINEUPSTER_NO_PROMPT=1 or Jenkins (JENKINS_URL) skips the pause.
 rem Other options starting with "--" (quote them) are passed to redmineUpster.exe. The exit code is redmineUpster.exe's (0 = OK, 1 = failed).
 setlocal

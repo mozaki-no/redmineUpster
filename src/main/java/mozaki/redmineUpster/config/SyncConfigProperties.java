@@ -99,6 +99,11 @@ public class SyncConfigProperties {
 		private boolean wiki = true;
 		/** チケットの詳細（履歴）を同時に取得する数（1〜16） */
 		private int threads = 4;
+		/**
+		 * Redmine の全プロジェクト（設定にないものも。API キーで見えるもの）をバックアップする
+		 * （--all-redmine-projects と同じ。選んだプロジェクト（--project または既定）の値を使う）
+		 */
+		private boolean allRedmineProjects;
 	}
 
 	/**

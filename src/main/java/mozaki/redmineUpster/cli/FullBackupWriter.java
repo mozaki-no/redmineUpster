@@ -88,12 +88,20 @@ final class FullBackupWriter {
      * @param wiki Wiki を出力する
      * @param threads チケットの詳細を同時に取得する数
      * @param maxDataRows 1シートのデータ行の上限（テスト用。通常は Excel の上限）
+     * @param ownOnly チケット・作業時間をそのプロジェクトのものだけにする（サブプロジェクトを含めない。
+     *        Redmine の全プロジェクトのバックアップでは、サブプロジェクトは別のファイルになるため）
      */
     record Options(boolean journals, boolean attachments, boolean timeEntries, boolean wiki, int threads,
-            int maxDataRows) {
+            int maxDataRows, boolean ownOnly) {
+        Options(boolean journals, boolean attachments, boolean timeEntries, boolean wiki, int threads,
+                int maxDataRows) {
+            this(journals, attachments, timeEntries, wiki, threads, maxDataRows, false);
+        }
+
         String describe() {
             return "履歴・ウォッチャー=" + onOff(journals) + "、添付ファイルのダウンロード=" + onOff(attachments)
-                    + "、作業時間=" + onOff(timeEntries) + "、Wiki=" + onOff(wiki) + "、同時取得数=" + threads;
+                    + "、作業時間=" + onOff(timeEntries) + "、Wiki=" + onOff(wiki) + "、同時取得数=" + threads
+                    + (ownOnly ? "、サブプロジェクト=含めない（別のファイル）" : "");
         }
 
         private static String onOff(boolean value) {
@@ -241,14 +249,15 @@ final class FullBackupWriter {
                 "合計予定工数", "作業時間", "合計作業時間", "プライベート", "作成日時", "更新日時", "終了日時"));
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("project_id", projectId);
-        params.put("subproject_id", "*");
+        params.put("subproject_id", options.ownOnly() ? "!*" : "*");
         params.put("status_id", "*");
         params.put("sort", "id");
         if (!options.journals()) {
             params.put("include", "attachments,relations");
         }
         // 1ページ目を先に取得して、カスタムフィールドの列を決める（取得できなければ失敗）
-        logger.info("Fetching issues of project " + projectId + " (closed and subprojects included)...");
+        logger.info("Fetching issues of project " + projectId
+                + (options.ownOnly() ? " (closed included, subprojects excluded)..." : " (closed and subprojects included)..."));
         Map<String, Object> firstPage = fetchPage("/issues.json", params, 0);
         int totalCount = firstPage.get("total_count") instanceof Number n ? n.intValue() : -1;
         for (Map<String, Object> issue : list(firstPage.get("issues"))) {
@@ -561,6 +570,9 @@ final class FullBackupWriter {
     private void writeTimeEntries(String projectId) throws IOException {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("project_id", projectId);
+        if (options.ownOnly()) {
+            params.put("subproject_id", "!*");
+        }
         Map<String, Object> page = optional("作業時間", () -> fetchPage("/time_entries.json", params, 0));
         if (page == null) {
             return;
@@ -811,7 +823,8 @@ final class FullBackupWriter {
         rows.add(new Object[] { "実行日時", startedAt.format(INFO_TIME) + "（" + ZoneId.systemDefault() + "。シートの日時も同じ）" });
         rows.add(new Object[] { "所要時間（秒）", elapsed.toSeconds() });
         rows.add(new Object[] { "オプション", options.describe() });
-        rows.add(new Object[] { "チケット", issues + " 件（クローズ済み・サブプロジェクトを含む）" });
+        rows.add(new Object[] { "チケット", issues + (options.ownOnly()
+                ? " 件（クローズ済みを含む。サブプロジェクトは別のファイル）" : " 件（クローズ済み・サブプロジェクトを含む）") });
         rows.add(new Object[] { "添付ファイル", options.attachments()
                 ? attachmentsSaved + " 件を保存（" + attachmentBytes + " バイト）" + (attachmentsFailed > 0
                         ? "、" + attachmentsFailed + " 件は保存できません" : "") + "。保存先: " + filesPrefix
