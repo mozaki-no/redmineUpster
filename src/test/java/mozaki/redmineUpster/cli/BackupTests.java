@@ -68,6 +68,14 @@ class BackupTests {
 	private final List<String> requests = Collections.synchronizedList(new ArrayList<>());
 	private final Set<String> apiKeysSeen = ConcurrentHashMap.newKeySet();
 	private String longDescription;
+	/** チケットの取得で 403 を返すプロジェクト */
+	private volatile String failIssuesProject;
+	/** GET /projects.json が返すプロジェクト（1ページ2件で返す） */
+	private final List<Map<String, Object>> redmineProjects = List.of(
+			Map.of("id", 7, "name", "テスト案件", "identifier", "proj", "status", 1),
+			Map.of("id", 8, "name", "子案件", "identifier", "sub", "parent", Map.of("id", 7, "name", "テスト案件"),
+					"status", 1),
+			Map.of("id", 9, "name", "別案件", "identifier", "other", "status", 5));
 
 	@BeforeEach
 	void setUp() throws IOException {
@@ -116,6 +124,29 @@ class BackupTests {
 			} else {
 				send(exchange, 404, "{}");
 			}
+			return;
+		}
+		if (decodedPath.equals("/projects.json")) {
+			int offset = Integer.parseInt(params.getOrDefault("offset", "0"));
+			int limit = Math.min(2, Integer.parseInt(params.getOrDefault("limit", "25")));
+			List<Map<String, Object>> page = redmineProjects.subList(Math.min(offset, redmineProjects.size()),
+					Math.min(offset + limit, redmineProjects.size()));
+			send(exchange, 200, json.writeValueAsString(Map.of("projects", page, "total_count",
+					redmineProjects.size(), "offset", offset, "limit", limit)));
+			return;
+		}
+		if (decodedPath.equals("/projects/sub.json") || decodedPath.equals("/projects/other.json")) {
+			String identifier = decodedPath.substring("/projects/".length(), decodedPath.length() - ".json".length());
+			send(exchange, 200, json.writeValueAsString(Map.of("project", redmineProjects.stream()
+					.filter(p -> identifier.equals(p.get("identifier"))).findFirst().orElseThrow())));
+			return;
+		}
+		if (decodedPath.equals("/issues.json") && params.get("project_id").equals(failIssuesProject)) {
+			send(exchange, 403, "{}");
+			return;
+		}
+		if (decodedPath.equals("/issues.json") && !"proj".equals(params.get("project_id"))) {
+			send(exchange, 200, json.writeValueAsString(otherIssues(params)));
 			return;
 		}
 		Object body = switch (decodedPath) {
@@ -173,6 +204,22 @@ class BackupTests {
 			page.add(issue(id));
 		}
 		return Map.of("issues", page, "total_count", ISSUES, "offset", offset, "limit", limit);
+	}
+
+	/** proj 以外のプロジェクトのチケット（sub: 1001・1002、other: 2001）。sub は proj のサブプロジェクト */
+	private Map<String, Object> otherIssues(Map<String, String> params) {
+		String project = params.get("project_id");
+		List<Map<String, Object>> issues = new ArrayList<>();
+		if (project.equals("sub") || project.equals("other")) {
+			long first = project.equals("sub") ? 1001 : 2001;
+			int count = project.equals("sub") ? 2 : 1;
+			for (long id = first; id < first + count; id++) {
+				issues.add(Map.of("id", id, "project", Map.of("id", project.equals("sub") ? 8 : 9, "name", project),
+						"tracker", Map.of("id", 2, "name", "タスク"), "status", Map.of("id", 1, "name", "新規"),
+						"subject", project + "のチケット" + id, "created_on", "2026-11-01T00:00:00Z"));
+			}
+		}
+		return Map.of("issues", issues, "total_count", issues.size(), "offset", 0, "limit", 100);
 	}
 
 	private Map<String, Object> issue(long id) {
@@ -270,6 +317,11 @@ class BackupTests {
 	}
 
 	private int runBackup(Path config, BackupRunner.Overrides overrides, int maxDataRows) {
+		return runBackup(config, false, false, overrides, maxDataRows);
+	}
+
+	private int runBackup(Path config, boolean allProjects, boolean allRedmineProjects,
+			BackupRunner.Overrides overrides, int maxDataRows) {
 		SyncConfigService configService = new SyncConfigService(new SyncConfigProperties());
 		RedmineClientFactory factory = Mockito.mock(RedmineClientFactory.class);
 		when(factory.createClient(any(ProjectConfig.class))).thenAnswer(invocation -> {
@@ -282,13 +334,29 @@ class BackupTests {
 		SyncRunner syncRunner = new SyncRunner(configService, new SpreadsheetParser(), new DiffCalculator(),
 				Mockito.mock(SyncExecutor.class), factory, new TicketIdWriter(), new DirectorySync());
 		BackupRunner runner = new BackupRunner(syncRunner, configService, factory);
-		return runner.run(config.toString(), null, false, overrides, tempDir.resolve("logs").toString(), false,
-				maxDataRows);
+		return runner.run(config.toString(), null, allProjects, allRedmineProjects, overrides,
+				tempDir.resolve("logs").toString(), false, maxDataRows);
 	}
 
 	private List<Path> backups(Path dir) throws IOException {
+		return backups(dir, "proj");
+	}
+
+	private List<Path> backups(Path dir, String identifier) throws IOException {
 		try (Stream<Path> files = Files.list(dir)) {
-			return files.filter(p -> p.getFileName().toString().matches("proj_\\d{8}_\\d{6}\\.xlsx")).sorted().toList();
+			return files.filter(p -> p.getFileName().toString().matches(identifier + "_\\d{8}_\\d{6}\\.xlsx"))
+					.sorted().toList();
+		}
+	}
+
+	private static List<String> ticketIds(Path xlsx) throws IOException {
+		try (Workbook workbook = new XSSFWorkbook(Files.newInputStream(xlsx))) {
+			Sheet tickets = workbook.getSheet("チケット");
+			List<String> ids = new ArrayList<>();
+			for (int row = 1; row <= tickets.getLastRowNum(); row++) {
+				ids.add(cell(tickets, row, "ID"));
+			}
+			return ids;
 		}
 	}
 
@@ -543,6 +611,108 @@ class BackupTests {
 				.isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> SyncCommand.parseBackupOverrides(new String[] { "--backup", "--file=a.xlsx",
 				"--file=b.xlsx" })).isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	@DisplayName("--all-redmine-projects: Redmine の全プロジェクト（ページング）を1ファイルずつ。サブプロジェクトのチケットは親に含めず、"
+			+ "同じ projectId（数値ID）の設定があればその設定を使う")
+	void allRedmineProjects() throws Exception {
+		Path config = tempDir.resolve("sync-config.yml");
+		Files.writeString(config, String.join("\n",
+				"projects:",
+				"  - name: t",
+				"    default: true",
+				"    redmine: { baseUrl: '" + baseUrl() + "/', apiKey: " + API_KEY + ", projectId: proj }",
+				"    sync:",
+				"      fullBackup: { dir: out, journals: false, wiki: false, attachments: false }",
+				"  - name: o",
+				"    redmine: { baseUrl: '" + baseUrl() + "', apiKey: other-key, projectId: '9' }",
+				"    sync:",
+				"      fullBackup: { dir: out-other, journals: false, wiki: false, timeEntries: false }",
+				""));
+
+		int exit = runBackup(config, true, true, BackupRunner.Overrides.none(), BackupSheet.EXCEL_MAX_DATA_ROWS);
+
+		assertThat(exit).isZero();
+		// 1ページ2件 → 2ページ
+		assertThat(requests.stream().filter(r -> r.startsWith("/projects.json")).toList())
+				.containsExactly("/projects.json?limit=100&offset=0", "/projects.json?limit=100&offset=2");
+		Path out = tempDir.resolve("out");
+		assertThat(backups(out, "proj")).hasSize(1);
+		assertThat(backups(out, "sub")).hasSize(1);
+		assertThat(backups(tempDir.resolve("out-other"), "other")).hasSize(1);
+		assertThat(backups(out, "other")).isEmpty();
+		// サブプロジェクトのチケットは親のファイルに含めない（各プロジェクトのチケットだけ）
+		assertThat(requests).filteredOn(r -> r.startsWith("/issues.json")).allMatch(r -> r.contains("subproject_id=%21*")
+				|| r.contains("subproject_id=!*"));
+		assertThat(requests).filteredOn(r -> r.startsWith("/time_entries.json")).isNotEmpty()
+				.allMatch(r -> r.contains("subproject_id="));
+		assertThat(ticketIds(backups(out, "sub").get(0))).containsExactly("1001", "1002");
+		assertThat(ticketIds(backups(out, "proj").get(0))).hasSize(ISSUES).doesNotContain("1001", "1002");
+		assertThat(ticketIds(backups(tempDir.resolve("out-other"), "other").get(0))).containsExactly("2001");
+		// 接続は選んだプロジェクト（既定の t）の API キー
+		assertThat(apiKeysSeen).containsExactly(API_KEY);
+		try (Workbook workbook = new XSSFWorkbook(Files.newInputStream(backups(tempDir.resolve("out-other"), "other")
+				.get(0)))) {
+			// other は設定 o の fullBackup（作業時間なし）
+			assertThat(sheetNames(workbook)).doesNotContain("作業時間");
+			assertThat(info(workbook.getSheet("情報"))).contains("サブプロジェクトは別のファイル");
+		}
+		String log;
+		try (Stream<Path> logs = Files.list(tempDir.resolve("logs"))) {
+			log = Files.readString(logs.findFirst().orElseThrow());
+		}
+		assertThat(log).contains("Redmine の全プロジェクト: 3 件").contains("--all-projects は無視します")
+				.contains("3 / 3 projects succeeded");
+	}
+
+	@Test
+	@DisplayName("設定の fullBackup.allRedmineProjects: true で有効。1プロジェクトの失敗は続行して終了コード1")
+	void allRedmineProjectsFromConfig() throws Exception {
+		failIssuesProject = "sub";
+		Path config = tempDir.resolve("sync-config.yml");
+		Files.writeString(config, String.join("\n",
+				"fullBackup:",
+				"  allRedmineProjects: true",
+				"  dir: out",
+				"  journals: false",
+				"  wiki: false",
+				"projects:",
+				"  - name: t",
+				"    default: true",
+				"    redmine: { baseUrl: '" + baseUrl() + "', apiKey: " + API_KEY + ", projectId: proj }",
+				""));
+
+		assertThat(runBackup(config, BackupRunner.Overrides.none(), BackupSheet.EXCEL_MAX_DATA_ROWS)).isEqualTo(1);
+		assertThat(requests).anyMatch(r -> r.startsWith("/projects.json"));
+		Path out = tempDir.resolve("out");
+		assertThat(backups(out, "proj")).hasSize(1);
+		assertThat(backups(out, "sub")).isEmpty();
+		assertThat(backups(out, "other")).hasSize(1);
+		try (Stream<Path> files = Files.list(out)) {
+			assertThat(files.map(p -> p.getFileName().toString())).noneMatch(n -> n.endsWith(".tmp"));
+		}
+	}
+
+	@Test
+	@DisplayName("--all-redmine-projects: --file とは同時に指定できない。プロジェクト一覧を取得できなければ失敗")
+	void allRedmineProjectsErrors() throws Exception {
+		Path config = writeConfig("        dir: out");
+
+		assertThat(runBackup(config, false, true, new BackupRunner.Overrides(tempDir.resolve("a.xlsx").toString(),
+				null, null, null, null, null, null), BackupSheet.EXCEL_MAX_DATA_ROWS)).isEqualTo(1);
+		assertThat(requests).isEmpty();
+
+		Files.writeString(config, Files.readString(config).replace("        dir: out",
+				"        dir: out\n        allRedmineProjects: true"));
+		assertThat(runBackup(config, false, false, new BackupRunner.Overrides(tempDir.resolve("a.xlsx").toString(),
+				null, null, null, null, null, null), BackupSheet.EXCEL_MAX_DATA_ROWS)).isEqualTo(1);
+		assertThat(requests).isEmpty();
+
+		forbidden.add("/projects.json");
+		assertThat(runBackup(config, false, true, BackupRunner.Overrides.none(), BackupSheet.EXCEL_MAX_DATA_ROWS))
+				.isEqualTo(1);
+		assertThat(requests).noneMatch(r -> r.startsWith("/issues.json"));
 	}
 
 	@Test

@@ -110,6 +110,7 @@ java -jar redmineUpster.jar --sync [オプション]
 | `--export` | いいえ | 同期の代わりに、プロジェクトのチケットと Redmine のユーザー・グループ・グループメンバー、参照用のトラッカー・ステータス・カスタムフィールド（選択肢）を `--file` の .xlsx に出力（そのまま `--sync` の入力に使える） |
 | `--backup` | いいえ | 同期の代わりに、プロジェクトの全内容（クローズ済み・サブプロジェクトを含むチケット、履歴、ウォッチャー、関連、添付ファイル、作業時間、バージョン、カテゴリ、メンバー、Wiki、ユーザー・グループ、参照用一覧）を読み取り専用の .xlsx に書き出す（`--sync` の入力にはならない）。既定の出力先は `<fullBackup.dir または ./backup>/<プロジェクト識別子>_yyyyMMdd_HHmmss.xlsx`（`--file` で指定可） |
 | `--backup-dir=<path>` / `--keep=<n>` / `--all-projects` | いいえ | `--backup` の出力先フォルダ／残す世代数（0＝すべて）／設定のすべてのプロジェクトを1ファイルずつ |
+| `--all-redmine-projects` | いいえ | `--backup` で Redmine の全プロジェクト（設定にないものも）を1ファイルずつ（`fullBackup.allRedmineProjects: true` と同じ。`--all-projects` より優先、`--file` とは併用不可）。すべて見るには管理者の API キーが必要 |
 | `--no-journals` / `--no-attachments` / `--no-time-entries` / `--no-wiki` | いいえ | `--backup` で履歴・ウォッチャー／添付ファイルのダウンロード／作業時間／Wiki を省く |
 | `--settings` | いいえ | 同期の代わりに設定画面を開き、`--config` の設定ファイル（省略時は同期と同じ探し方）を編集する |
 | ~~`--relink-parent`~~ | - | **廃止**（親子は毎回階層から再設定するため不要。指定しても警告を出して無視） |
@@ -204,10 +205,13 @@ java -jar redmineUpster.jar --sync --file=users.xlsx --targets=users,groups
 java -jar redmineUpster.jar --backup
 # すべてのプロジェクトを、新しい 7 世代だけ残して（Jenkins の定期実行向け。配布版は backup.bat /y ...）
 java -jar redmineUpster.jar --backup --all-projects --backup-dir=/var/backup/redmine --keep=7
+# Redmine の全プロジェクト（sync-config.yml にないものも）を1ファイルずつ
+java -jar redmineUpster.jar --backup --all-redmine-projects --backup-dir=/var/backup/redmine --keep=7
 ```
 
 - Redmine が使えなくなったとき用の読み取り専用のバックアップ（自動の復元機能はない）。設定は最上位またはプロジェクトの `sync.fullBackup`（`dir`・`keep`・`journals`・`attachments`・`timeEntries`・`wiki`・`threads`。プロジェクト側が項目ごとに優先、`dir` は設定ファイルのフォルダ基準）。同期の `.bak` とは別。
 - チケットは100件ずつ取得して SXSSF で逐次書き出すため、5〜10万件でもメモリはほぼ一定（疑似 Redmine で 5 万件・履歴なし約 7 秒、`-Xmx256m`）。履歴・ウォッチャーはチケットごとの GET（`threads` 本で同時取得）。
+- `--all-redmine-projects`（または `fullBackup.allRedmineProjects: true`）: `--project`（省略時は既定のプロジェクト）の接続設定で `GET /projects.json` を100件ずつ取得し、Redmine の全プロジェクトを `<Redmine の識別子>_yyyyMMdd_HHmmss.xlsx` に1つずつ書き出す（世代管理も識別子ごと）。API キーで見えるプロジェクトだけが対象のため、すべてを対象にするには管理者の API キーを使う（アーカイブ済みは返らないので対象外）。オプションは、同じ `baseUrl` で `redmine.projectId`（識別子または数値ID）が一致する設定のプロジェクトがあればその `fullBackup`、なければ選んだプロジェクトのもの（CLI が優先）。サブプロジェクトは別のファイルになるため、各ファイルのチケット・作業時間はそのプロジェクトのものだけ（`subproject_id=!*`）。一覧を取得できなければ終了コード 1、1つのプロジェクトの失敗は続行して最後に 1。
 - 403/404（モジュール無効・権限なし）のものは警告して該当シートを省略し、終了コード 0。チケットを取得できないなど致命的な場合は 1 で、書きかけの `.tmp` は削除。32,767 文字超のセルは全文を `_files/long_text/` に、1,048,575 行超は `チケット(2)` などに続ける。
 
 ## 設定ファイル（sync-config.yml）

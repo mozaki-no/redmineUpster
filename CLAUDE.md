@@ -66,6 +66,7 @@ codexスキルを有効に使用し、Claudeのトークン消費をなるべく
 ### 進捗
 - 2026-11-06: 実装・テスト `BackupTests`（疑似 Redmine の HTTP サーバー: 250件のページング、クローズ済み、CF 列、履歴・ウォッチャー・関連の重複除去、Wiki 403 の警告と省略、長い説明の txt、添付の保存先と API キー、行数上限でのシート分割、致命的エラーで .tmp を残さない、世代管理、--file、設定の重ね合わせ、CLI 解析）。`mvn -B test` 全件成功。jar と Python の疑似 Redmine で通し確認（全シート、添付・Wiki 添付の保存、keep=2 の世代削除）。5万件（履歴なし）約7秒・ヒープ最大約100MB（-Xmx256m）、5万件（履歴あり・4スレッド）約36秒。
 - 2026-11-06: develop（プロキシ・.bak 保存先・仮想親ステータス）を取り込み。添付のダウンロードも `RedmineClientFactory` で設定のプロキシ（認証付き）を通すようにした。
+- 2026-11-13: Redmine の全プロジェクトのバックアップ（`--all-redmine-projects` / `fullBackup.allRedmineProjects`。選んだプロジェクトの接続で `GET /projects.json` をページング取得し、識別子ごとに1ファイル・世代管理。同じ baseUrl・projectId（識別子／数値ID）の設定があればその fullBackup。各ファイルはそのプロジェクトだけ（`subproject_id=!*`、作業時間も）。`--file` と併用不可、`--all-projects` より優先、一覧取得失敗は1、個別の失敗は続行して1）。テスト3件追加。全プロジェクトを見るには管理者の API キーが必要。
 - 未実施: 実 Redmine・Windows 実機での確認、設定画面への項目追加。
 
 ## 実行計画（設定画面）

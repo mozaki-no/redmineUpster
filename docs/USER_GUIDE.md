@@ -378,9 +378,18 @@ fullBackup:
   attachments: true           # 添付ファイルのダウンロード
   timeEntries: true           # 作業時間
   wiki: true                  # Wiki
+  allRedmineProjects: false   # true = Redmine の全プロジェクト（sync-config.yml にないものも）を1つずつ
 ```
 
-古い世代の削除は、このツールが付けた名前（`<識別子>_8桁_6桁.xlsx`）のファイルとその `_files` フォルダだけが対象です。オプションでも指定できます: `"--backup-dir=D:\backup"` `"--keep=7"` `--all-projects`（設定のすべてのプロジェクトを1つずつ）`--no-journals` `--no-attachments` `--no-time-entries` `--no-wiki` `"--project=本番"`。
+**Redmine の全プロジェクトをバックアップする**: `--all-projects` は sync-config.yml に書いたプロジェクトだけが対象です。Redmine にあるプロジェクトをすべてバックアップするには `--all-redmine-projects`（または上の `allRedmineProjects: true`）を使います。
+
+- 接続（URL・API キー・プロキシ）は `--project`（省略時は既定のプロジェクト）の設定を使い、Redmine からプロジェクトの一覧を取得して1つずつ `<Redmine の識別子>_yyyyMMdd_HHmmss.xlsx` に書き出します。古い世代の削除も識別子ごとです。
+- 対象は API キーで見えるプロジェクトだけです。**すべてのプロジェクトを対象にするには管理者の API キー**を使ってください（アーカイブ済みのプロジェクトは Redmine が返さないため対象外）。
+- 出力先・世代数などは、同じ Redmine で `projectId`（識別子または数値の ID）が一致するプロジェクトが sync-config.yml にあればその設定、なければ選んだプロジェクトの設定を使います（オプションの指定が優先）。
+- サブプロジェクトは別のファイルになるため、各ファイルのチケット・作業時間はそのプロジェクトのものだけです（親のファイルにサブプロジェクトのチケットを重複して入れません）。
+- `--file` とは同時に指定できません。`--all-projects` と両方指定した場合は全プロジェクトを優先します。一覧を取得できない場合は失敗（終了コード 1）、一部のプロジェクトだけ失敗した場合はほかを続けて最後に終了コード 1 です。
+
+古い世代の削除は、このツールが付けた名前（`<識別子>_8桁_6桁.xlsx`）のファイルとその `_files` フォルダだけが対象です。オプションでも指定できます: `"--backup-dir=D:\backup"` `"--keep=7"` `--all-projects`（設定のすべてのプロジェクトを1つずつ）`--all-redmine-projects`（Redmine の全プロジェクトを1つずつ）`--no-journals` `--no-attachments` `--no-time-entries` `--no-wiki` `"--project=本番"`。
 
 Jenkins（Windows エージェント）で毎晩 2 時に実行する例:
 

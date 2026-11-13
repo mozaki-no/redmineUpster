@@ -53,7 +53,8 @@ import mozaki.redmineUpster.service.ExcelSource;
  *   <li>{@code --export}: 同期の代わりに、プロジェクトのチケットとユーザー・グループを {@code --file} の .xlsx に出力</li>
  *   <li>{@code --backup}: 同期の代わりに、プロジェクトの全内容（チケット・履歴・添付ファイル・作業時間・Wiki など）を
  *       読み取り専用の .xlsx にバックアップ（{@code --file} / {@code --backup-dir} / {@code --all-projects} /
- *       {@code --keep} / {@code --no-journals} / {@code --no-attachments} / {@code --no-time-entries} / {@code --no-wiki}）</li>
+ *       {@code --all-redmine-projects} / {@code --keep} / {@code --no-journals} / {@code --no-attachments} /
+ *       {@code --no-time-entries} / {@code --no-wiki}）</li>
  *   <li>{@code --settings}: 設定ファイル（{@code --config}、省略時は同期と同じ探し方）を編集する設定画面を開く。
  *       Spring を起動せずに {@code RedmineUpsterApplication#main} で処理する（配布版の settings.bat）</li>
  *   <li>{@code --console-encoding}: コンソール出力の文字コード（Jenkins では既定 UTF-8）</li>
@@ -98,7 +99,8 @@ public class SyncCommand implements CommandLineRunner {
                 return;
             }
             System.exit(backupRunner.run(getArgValue(args, "--config"), getArgValue(args, "--project"),
-                    hasArg(args, "--all-projects"), overrides, getArgValue(args, "--log-dir"), hasArg(args, "--debug")));
+                    hasArg(args, "--all-projects"), hasArg(args, "--all-redmine-projects"), overrides,
+                    getArgValue(args, "--log-dir"), hasArg(args, "--debug")));
             return;
         }
 
@@ -316,7 +318,8 @@ public class SyncCommand implements CommandLineRunner {
     private void printUsage() {
         System.out.println("Usage: redmineUpster --sync --file=<CSV/Excel> [options]");
         System.out.println("       redmineUpster --export --file=<output.xlsx> [options]");
-        System.out.println("       redmineUpster --backup [--file=<output.xlsx> | --backup-dir=<dir>] [--all-projects] [options]");
+        System.out.println("       redmineUpster --backup [--file=<output.xlsx> | --backup-dir=<dir>]");
+        System.out.println("                     [--all-projects | --all-redmine-projects] [options]");
         System.out.println("       redmineUpster --settings [--config=<path>]   (open the settings window)");
         System.out.println("       (java -jar redmineUpster.jar --sync --file=<CSV/Excel> [options])");
         System.out.println();
@@ -354,6 +357,13 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("                          Default output: <fullBackup.dir or ./backup>/<projectId>_yyyyMMdd_HHmmss.xlsx");
         System.out.println("  --backup-dir=<dir>      Backup output folder (overrides fullBackup.dir)");
         System.out.println("  --all-projects          With --backup: back up every project in the config (one file each)");
+        System.out.println("  --all-redmine-projects  With --backup: back up EVERY project on the Redmine server (one file each,");
+        System.out.println("                          named by the Redmine identifier; not only the ones in the config).");
+        System.out.println("                          Uses the connection of --project (or the default project); options of a");
+        System.out.println("                          config project with the same projectId and baseUrl are used for that project.");
+        System.out.println("                          Subprojects get their own file (not included in the parent's file).");
+        System.out.println("                          An admin API key is needed to see all projects (archived ones are skipped).");
+        System.out.println("                          Same as fullBackup.allRedmineProjects: true. Cannot be used with --file");
         System.out.println("  --keep=<n>              With --backup: keep the newest n backups per project, delete older ones");
         System.out.println("                          (overrides fullBackup.keep; 0 = keep all; not applied with --file)");
         System.out.println("  --no-journals --no-attachments --no-time-entries --no-wiki");
@@ -384,5 +394,6 @@ public class SyncCommand implements CommandLineRunner {
         System.out.println("  redmineUpster --export --config=sync-config.yml --file=WBS-A.xlsx --root-issue=123");
         System.out.println("  redmineUpster --sync --config=sync-config.yml --file=redmine.xlsx --targets=users,groups");
         System.out.println("  redmineUpster --backup --config=sync-config.yml --all-projects --backup-dir=D:\\backup --keep=7");
+        System.out.println("  redmineUpster --backup --config=sync-config.yml --all-redmine-projects --backup-dir=D:\\backup --keep=7");
     }
 }
